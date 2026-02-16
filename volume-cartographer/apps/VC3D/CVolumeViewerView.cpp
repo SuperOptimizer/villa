@@ -219,28 +219,27 @@ void CVolumeViewerView::mouseMoveEvent(QMouseEvent *event)
 {
     if (_regular_pan)
     {
-        QPoint scroll = _last_pan_position - QPoint(event->position().x(), event->position().y());
-        
-        int x = horizontalScrollBar()->value() + scroll.x();
-        horizontalScrollBar()->setValue(x);
-        int y = verticalScrollBar()->value() + scroll.y();
-        verticalScrollBar()->setValue(y);
-        
+        if (!_scrollPanDisabled) {
+            QPoint scroll = _last_pan_position - QPoint(event->position().x(), event->position().y());
+
+            int x = horizontalScrollBar()->value() + scroll.x();
+            horizontalScrollBar()->setValue(x);
+            int y = verticalScrollBar()->value() + scroll.y();
+            verticalScrollBar()->setValue(y);
+        }
+
         _last_pan_position = QPoint(event->position().x(), event->position().y());
         event->accept();
-        return;
     }
-    else {
-        QPointF global_loc = viewport()->mapFromGlobal(event->globalPosition());
-        QPointF scene_loc = mapToScene({int(global_loc.x()),int(global_loc.y())});
-        
-        sendCursorMove(scene_loc);
 
-        // Forward mouse move events even without a pressed button so tools that
-        // rely on hover state (e.g. segmentation editing) receive continuous
-        // volume coordinates. Consumers that only care about drags can still
-        // ignore events where no buttons are pressed.
-        sendMouseMove(scene_loc, event->buttons(), event->modifiers());
-    }
-    event->ignore();
+    QPointF global_loc = viewport()->mapFromGlobal(event->globalPosition());
+    QPointF scene_loc = mapToScene({int(global_loc.x()),int(global_loc.y())});
+
+    sendCursorMove(scene_loc);
+
+    // Forward mouse move events even without a pressed button so tools that
+    // rely on hover state (e.g. segmentation editing) receive continuous
+    // volume coordinates. Consumers that only care about drags can still
+    // ignore events where no buttons are pressed.
+    sendMouseMove(scene_loc, event->buttons(), event->modifiers());
 }

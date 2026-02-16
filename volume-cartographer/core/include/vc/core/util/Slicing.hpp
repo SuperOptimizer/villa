@@ -6,6 +6,7 @@
 
 #include <vc/core/util/ChunkCache.hpp>
 #include <vc/core/util/Compositing.hpp>
+#include <vc/core/types/Sampling.hpp>
 
 // Forward declaration
 namespace z5 { class Dataset; }
@@ -13,6 +14,10 @@ namespace z5 { class Dataset; }
 // Read interpolated 3D data from a z5 dataset
 void readInterpolated3D(cv::Mat_<uint8_t> &out, z5::Dataset *ds, const cv::Mat_<cv::Vec3f> &coords, ChunkCache<uint8_t> *cache, bool nearest_neighbor=false);
 void readInterpolated3D(cv::Mat_<uint16_t> &out, z5::Dataset *ds, const cv::Mat_<cv::Vec3f> &coords, ChunkCache<uint16_t> *cache, bool nearest_neighbor=false);
+
+// Overloads accepting vc::Sampling enum (supports Nearest, Trilinear, Tricubic)
+void readInterpolated3D(cv::Mat_<uint8_t> &out, z5::Dataset *ds, const cv::Mat_<cv::Vec3f> &coords, ChunkCache<uint8_t> *cache, vc::Sampling method);
+void readInterpolated3D(cv::Mat_<uint16_t> &out, z5::Dataset *ds, const cv::Mat_<cv::Vec3f> &coords, ChunkCache<uint16_t> *cache, vc::Sampling method);
 
 // Read a 3D area from a z5 dataset
 void readArea3D(xt::xtensor<uint8_t,3,xt::layout_type::column_major> &out, const cv::Vec3i& offset, z5::Dataset *ds, ChunkCache<uint8_t> *cache);

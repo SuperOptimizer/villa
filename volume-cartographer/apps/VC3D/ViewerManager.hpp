@@ -16,6 +16,7 @@
 
 class QMdiArea;
 class CVolumeViewer;
+class CTiledVolumeViewer;
 class CSurfaceCollection;
 class VCCollection;
 class SegmentationOverlayController;
@@ -44,6 +45,10 @@ public:
     CVolumeViewer* createViewer(const std::string& surfaceName,
                                 const QString& title,
                                 QMdiArea* mdiArea);
+
+    CTiledVolumeViewer* createTiledViewer(const std::string& surfaceName,
+                                          const QString& title,
+                                          QMdiArea* mdiArea);
 
     const std::vector<CVolumeViewer*>& viewers() const { return _viewers; }
 

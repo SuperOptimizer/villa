@@ -160,8 +160,8 @@ public:
     [[nodiscard]] int approvalMaskOpacity() const { return _approvalMaskOpacity; }
 
 protected:
-    bool isOverlayEnabledFor(CVolumeViewer* viewer) const override;
-    void collectPrimitives(CVolumeViewer* viewer,
+    bool isOverlayEnabledFor(VolumeViewerBase* viewer) const override;
+    void collectPrimitives(VolumeViewerBase* viewer,
                            ViewerOverlayControllerBase::OverlayBuilder& builder) override;
 
 private slots:
@@ -169,13 +169,13 @@ private slots:
 
 private:
     void buildRadiusOverlay(const State& state,
-                            CVolumeViewer* viewer,
+                            VolumeViewerBase* viewer,
                             ViewerOverlayControllerBase::OverlayBuilder& builder) const;
     void buildVertexMarkers(const State& state,
-                            CVolumeViewer* viewer,
+                            VolumeViewerBase* viewer,
                             ViewerOverlayControllerBase::OverlayBuilder& builder) const;
     void buildApprovalMaskOverlay(const State& state,
-                                  CVolumeViewer* viewer,
+                                  VolumeViewerBase* viewer,
                                   ViewerOverlayControllerBase::OverlayBuilder& builder) const;
 
     ViewerOverlayControllerBase::PathPrimitive buildMaskPrimitive(const State& state) const;
@@ -201,11 +201,11 @@ private:
         uint64_t savedImageVersion{0};
         uint64_t pendingImageVersion{0};
     };
-    mutable std::map<CVolumeViewer*, ViewerImageCache> _viewerCaches;
+    mutable std::map<VolumeViewerBase*, ViewerImageCache> _viewerCaches;
     mutable uint64_t _savedImageVersion{0};
     mutable uint64_t _pendingImageVersion{0};
 
-    void rebuildViewerCache(CVolumeViewer* viewer, QuadSurface* surface) const;
+    void rebuildViewerCache(VolumeViewerBase* viewer, QuadSurface* surface) const;
 
     // Bilinear interpolation helper for QImage alpha channel
     // Returns interpolated alpha value (0.0-255.0) at floating point coordinates

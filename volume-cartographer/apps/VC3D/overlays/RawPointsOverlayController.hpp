@@ -52,8 +52,8 @@ public:
     [[nodiscard]] float pointOpacity() const { return _pointOpacity; }
 
 protected:
-    bool isOverlayEnabledFor(CVolumeViewer* viewer) const override;
-    void collectPrimitives(CVolumeViewer* viewer, OverlayBuilder& builder) override;
+    bool isOverlayEnabledFor(VolumeViewerBase* viewer) const override;
+    void collectPrimitives(VolumeViewerBase* viewer, OverlayBuilder& builder) override;
 
 private slots:
     void onSurfaceChanged(std::string name, std::shared_ptr<Surface> surface);
@@ -64,12 +64,12 @@ private:
     std::optional<std::pair<int, int>> focusGridPosition(QuadSurface* surface) const;
 
     // Collect points for flattened (segmentation) view
-    void collectFlattenedViewPoints(CVolumeViewer* viewer,
+    void collectFlattenedViewPoints(VolumeViewerBase* viewer,
                                     QuadSurface* surface,
                                     OverlayBuilder& builder);
 
     // Collect points for plane (XY/XZ/YZ) view
-    void collectPlaneViewPoints(CVolumeViewer* viewer,
+    void collectPlaneViewPoints(VolumeViewerBase* viewer,
                                 QuadSurface* surface,
                                 OverlayBuilder& builder);
 

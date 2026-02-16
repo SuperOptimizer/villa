@@ -2,6 +2,7 @@
 
 #include "../ViewerManager.hpp"
 #include "../CVolumeViewer.hpp"
+#include "../VolumeViewerBase.hpp"
 #include "../VCSettings.hpp"
 
 #include "vc/core/types/Volume.hpp"

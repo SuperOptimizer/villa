@@ -273,7 +273,6 @@ private:
 class QuadSurface : public Surface
 {
 public:
-    cv::Vec3f pointer() override;
     QuadSurface() = default;
     // points will be cloned in constructor
     QuadSurface(const cv::Mat_<cv::Vec3f> &points, const cv::Vec2f &scale);

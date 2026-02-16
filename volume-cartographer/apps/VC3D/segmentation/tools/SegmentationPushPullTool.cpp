@@ -617,7 +617,7 @@ bool SegmentationPushPullTool::applyStepInternal()
     cv::Vec3f normal = baseSurface->gridNormal(row, col);
     if (!isValidNormal(normal)) {
         // Fallback to robust normal computation if direct lookup fails
-        cv::Vec3f ptr = baseSurface->pointer();
+        cv::Vec3f ptr(0, 0, 0);
         baseSurface->pointTo(ptr, centerWorld, std::numeric_limits<float>::max(), 400, patchIndex);
         if (const auto fallbackNormal = computeRobustNormal(baseSurface.get(), ptr, centerWorld, _editManager->activeDrag(), patchIndex)) {
             normal = *fallbackNormal;

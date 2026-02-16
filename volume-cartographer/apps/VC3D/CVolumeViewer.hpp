@@ -17,7 +17,7 @@
 #include <unordered_set>
 #include <vector>
 #include <optional>
-#include "overlays/ViewerOverlayControllerBase.hpp"
+#include "VolumeViewerBase.hpp"
 #include "vc/ui/VCCollection.hpp"
 #include "CSurfaceCollection.hpp"
 #include "CVolumeViewerView.hpp"
@@ -34,7 +34,7 @@ class QTimer;
 class ViewerManager;
 
 
-class CVolumeViewer : public QWidget
+class CVolumeViewer : public QWidget, public VolumeViewerBase
 {
     Q_OBJECT
 
@@ -167,24 +167,7 @@ public:
     float volumeWindowLow() const { return _baseWindowLow; }
     float volumeWindowHigh() const { return _baseWindowHigh; }
 
-    struct ActiveSegmentationHandle {
-        QuadSurface* surface{nullptr};
-        std::string slotName;
-        QColor accentColor;
-        bool viewerIsSegmentationView{false};
-
-        bool valid() const { return surface != nullptr; }
-        explicit operator bool() const { return valid(); }
-        void reset()
-        {
-            surface = nullptr;
-            slotName.clear();
-            accentColor = QColor();
-            viewerIsSegmentationView = false;
-        }
-    };
-
-    const ActiveSegmentationHandle& activeSegmentationHandle() const;
+    const ActiveSegmentationHandle& activeSegmentationHandle() const override;
 
     void setBaseColormap(const std::string& colormapId);
     const std::string& baseColormap() const { return _baseColormapId; }
@@ -204,6 +187,15 @@ public:
     };
     static const std::vector<OverlayColormapEntry>& overlayColormapEntries();
     
+    // --- VolumeViewerBase interface ---
+    CVolumeViewerView* graphicsView() const override { return fGraphicsView; }
+    QObject* asQObject() override { return this; }
+    QMetaObject::Connection connectOverlaysUpdated(
+        QObject* receiver, const std::function<void()>& callback) override
+    {
+        return connect(this, &CVolumeViewer::overlaysUpdated, receiver, callback);
+    }
+
     CVolumeViewerView* fGraphicsView;
 
 public slots:
@@ -249,6 +241,9 @@ signals:
 protected:
     QPointF volumeToScene(const cv::Vec3f& vol_point);
 
+    // Recompute dynamic minimum scale so content never appears smaller than viewport
+    void updateContentMinScale();
+
     // Rendering helpers (extracted from render_composite / render_area)
     void getCachedSurfaceCoords(
         cv::Mat_<cv::Vec3f>& base_coords, cv::Mat_<cv::Vec3f>& normals,
@@ -283,6 +278,7 @@ protected:
     int _ds_sd_idx = 1;
     float _max_scale = 1;
     float _min_scale = 1;
+    float _contentMinScale = 0.03125f;  // dynamic minimum so content fills viewport
 
     QLabel *_lbl = nullptr;
 

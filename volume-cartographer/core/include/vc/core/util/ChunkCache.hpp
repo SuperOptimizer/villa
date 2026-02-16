@@ -3,6 +3,7 @@
 #include <xtensor/containers/xarray.hpp>
 
 #include <atomic>
+#include <functional>
 #include <memory>
 #include <unordered_map>
 #include <unordered_set>
@@ -11,8 +12,9 @@
 #include <mutex>
 #include <shared_mutex>
 
-// Forward declaration
+// Forward declarations
 namespace z5 { class Dataset; }
+namespace vc::cache { class TieredChunkCache; }
 
 /**
  * @brief Thread-safe chunk cache with shared_ptr lifetime management
@@ -70,7 +72,27 @@ public:
     void clear();
     void flush();
 
+    // --- Tiered cache delegation ---
+
+    // Map from z5::Dataset* to pyramid level index.
+    using DatasetLevelMapper = std::function<int(const z5::Dataset*)>;
+
+    // Enable delegation to a TieredChunkCache backend.
+    // When set, get() checks the tiered cache first (warm/cold/ice tiers).
+    // The levelMapper converts z5::Dataset* to pyramid level index.
+    // The tiered cache pointer must outlive this ChunkCache.
+    void setTieredBackend(
+        vc::cache::TieredChunkCache* tiered,
+        DatasetLevelMapper levelMapper);
+
+    vc::cache::TieredChunkCache* tieredBackend() const { return _tiered; }
+
 private:
+    // Tiered cache delegation
+    vc::cache::TieredChunkCache* _tiered = nullptr;
+    DatasetLevelMapper _levelMapper;
+    ChunkPtr loadFromTiered(z5::Dataset* ds, int iz, int iy, int ix);
+
     struct ChunkKey {
         z5::Dataset* ds;
         int iz, iy, ix;

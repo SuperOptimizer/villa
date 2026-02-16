@@ -2,6 +2,7 @@
 
 #include "VCSettings.hpp"
 #include "CVolumeViewer.hpp"
+#include "tiled/CTiledVolumeViewer.hpp"
 #include "overlays/SegmentationOverlayController.hpp"
 #include "overlays/PointsOverlayController.hpp"
 #include "overlays/RawPointsOverlayController.hpp"
@@ -164,6 +165,82 @@ CVolumeViewer* ViewerManager::createViewer(const std::string& surfaceName,
         _segmentationModule->attachViewer(viewer);
     }
     emit viewerCreated(viewer);
+    return viewer;
+}
+
+CTiledVolumeViewer* ViewerManager::createTiledViewer(const std::string& surfaceName,
+                                                     const QString& title,
+                                                     QMdiArea* mdiArea)
+{
+    if (!mdiArea || !_surfaces) {
+        return nullptr;
+    }
+
+    auto* viewer = new CTiledVolumeViewer(_surfaces, this, mdiArea);
+    auto* win = mdiArea->addSubWindow(viewer);
+    win->setWindowTitle(title);
+    win->setWindowFlags(Qt::WindowTitleHint | Qt::WindowMinMaxButtonsHint);
+    win->installEventFilter(viewer);
+
+    viewer->setCache(_chunkCache);
+    viewer->setPointCollection(_points);
+
+    if (_surfaces) {
+        connect(_surfaces, &CSurfaceCollection::sendSurfaceChanged, viewer, &CTiledVolumeViewer::onSurfaceChanged);
+        connect(_surfaces, &CSurfaceCollection::sendSurfaceWillBeDeleted, viewer, &CTiledVolumeViewer::onSurfaceWillBeDeleted);
+        connect(_surfaces, &CSurfaceCollection::sendPOIChanged, viewer, &CTiledVolumeViewer::onPOIChanged);
+    }
+
+    // Restore persisted viewer preferences
+    {
+        using namespace vc3d::settings;
+        QSettings settings(vc3d::settingsFilePath(), QSettings::IniFormat);
+        bool showHints = settings.value(viewer::SHOW_DIRECTION_HINTS, viewer::SHOW_DIRECTION_HINTS_DEFAULT).toBool();
+        viewer->setShowDirectionHints(showHints);
+        bool showNormals = settings.value(viewer::SHOW_SURFACE_NORMALS, viewer::SHOW_SURFACE_NORMALS_DEFAULT).toBool();
+        viewer->setShowSurfaceNormals(showNormals);
+    }
+
+    {
+        using namespace vc3d::settings;
+        QSettings settings(vc3d::settingsFilePath(), QSettings::IniFormat);
+        bool resetView = settings.value(viewer::RESET_VIEW_ON_SURFACE_CHANGE, viewer::RESET_VIEW_ON_SURFACE_CHANGE_DEFAULT).toBool();
+        viewer->setResetViewOnSurfaceChange(resetView);
+    }
+
+    viewer->setSurface(surfaceName);
+    viewer->setSegmentationEditActive(_segmentationEditActive);
+    viewer->setSegmentationCursorMirroring(_mirrorCursorToSegmentation);
+
+    if (_segmentationOverlay) {
+        _segmentationOverlay->attachViewer(viewer);
+    }
+
+    if (_pointsOverlay) {
+        _pointsOverlay->attachViewer(viewer);
+    }
+
+    if (_pathsOverlay) {
+        _pathsOverlay->attachViewer(viewer);
+    }
+
+    if (_bboxOverlay) {
+        _bboxOverlay->attachViewer(viewer);
+    }
+
+    if (_vectorOverlay) {
+        _vectorOverlay->attachViewer(viewer);
+    }
+
+    viewer->setIntersectionOpacity(_intersectionOpacity);
+    viewer->setIntersectionThickness(_intersectionThickness);
+    viewer->setSurfacePatchSamplingStride(_surfacePatchSamplingStride);
+    viewer->setVolumeWindow(_volumeWindowLow, _volumeWindowHigh);
+    viewer->setOverlayVolume(_overlayVolume);
+    viewer->setOverlayOpacity(_overlayOpacity);
+    viewer->setOverlayColormap(_overlayColormapId);
+    viewer->setOverlayWindow(_overlayWindowLow, _overlayWindowHigh);
+
     return viewer;
 }
 

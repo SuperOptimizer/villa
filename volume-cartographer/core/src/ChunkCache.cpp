@@ -1,4 +1,6 @@
 #include "vc/core/util/ChunkCache.hpp"
+#include "vc/core/cache/TieredChunkCache.hpp"
+#include "vc/core/cache/ChunkData.hpp"
 
 #include <xtensor/containers/xarray.hpp>
 #include <xtensor/generators/xbuilder.hpp>
@@ -7,6 +9,7 @@
 #include "z5/types/types.hxx"
 
 #include <algorithm>
+#include <cstring>
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -186,7 +189,7 @@ auto ChunkCache<T>::get(z5::Dataset* ds, int iz, int iy, int ix) -> ChunkPtr
 {
     ChunkKey key{ds, iz, iy, ix};
 
-    // Fast path: shared lock read
+    // Fast path: shared lock read from local cache
     {
         std::shared_lock<std::shared_mutex> rlock(_mapMutex);
         auto it = _map.find(key);
@@ -209,6 +212,26 @@ auto ChunkCache<T>::get(z5::Dataset* ds, int iz, int iy, int ix) -> ChunkPtr
         if (it != _map.end()) {
             it->second.lastAccess = _generation.fetch_add(1, std::memory_order_relaxed);
             return it->second.chunk;
+        }
+    }
+
+    // Try tiered backend first (warm/cold/ice tiers)
+    if (_tiered) {
+        ChunkPtr tieredResult = loadFromTiered(ds, iz, iy, ix);
+        if (tieredResult) {
+            // Store in our local hot cache too
+            size_t chunkBytes = tieredResult->size() * sizeof(T);
+            {
+                std::unique_lock<std::shared_mutex> wlock(_mapMutex);
+                auto [it, inserted] = _map.try_emplace(
+                    key, CacheEntry{tieredResult, chunkBytes,
+                                    _generation.fetch_add(1, std::memory_order_relaxed)});
+                if (inserted) {
+                    _storedBytes.fetch_add(chunkBytes, std::memory_order_relaxed);
+                    _cachedCount.fetch_add(1, std::memory_order_relaxed);
+                }
+            }
+            return tieredResult;
         }
     }
 
@@ -383,6 +406,58 @@ auto ChunkCache<T>::loadChunk(z5::Dataset* ds, int iz, int iy, int ix) -> ChunkP
     } catch (const std::exception&) {
         return nullptr;
     }
+}
+
+template<typename T>
+void ChunkCache<T>::setTieredBackend(
+    vc::cache::TieredChunkCache* tiered,
+    DatasetLevelMapper levelMapper)
+{
+    _tiered = tiered;
+    _levelMapper = std::move(levelMapper);
+}
+
+template<typename T>
+auto ChunkCache<T>::loadFromTiered(z5::Dataset* ds, int iz, int iy, int ix) -> ChunkPtr
+{
+    if (!_tiered || !_levelMapper) return nullptr;
+
+    int level = _levelMapper(ds);
+    if (level < 0) return nullptr;
+
+    vc::cache::ChunkKey tieredKey{level, iz, iy, ix};
+    auto chunkData = _tiered->getBlocking(tieredKey);
+    if (!chunkData) return nullptr;
+
+    // Convert ChunkData bytes → xt::xarray<T>
+    // ChunkData stores raw bytes with shape metadata; we need to wrap into xarray.
+    const auto& shape = chunkData->shape;
+    typename xt::xarray<T>::shape_type xshape = {
+        static_cast<size_t>(shape[0]),
+        static_cast<size_t>(shape[1]),
+        static_cast<size_t>(shape[2])};
+
+    auto out = std::make_shared<xt::xarray<T>>(xt::empty<T>(xshape));
+    const size_t numElements = chunkData->numElements();
+
+    if constexpr (std::is_same_v<T, uint8_t>) {
+        // ChunkData already stores uint8 bytes (Z5Decompressor handles u16→u8)
+        if (chunkData->elementSize == 1 && chunkData->bytes.size() >= numElements) {
+            std::memcpy(out->data(), chunkData->bytes.data(), numElements);
+        } else {
+            return nullptr;
+        }
+    } else if constexpr (std::is_same_v<T, uint16_t>) {
+        if (chunkData->elementSize == 2 &&
+            chunkData->bytes.size() >= numElements * sizeof(uint16_t)) {
+            std::memcpy(out->data(), chunkData->bytes.data(),
+                        numElements * sizeof(uint16_t));
+        } else {
+            return nullptr;
+        }
+    }
+
+    return out;
 }
 
 // Explicit template instantiations

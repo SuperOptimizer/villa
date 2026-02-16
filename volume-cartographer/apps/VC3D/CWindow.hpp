@@ -26,6 +26,7 @@
 #include "CPointCollectionWidget.hpp"
 #include "CSurfaceCollection.hpp"
 #include "CVolumeViewer.hpp"
+#include "tiled/CTiledVolumeViewer.hpp"
 #include "DrawingWidget.hpp"
 #include "segmentation/tools/SegmentationEditManager.hpp"
 #include "overlays/SegmentationOverlayController.hpp"
@@ -137,6 +138,8 @@ private:
     bool initializeCommandLineRunner(void);
 
     CVolumeViewer *newConnectedCVolumeViewer(std::string surfaceName, QString title, QMdiArea *mdiArea);
+    CTiledVolumeViewer *newConnectedTiledViewer(std::string surfaceName, QString title, QMdiArea *mdiArea);
+    QWidget* newConnectedViewer(std::string surfaceName, QString title, QMdiArea *mdiArea);
     void closeEvent(QCloseEvent* event);
 
     void setWidgetsEnabled(bool state);
@@ -174,6 +177,8 @@ private slots:
     void onSegmentationEditingModeChanged(bool enabled);
     void onSegmentationStopToolsRequested();
     void configureViewerConnections(CVolumeViewer* viewer);
+    void configureViewerConnections(CTiledVolumeViewer* viewer);
+
     CVolumeViewer* segmentationViewer() const;
     void clearSurfaceSelection();
     void onSurfaceActivated(const QString& surfaceId, QuadSurface* surface);
@@ -231,6 +236,7 @@ private:
     bool can_change_volume_();
 
     ChunkCache<uint8_t> *chunk_cache;
+    size_t _cacheSizeBytes = 0;
 
     std::unique_ptr<VolumeOverlayController> _volumeOverlay;
     std::unique_ptr<ViewerManager> _viewerManager;

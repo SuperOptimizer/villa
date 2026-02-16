@@ -209,6 +209,48 @@ QPointF visible_center(QGraphicsView *view)
 }
 
 
+void CVolumeViewer::updateContentMinScale()
+{
+    if (!fGraphicsView) return;
+
+    QSize vpSize = fGraphicsView->viewport()->size();
+    float vpW = vpSize.width();
+    float vpH = vpSize.height();
+    if (vpW <= 0 || vpH <= 0) return;
+
+    float contentW = 0, contentH = 0;
+
+    if (volume && (_surf_name == "xy plane" || _surf_name == "xz plane" || _surf_name == "yz plane")) {
+        auto [w, h, d] = volume->shape();
+        if (_surf_name == "xy plane") {
+            contentW = static_cast<float>(w);
+            contentH = static_cast<float>(h);
+        } else if (_surf_name == "xz plane") {
+            contentW = static_cast<float>(w);
+            contentH = static_cast<float>(d);
+        } else {
+            contentW = static_cast<float>(h);
+            contentH = static_cast<float>(d);
+        }
+    } else {
+        auto surf = _surf_weak.lock();
+        if (auto* quadSurf = dynamic_cast<QuadSurface*>(surf.get())) {
+            const cv::Mat_<cv::Vec3f>& pts = quadSurf->rawPoints();
+            cv::Vec2f sc = quadSurf->scale();
+            contentW = pts.cols / sc[0];
+            contentH = pts.rows / sc[1];
+        }
+    }
+
+    if (contentW <= 0 || contentH <= 0) {
+        _contentMinScale = MIN_ZOOM;
+        return;
+    }
+
+    float fitScale = std::min(vpW / contentW, vpH / contentH);
+    _contentMinScale = std::max(fitScale, MIN_ZOOM);
+}
+
 QPointF CVolumeViewer::volumeToScene(const cv::Vec3f& vol_point)
 {
     auto surf = _surf_weak.lock();
@@ -222,7 +264,7 @@ QPointF CVolumeViewer::volumeToScene(const cv::Vec3f& vol_point)
     if (plane) {
         p = plane->project(vol_point, 1.0, _scale);
     } else if (quad) {
-        auto ptr = quad->pointer();
+        cv::Vec3f ptr(0, 0, 0);
         auto* patchIndex = _viewerManager ? _viewerManager->surfacePatchIndex() : nullptr;
         surf->pointTo(ptr, vol_point, 4.0, 100, patchIndex);
         p = surf->loc(ptr) * _scale;
@@ -243,8 +285,8 @@ bool scene2vol(cv::Vec3f &p, cv::Vec3f &n, Surface *_surf, const std::string &_s
     try {
         cv::Vec3f surf_loc = {static_cast<float>(scene_loc.x()/_ds_scale), static_cast<float>(scene_loc.y()/_ds_scale),0};
         
-        auto ptr = _surf->pointer();
-        
+        cv::Vec3f ptr(0, 0, 0);
+
         n = _surf->normal(ptr, surf_loc);
         p = _surf->coord(ptr, surf_loc);
     } catch (const cv::Exception& e) {
@@ -389,10 +431,10 @@ void CVolumeViewer::onZoom(int steps, QPointF scene_loc, Qt::KeyboardModifiers m
             if (!focus) {
                 focus = new POI;
                 focus->p = plane->origin();
-                focus->n = plane->normal(plane->pointer(), {});
+                focus->n = plane->normal(cv::Vec3f(0, 0, 0), {});
             }
 
-            cv::Vec3f normal = plane->normal(plane->pointer(), {});
+            cv::Vec3f normal = plane->normal(cv::Vec3f(0, 0, 0), {});
             const double length = cv::norm(normal);
             if (length > 0.0) {
                 normal *= static_cast<float>(1.0 / length);
@@ -435,9 +477,9 @@ void CVolumeViewer::onZoom(int steps, QPointF scene_loc, Qt::KeyboardModifiers m
     if (!handled) {
         float zoom = pow(ZOOM_FACTOR, steps);
         _scale *= zoom;
-        _scale = round_scale(_scale);
+        _scale = std::max(round_scale(_scale), _contentMinScale);
         // we should only zoom when we haven't hit the max / min, otherwise the zoom starts to pan center on the mouse
-        if (_scale > MIN_ZOOM && _scale < MAX_ZOOM) {
+        if (_scale > _contentMinScale && _scale < MAX_ZOOM) {
             recalcScales();
 
             // The above scale is *not* part of Qt's scene-to-view transform, but part of the voxel-to-scene transform
@@ -461,7 +503,7 @@ void CVolumeViewer::onZoom(int steps, QPointF scene_loc, Qt::KeyboardModifiers m
             if (auto* quad = dynamic_cast<QuadSurface*>(surf.get())) {
                 POI* focus = _surf_col->poi("focus");
                 if (focus) {
-                    auto ptr = quad->pointer();
+                    cv::Vec3f ptr(0, 0, 0);
                     auto* patchIndex = _viewerManager ? _viewerManager->surfacePatchIndex() : nullptr;
                     float dist = quad->pointTo(ptr, focus->p, 4.0, 100, patchIndex);
                     if (dist < 4.0) {
@@ -490,9 +532,9 @@ void CVolumeViewer::adjustZoomByFactor(float factor)
             item->setVisible(false);
 
     float newScale = _scale * factor;
-    newScale = round_scale(newScale);
+    newScale = std::max(round_scale(newScale), _contentMinScale);
 
-    if (newScale > MIN_ZOOM && newScale < MAX_ZOOM && std::abs(newScale - _scale) > 0.001f) {
+    if (newScale > _contentMinScale && newScale < MAX_ZOOM && std::abs(newScale - _scale) > 0.001f) {
         float zoom = newScale / _scale;
         _scale = newScale;
 
@@ -552,7 +594,7 @@ void CVolumeViewer::updateStatusLabel()
     if (surf) {
         if (dynamic_cast<PlaneSurface*>(surf.get())) {
             // Plane viewer - show world position of view center
-            cv::Vec3f center = surf->pointer();
+            cv::Vec3f center(0, 0, 0);
             status += QString(" ctr(%1,%2,%3)")
                 .arg(center[0], 0, 'f', 0)
                 .arg(center[1], 0, 'f', 0)
@@ -595,6 +637,7 @@ void CVolumeViewer::OnVolumeChanged(std::shared_ptr<Volume> volume_)
     }
 
     recalcScales();
+    updateContentMinScale();
 
     updateStatusLabel();
 
@@ -852,6 +895,7 @@ void CVolumeViewer::onSurfaceChanged(std::string name, std::shared_ptr<Surface> 
             if (!isEditUpdate) {
                 _z_off = 0.0f;
             }
+            updateContentMinScale();
             if (name == "segmentation" && _resetViewOnSurfaceChange) {
                 fitSurfaceInView();
             }
@@ -964,7 +1008,7 @@ void CVolumeViewer::onPOIChanged(std::string name, POI *poi)
 
             _surf_col->setSurface(_surf_name, surf);
         } else if (auto* quad = dynamic_cast<QuadSurface*>(surf.get())) {
-            auto ptr = quad->pointer();
+            cv::Vec3f ptr(0, 0, 0);
             auto* patchIndex = _viewerManager ? _viewerManager->surfacePatchIndex() : nullptr;
             float dist = quad->pointTo(ptr, poi->p, 4.0, 100, patchIndex);
 
@@ -1011,7 +1055,7 @@ void CVolumeViewer::onPOIChanged(std::string name, POI *poi)
         }
         else if (segmentation.viewerIsSegmentationView && crop)
         {
-            auto ptr = crop->pointer();
+            cv::Vec3f ptr(0, 0, 0);
             auto* patchIndex = _viewerManager ? _viewerManager->surfacePatchIndex() : nullptr;
             dist = crop->pointTo(ptr, poi->p, 2.0, 1000, patchIndex);
             sp = crop->loc(ptr)*_scale ;//+ cv::Vec3f(_vis_center[0],_vis_center[1],0);
@@ -1058,6 +1102,7 @@ void CVolumeViewer::onScrolled()
 
 void CVolumeViewer::onResized()
 {
+   updateContentMinScale();
    renderVisible(true);
 }
 
@@ -1082,7 +1127,7 @@ void CVolumeViewer::onMousePress(QPointF scene_loc, Qt::MouseButton button, Qt::
             if (!scene2vol(p, n, surf.get(), _surf_name, _surf_col, scene_loc, _vis_center, _scale)) return;
             auto* quad = dynamic_cast<QuadSurface*>(surf.get());
             if (!quad) return;
-            auto ptr = quad->pointer();
+            cv::Vec3f ptr(0, 0, 0);
             auto* patchIndex = _viewerManager ? _viewerManager->surfacePatchIndex() : nullptr;
             quad->pointTo(ptr, p, 2.0f, 100, patchIndex);
             cv::Vec3f sp = quad->loc(ptr); // unscaled surface coords
@@ -1125,7 +1170,7 @@ void CVolumeViewer::onMouseMove(QPointF scene_loc, Qt::MouseButtons buttons, Qt:
             if (!scene2vol(p, n, surf.get(), _surf_name, _surf_col, scene_loc, _vis_center, _scale)) return;
             auto* quad = dynamic_cast<QuadSurface*>(surf.get());
             if (!quad) return;
-            auto ptr = quad->pointer();
+            cv::Vec3f ptr(0, 0, 0);
             auto* patchIndex = _viewerManager ? _viewerManager->surfacePatchIndex() : nullptr;
             quad->pointTo(ptr, p, 2.0f, 100, patchIndex);
             cv::Vec3f sp = quad->loc(ptr); // unscaled

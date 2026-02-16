@@ -122,6 +122,22 @@ set(srcs
     CPointCollectionWidget.cpp
     elements/COutlinedTextItem.hpp
     elements/COutlinedTextItem.cpp
+    tiled/CTiledVolumeViewer.cpp
+    tiled/CTiledVolumeViewer.hpp
+    tiled/TiledViewerCamera.cpp
+    tiled/TiledViewerCamera.hpp
+    tiled/TileScene.cpp
+    tiled/TileScene.hpp
+    tiled/TileRenderer.cpp
+    tiled/TileRenderer.hpp
+    tiled/TileRenderController.cpp
+    tiled/TileRenderController.hpp
+    tiled/SliceCache.cpp
+    tiled/SliceCache.hpp
+    tiled/RenderPool.cpp
+    tiled/RenderPool.hpp
+    tiled/PostProcess.cpp
+    tiled/PostProcess.hpp
 )
 
 if(VC_ENABLE_TSAN OR VC_ENABLE_LSAN OR VC_ENABLE_UBSAN OR VC_ENABLE_ASAN)

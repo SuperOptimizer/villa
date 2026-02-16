@@ -1,6 +1,7 @@
 #include "PlaneSlicingOverlayController.hpp"
 
 #include "../CVolumeViewer.hpp"
+#include "../VolumeViewerBase.hpp"
 #include "../CSurfaceCollection.hpp"
 #include "vc/core/util/Surface.hpp"
 
@@ -42,8 +43,8 @@ void PlaneSlicingOverlayController::setAxisAlignedEnabled(bool enabled)
     if (!_axisAlignedEnabled) {
         _activeDrag = {};
         for (auto& entry : _viewerStates) {
-            if (entry.first && entry.first->fGraphicsView) {
-                entry.first->fGraphicsView->setCursor(Qt::ArrowCursor);
+            if (entry.first && entry.first->graphicsView()) {
+                entry.first->graphicsView()->setCursor(Qt::ArrowCursor);
             }
             removeInteractions(entry.first);
             clearOverlay(entry.first);
@@ -72,7 +73,7 @@ void PlaneSlicingOverlayController::setAxisAlignedOverlayOpacity(float opacity)
     refreshAll();
 }
 
-bool PlaneSlicingOverlayController::isOverlayEnabledFor(CVolumeViewer* viewer) const
+bool PlaneSlicingOverlayController::isOverlayEnabledFor(VolumeViewerBase* viewer) const
 {
     if (!_axisAlignedEnabled || !viewer) {
         return false;
@@ -80,12 +81,12 @@ bool PlaneSlicingOverlayController::isOverlayEnabledFor(CVolumeViewer* viewer) c
     return viewer->surfName() == "xy plane";
 }
 
-PlaneSlicingOverlayController::ViewerState& PlaneSlicingOverlayController::ensureViewerState(CVolumeViewer* viewer)
+PlaneSlicingOverlayController::ViewerState& PlaneSlicingOverlayController::ensureViewerState(VolumeViewerBase* viewer)
 {
     return _viewerStates[viewer];
 }
 
-void PlaneSlicingOverlayController::clearViewerState(CVolumeViewer* viewer)
+void PlaneSlicingOverlayController::clearViewerState(VolumeViewerBase* viewer)
 {
     auto it = _viewerStates.find(viewer);
     if (it == _viewerStates.end()) {
@@ -95,32 +96,37 @@ void PlaneSlicingOverlayController::clearViewerState(CVolumeViewer* viewer)
     _viewerStates.erase(it);
 }
 
-void PlaneSlicingOverlayController::installInteractions(CVolumeViewer* viewer, ViewerState& state)
+void PlaneSlicingOverlayController::installInteractions(VolumeViewerBase* viewer, ViewerState& state)
 {
     if (state.interactionsInstalled || !viewer) {
         return;
     }
 
-    state.pressConn = QObject::connect(viewer, &CVolumeViewer::sendMousePressVolume,
+    auto* cviewer = dynamic_cast<CVolumeViewer*>(viewer->asQObject());
+    if (!cviewer) {
+        return;
+    }
+
+    state.pressConn = QObject::connect(cviewer, &CVolumeViewer::sendMousePressVolume,
                                        this, [this, viewer](cv::Vec3f volLoc, cv::Vec3f /*normal*/, Qt::MouseButton button, Qt::KeyboardModifiers modifiers) {
                                            handleMousePress(viewer, volLoc, button, modifiers);
                                        });
-    state.moveConn = QObject::connect(viewer, &CVolumeViewer::sendMouseMoveVolume,
+    state.moveConn = QObject::connect(cviewer, &CVolumeViewer::sendMouseMoveVolume,
                                       this, [this, viewer](cv::Vec3f volLoc, Qt::MouseButtons buttons, Qt::KeyboardModifiers modifiers) {
                                           handleMouseMove(viewer, volLoc, buttons, modifiers);
                                       });
-    state.releaseConn = QObject::connect(viewer, &CVolumeViewer::sendMouseReleaseVolume,
+    state.releaseConn = QObject::connect(cviewer, &CVolumeViewer::sendMouseReleaseVolume,
                                          this, [this, viewer](cv::Vec3f /*volLoc*/, Qt::MouseButton button, Qt::KeyboardModifiers modifiers) {
                                              handleMouseRelease(viewer, button, modifiers);
                                          });
-    state.destroyedConn = QObject::connect(viewer, &QObject::destroyed,
+    state.destroyedConn = QObject::connect(cviewer, &QObject::destroyed,
                                            this, [this, viewer]() {
                                                clearViewerState(viewer);
                                            });
     state.interactionsInstalled = true;
 }
 
-void PlaneSlicingOverlayController::removeInteractions(CVolumeViewer* viewer)
+void PlaneSlicingOverlayController::removeInteractions(VolumeViewerBase* viewer)
 {
     auto it = _viewerStates.find(viewer);
     if (it == _viewerStates.end()) {
@@ -139,7 +145,7 @@ void PlaneSlicingOverlayController::removeInteractions(CVolumeViewer* viewer)
     state.interactionsInstalled = false;
 }
 
-void PlaneSlicingOverlayController::updateViewerState(CVolumeViewer* viewer,
+void PlaneSlicingOverlayController::updateViewerState(VolumeViewerBase* viewer,
                                                       ViewerState& state,
                                                       const std::string& planeName,
                                                       const PlaneVisual& visual)
@@ -147,7 +153,7 @@ void PlaneSlicingOverlayController::updateViewerState(CVolumeViewer* viewer,
     state.planes[planeName] = visual;
 }
 
-void PlaneSlicingOverlayController::collectPrimitives(CVolumeViewer* viewer,
+void PlaneSlicingOverlayController::collectPrimitives(VolumeViewerBase* viewer,
                                                       OverlayBuilder& builder)
 {
     if (!viewer || !_surfaces) {
@@ -270,7 +276,7 @@ static bool pointInsideHandle(const QPointF& scenePoint,
     return (dx * dx + dy * dy) <= (radius * radius);
 }
 
-void PlaneSlicingOverlayController::handleMousePress(CVolumeViewer* viewer,
+void PlaneSlicingOverlayController::handleMousePress(VolumeViewerBase* viewer,
                                                      const cv::Vec3f& volumePoint,
                                                      Qt::MouseButton button,
                                                      Qt::KeyboardModifiers modifiers)
@@ -298,13 +304,13 @@ void PlaneSlicingOverlayController::handleMousePress(CVolumeViewer* viewer,
             _activeDrag.viewer = viewer;
             _activeDrag.planeName = planeName;
             _activeDrag.positiveHandle = onPositive;
-            viewer->fGraphicsView->setCursor(Qt::ClosedHandCursor);
+            viewer->graphicsView()->setCursor(Qt::ClosedHandCursor);
             break;
         }
     }
 }
 
-void PlaneSlicingOverlayController::handleMouseMove(CVolumeViewer* viewer,
+void PlaneSlicingOverlayController::handleMouseMove(VolumeViewerBase* viewer,
                                                     const cv::Vec3f& volumePoint,
                                                     Qt::MouseButtons buttons,
                                                     Qt::KeyboardModifiers modifiers)
@@ -376,7 +382,7 @@ void PlaneSlicingOverlayController::handleMouseMove(CVolumeViewer* viewer,
 
         _rotationSetter(_activeDrag.planeName, candidate);
         state.planes[_activeDrag.planeName].directionXY = cv::Vec3f(deltaXY[0], deltaXY[1], 0.0f);
-        viewer->overlaysUpdated();
+        refreshViewer(viewer);
         return;
     }
 
@@ -390,10 +396,10 @@ void PlaneSlicingOverlayController::handleMouseMove(CVolumeViewer* viewer,
         }
     }
 
-    viewer->fGraphicsView->setCursor(hoveringHandle ? Qt::OpenHandCursor : Qt::ArrowCursor);
+    viewer->graphicsView()->setCursor(hoveringHandle ? Qt::OpenHandCursor : Qt::ArrowCursor);
 }
 
-void PlaneSlicingOverlayController::handleMouseRelease(CVolumeViewer* viewer,
+void PlaneSlicingOverlayController::handleMouseRelease(VolumeViewerBase* viewer,
                                                        Qt::MouseButton button,
                                                        Qt::KeyboardModifiers modifiers)
 {
@@ -406,14 +412,14 @@ void PlaneSlicingOverlayController::handleMouseRelease(CVolumeViewer* viewer,
         const bool hadActiveDrag = !_activeDrag.planeName.empty();
         _activeDrag.viewer = nullptr;
         _activeDrag.planeName.clear();
-        viewer->fGraphicsView->setCursor(Qt::ArrowCursor);
+        viewer->graphicsView()->setCursor(Qt::ArrowCursor);
         if (hadActiveDrag && _rotationFinishedCallback) {
             _rotationFinishedCallback();
         }
     }
 }
 
-bool PlaneSlicingOverlayController::isScenePointNearRotationHandle(CVolumeViewer* viewer,
+bool PlaneSlicingOverlayController::isScenePointNearRotationHandle(VolumeViewerBase* viewer,
                                                                    const QPointF& scenePoint,
                                                                    qreal radiusScale) const
 {
@@ -439,7 +445,7 @@ bool PlaneSlicingOverlayController::isScenePointNearRotationHandle(CVolumeViewer
     return false;
 }
 
-bool PlaneSlicingOverlayController::isVolumePointNearRotationHandle(CVolumeViewer* viewer,
+bool PlaneSlicingOverlayController::isVolumePointNearRotationHandle(VolumeViewerBase* viewer,
                                                                     const cv::Vec3f& volumePoint,
                                                                     qreal radiusScale) const
 {

@@ -1,5 +1,6 @@
 #include "vc/core/util/Slicing.hpp"
 #include "vc/core/util/Compositing.hpp"
+#include "vc/core/types/Sampling.hpp"
 
 #include <xtensor/containers/xarray.hpp>
 #include <xtensor/containers/xtensor.hpp>
@@ -214,6 +215,35 @@ struct ChunkSampler {
 
         return sampleTrilinear(vz, vy, vx);
     }
+
+    // Catmull-Rom weight function for tricubic interpolation
+    static float catmullRom(float t) {
+        float at = std::abs(t);
+        if (at < 1.0f) return 1.5f*at*at*at - 2.5f*at*at + 1.0f;
+        if (at < 2.0f) return -0.5f*at*at*at + 2.5f*at*at - 4.0f*at + 2.0f;
+        return 0.0f;
+    }
+
+    float sampleTricubic(float vz, float vy, float vx) {
+        int iz = static_cast<int>(std::floor(vz));
+        int iy = static_cast<int>(std::floor(vy));
+        int ix = static_cast<int>(std::floor(vx));
+        float fz = vz - iz, fy = vy - iy, fx = vx - ix;
+
+        float result = 0.0f;
+        for (int dz = -1; dz <= 2; dz++) {
+            float wz = catmullRom(fz - dz);
+            for (int dy = -1; dy <= 2; dy++) {
+                float wy = catmullRom(fy - dy);
+                float wzy = wz * wy;
+                for (int dx = -1; dx <= 2; dx++) {
+                    float wx = catmullRom(fx - dx);
+                    result += wzy * wx * static_cast<float>(sampleInt(iz+dz, iy+dy, ix+dx));
+                }
+            }
+        }
+        return std::clamp(result, 0.0f, 255.0f);
+    }
 };
 
 
@@ -221,7 +251,7 @@ struct ChunkSampler {
 // readVolumeImpl — unified inner loop
 // ============================================================================
 
-enum class SampleMode { Nearest, Trilinear };
+enum class SampleMode { Nearest, Trilinear, Tricubic };
 
 template<typename T, SampleMode Mode, typename NormalFn>
 static void readVolumeImpl(
@@ -273,7 +303,14 @@ static void readVolumeImpl(
             for (int y = 0; y < h; y++) {
                 for (int x = 0; x < w; x++) {
                     float vz = coords(y,x)[2], vy = coords(y,x)[1], vx = coords(y,x)[0];
-                    if constexpr (Mode == SampleMode::Trilinear) {
+                    if constexpr (Mode == SampleMode::Tricubic) {
+                        if (!(vz >= 0 && vy >= 0 && vx >= 0 && vz < p.sz && vy < p.sy && vx < p.sx)) continue;
+                        int iz = static_cast<int>(std::floor(vz)), iy = static_cast<int>(std::floor(vy)), ix = static_cast<int>(std::floor(vx));
+                        for (int dz = -1; dz <= 2; dz++)
+                            for (int dy = -1; dy <= 2; dy++)
+                                for (int dx = -1; dx <= 2; dx++)
+                                    markVoxel(float(iz+dz), float(iy+dy), float(ix+dx));
+                    } else if constexpr (Mode == SampleMode::Trilinear) {
                         if (!(vz >= 0 && vy >= 0 && vx >= 0 && vz < p.sz && vy < p.sy && vx < p.sx)) continue;
                         int iz = static_cast<int>(vz), iy = static_cast<int>(vy), ix = static_cast<int>(vx);
                         for (int dz = 0; dz <= 1; dz++)
@@ -359,6 +396,16 @@ static void readVolumeImpl(
                     if constexpr (Mode == SampleMode::Trilinear) {
                         if (!(base_vz < p.sz && base_vy < p.sy && base_vx < p.sx)) continue;
                         float v = samplerNoPrefetch.sampleTrilinearFast(base_vz, base_vy, base_vx);
+                        if constexpr (std::is_same_v<T, uint16_t>) {
+                            if (v < 0.f) v = 0.f;
+                            if (v > 65535.f) v = 65535.f;
+                            out(y, x) = static_cast<uint16_t>(v + 0.5f);
+                        } else {
+                            out(y, x) = static_cast<T>(v);
+                        }
+                    } else if constexpr (Mode == SampleMode::Tricubic) {
+                        if (!(base_vz < p.sz && base_vy < p.sy && base_vx < p.sx)) continue;
+                        float v = samplerNoPrefetch.sampleTricubic(base_vz, base_vy, base_vx);
                         if constexpr (std::is_same_v<T, uint16_t>) {
                             if (v < 0.f) v = 0.f;
                             if (v > 65535.f) v = 65535.f;
@@ -527,26 +574,49 @@ void readArea3D(xt::xtensor<uint16_t, 3, xt::layout_type::column_major>& out, co
 
 template<typename T>
 static void readInterpolated3DImpl(cv::Mat_<T>& out, z5::Dataset* ds,
-                                   const cv::Mat_<cv::Vec3f>& coords, ChunkCache<T>* cache, bool nearest_neighbor) {
+                                   const cv::Mat_<cv::Vec3f>& coords, ChunkCache<T>* cache,
+                                   vc::Sampling method) {
     CacheParams<T> p(ds);
+    auto noNormal = [](int, int) -> cv::Vec3f { return {}; };
 
-    if (nearest_neighbor) {
-        readVolumeImpl<T, SampleMode::Nearest>(out, ds, *cache, p, coords,
-            [](int, int) -> cv::Vec3f { return {}; }, 1, 0.f, 0, nullptr);
-    } else {
-        readVolumeImpl<T, SampleMode::Trilinear>(out, ds, *cache, p, coords,
-            [](int, int) -> cv::Vec3f { return {}; }, 1, 0.f, 0, nullptr);
+    switch (method) {
+        case vc::Sampling::Nearest:
+            readVolumeImpl<T, SampleMode::Nearest>(out, ds, *cache, p, coords,
+                noNormal, 1, 0.f, 0, nullptr);
+            break;
+        case vc::Sampling::Tricubic:
+            readVolumeImpl<T, SampleMode::Tricubic>(out, ds, *cache, p, coords,
+                noNormal, 1, 0.f, 0, nullptr);
+            break;
+        default:
+            readVolumeImpl<T, SampleMode::Trilinear>(out, ds, *cache, p, coords,
+                noNormal, 1, 0.f, 0, nullptr);
+            break;
     }
 }
 
+// Legacy bool overloads (backward compatible)
 void readInterpolated3D(cv::Mat_<uint8_t>& out, z5::Dataset* ds,
                         const cv::Mat_<cv::Vec3f>& coords, ChunkCache<uint8_t>* cache, bool nearest_neighbor) {
-    readInterpolated3DImpl(out, ds, coords, cache, nearest_neighbor);
+    readInterpolated3DImpl(out, ds, coords, cache,
+                           nearest_neighbor ? vc::Sampling::Nearest : vc::Sampling::Trilinear);
 }
 
 void readInterpolated3D(cv::Mat_<uint16_t>& out, z5::Dataset* ds,
                         const cv::Mat_<cv::Vec3f>& coords, ChunkCache<uint16_t>* cache, bool nearest_neighbor) {
-    readInterpolated3DImpl(out, ds, coords, cache, nearest_neighbor);
+    readInterpolated3DImpl(out, ds, coords, cache,
+                           nearest_neighbor ? vc::Sampling::Nearest : vc::Sampling::Trilinear);
+}
+
+// New overloads accepting vc::Sampling enum
+void readInterpolated3D(cv::Mat_<uint8_t>& out, z5::Dataset* ds,
+                        const cv::Mat_<cv::Vec3f>& coords, ChunkCache<uint8_t>* cache, vc::Sampling method) {
+    readInterpolated3DImpl(out, ds, coords, cache, method);
+}
+
+void readInterpolated3D(cv::Mat_<uint16_t>& out, z5::Dataset* ds,
+                        const cv::Mat_<cv::Vec3f>& coords, ChunkCache<uint16_t>* cache, vc::Sampling method) {
+    readInterpolated3DImpl(out, ds, coords, cache, method);
 }
 
 

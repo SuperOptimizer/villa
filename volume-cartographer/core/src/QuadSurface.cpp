@@ -171,11 +171,6 @@ void QuadSurface::ensureLoaded()
 
 QuadSurface::~QuadSurface() = default;
 
-cv::Vec3f QuadSurface::pointer()
-{
-    return cv::Vec3f(0, 0, 0);
-}
-
 void QuadSurface::move(cv::Vec3f &ptr, const cv::Vec3f &offset)
 {
     ptr += cv::Vec3f(offset[0]*_scale[0], offset[1]*_scale[1], offset[2]);
@@ -1928,7 +1923,7 @@ bool overlap(QuadSurface& a, QuadSurface& b, int max_iters)
         if (loc[0] == -1)
             continue;
 
-        cv::Vec3f ptr = b.pointer();
+        cv::Vec3f ptr(0, 0, 0);
         if (b.pointTo(ptr, loc, 2.0, max_iters) <= 2.0) {
             return true;
         }
@@ -1941,7 +1936,7 @@ bool contains(QuadSurface& a, const cv::Vec3f& loc, int max_iters)
     if (!intersect(a.bbox(), {loc,loc}))
         return false;
 
-    cv::Vec3f ptr = a.pointer();
+    cv::Vec3f ptr(0, 0, 0);
     if (a.pointTo(ptr, loc, 2.0, max_iters) <= 2.0) {
         return true;
     }

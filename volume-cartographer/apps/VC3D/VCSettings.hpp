@@ -103,6 +103,10 @@ namespace viewer {
     constexpr bool USE_AXIS_ALIGNED_SLICES_DEFAULT = true;
     constexpr int SLICE_STEP_SIZE_DEFAULT = 1;
 
+    // Experimental tiled renderer
+    constexpr auto USE_TILED_RENDERER = "viewer/use_tiled_renderer";
+    constexpr bool USE_TILED_RENDERER_DEFAULT = true;
+
     // Audio/UX
     constexpr auto PLAY_SOUND_AFTER_SEG_RUN = "viewer/play_sound_after_seg_run";
     constexpr auto USERNAME = "viewer/username";

@@ -1,6 +1,7 @@
 #include "VectorOverlayController.hpp"
 
 #include "../CVolumeViewer.hpp"
+#include "../VolumeViewerBase.hpp"
 #include "../CSurfaceCollection.hpp"
 #include "../VCSettings.hpp"
 #include "../ViewerManager.hpp"
@@ -38,10 +39,10 @@ VectorOverlayController::VectorOverlayController(CSurfaceCollection* surfaces, Q
     : ViewerOverlayControllerBase(kOverlayGroup, parent)
     , _surfaces(surfaces)
 {
-    addProvider([this](CVolumeViewer* viewer, OverlayBuilder& builder) {
+    addProvider([this](VolumeViewerBase* viewer, OverlayBuilder& builder) {
         collectDirectionHints(viewer, builder);
     });
-    addProvider([this](CVolumeViewer* viewer, OverlayBuilder& builder) {
+    addProvider([this](VolumeViewerBase* viewer, OverlayBuilder& builder) {
         collectSurfaceNormals(viewer, builder);
     });
 }
@@ -53,7 +54,7 @@ void VectorOverlayController::addProvider(Provider provider)
     }
 }
 
-bool VectorOverlayController::isOverlayEnabledFor(CVolumeViewer* viewer) const
+bool VectorOverlayController::isOverlayEnabledFor(VolumeViewerBase* viewer) const
 {
     if (!viewer) {
         return false;
@@ -69,7 +70,7 @@ bool VectorOverlayController::isOverlayEnabledFor(CVolumeViewer* viewer) const
     return false;
 }
 
-void VectorOverlayController::collectPrimitives(CVolumeViewer* viewer,
+void VectorOverlayController::collectPrimitives(VolumeViewerBase* viewer,
                                                 OverlayBuilder& builder)
 {
     if (!viewer) {
@@ -82,7 +83,7 @@ void VectorOverlayController::collectPrimitives(CVolumeViewer* viewer,
     }
 }
 
-void VectorOverlayController::collectDirectionHints(CVolumeViewer* viewer,
+void VectorOverlayController::collectDirectionHints(VolumeViewerBase* viewer,
                                                     OverlayBuilder& builder) const
 {
     if (!viewer->isShowDirectionHints()) {
@@ -152,7 +153,7 @@ void VectorOverlayController::collectDirectionHints(CVolumeViewer* viewer,
             return;
         }
         if (auto* poi = _surfaces->poi("focus")) {
-            auto ptr = segSurface->pointer();
+            cv::Vec3f ptr(0, 0, 0);
             auto* patchIndex = manager() ? manager()->surfacePatchIndex() : nullptr;
             float dist = segSurface->pointTo(ptr, poi->p, 4.0, 100, patchIndex);
             if (dist >= 0 && dist < 20.0f / scale) {
@@ -179,7 +180,7 @@ void VectorOverlayController::collectDirectionHints(CVolumeViewer* viewer,
         addLabel(anchorScene + upOffset + QPointF(8.0, -8.0), QStringLiteral("false"), kArrowFalseColor);
         addLabel(anchorScene + downOffset + QPointF(8.0, -8.0), QStringLiteral("true"), kArrowTrueColor);
 
-        auto ptr = quad->pointer();
+        cv::Vec3f ptr(0, 0, 0);
         if (_surfaces) {
             if (auto* poi = _surfaces->poi("focus")) {
                 auto* patchIndex = manager() ? manager()->surfacePatchIndex() : nullptr;
@@ -236,7 +237,7 @@ void VectorOverlayController::collectDirectionHints(CVolumeViewer* viewer,
             }
         }
 
-        auto segPtr = segSurface->pointer();
+        cv::Vec3f segPtr(0, 0, 0);
         auto* patchIndex = manager() ? manager()->surfacePatchIndex() : nullptr;
         segSurface->pointTo(segPtr, targetWP, 4.0, 100, patchIndex);
 
@@ -309,7 +310,7 @@ void VectorOverlayController::collectDirectionHints(CVolumeViewer* viewer,
     }
 }
 
-void VectorOverlayController::collectSurfaceNormals(CVolumeViewer* viewer,
+void VectorOverlayController::collectSurfaceNormals(VolumeViewerBase* viewer,
                                                      OverlayBuilder& builder) const
 {
     if (!viewer->isShowSurfaceNormals()) {
@@ -510,7 +511,7 @@ void VectorOverlayController::collectSurfaceNormals(CVolumeViewer* viewer,
         }
     }
 
-    auto segPtr = segSurface->pointer();
+    cv::Vec3f segPtr(0, 0, 0);
     auto* patchIndex = manager() ? manager()->surfacePatchIndex() : nullptr;
     float dist = segSurface->pointTo(segPtr, targetWP, 4.0, 100, patchIndex);
     if (dist < 0 || dist > 50.0f) {

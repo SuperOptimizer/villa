@@ -98,7 +98,7 @@ cv::Mat_<uint8_t> CVolumeViewer::render_composite(const cv::Rect &roi) {
         return img;
 
     cv::Vec2f roi_c = {static_cast<float>(roi.x + roi.width / 2), static_cast<float>(roi.y + roi.height / 2)};
-    cv::Vec3f ptr = surf->pointer();
+    cv::Vec3f ptr(0, 0, 0);
     cv::Vec3f diff = {roi_c[0], roi_c[1], 0};
     surf->move(ptr, diff / _scale);
     _ptr = ptr;
@@ -158,7 +158,7 @@ cv::Mat_<uint8_t> CVolumeViewer::renderCompositeForSurface(std::shared_ptr<QuadS
     recalcScales();
 
 
-    _ptr = surface->pointer();
+    _ptr = cv::Vec3f(0, 0, 0);
     // Use raw points size for the ROI so we cover the whole surface
     cv::Rect roi(-rawPointsSize.width/2, -rawPointsSize.height/2,
                  rawPointsSize.width, rawPointsSize.height);
@@ -628,7 +628,7 @@ void CVolumeViewer::generateViewCoords(
                   {static_cast<float>(roi.x), static_cast<float>(roi.y), _z_off});
     } else {
         cv::Vec2f roi_c = {roi.x + roi.width / 2.0f, roi.y + roi.height / 2.0f};
-        _ptr = surf->pointer();
+        _ptr = cv::Vec3f(0, 0, 0);
         cv::Vec3f diff = {roi_c[0], roi_c[1], 0};
         surf->move(_ptr, diff / _scale);
         _vis_center = roi_c;

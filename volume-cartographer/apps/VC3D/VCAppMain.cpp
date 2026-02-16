@@ -10,6 +10,7 @@
 #include <iostream>
 #include <thread>
 #include <omp.h>
+#include <blosc.h>
 
 // Weak stub for Intel OpenMP's kmp_set_blocktime.
 // If the real function exists (Intel/LLVM OpenMP runtime), it overrides this.
@@ -20,6 +21,7 @@ auto main(int argc, char* argv[]) -> int
 {
     cv::setNumThreads(std::thread::hardware_concurrency());
     kmp_set_blocktime(0);
+    blosc_set_nthreads(1);  // We parallelize at tile level; blosc internal threads just spin-wait
 
     // Workaround for Qt dock widget issues on Wayland (QTBUG-87332)
     // Floating dock widgets become unmovable after initial drag on Wayland.

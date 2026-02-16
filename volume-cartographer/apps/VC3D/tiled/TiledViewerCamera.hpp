@@ -1,0 +1,44 @@
+#pragma once
+
+#include <cstdint>
+#include <cmath>
+#include <opencv2/core.hpp>
+
+// Camera state for the tiled volume viewer.
+// All fields are main-thread only (no locking needed).
+struct TiledViewerCamera {
+    // Center of view in surface parameter space
+    cv::Vec3f surfacePtr{0, 0, 0};
+
+    // Zoom level (same 0.03125..4.0 range as CVolumeViewer::_scale)
+    float scale = 0.5f;
+
+    // Normal offset (shift+wheel slice navigation)
+    float zOff = 0.0f;
+
+    // Pyramid level index (0 = full res, higher = coarser)
+    int dsScaleIdx = 1;
+
+    // Derived: 2^(-dsScaleIdx), e.g., level 2 -> 0.25
+    float dsScale = 0.5f;
+
+    // Monotonic invalidation counter, bumped on every state change
+    uint64_t epoch = 0;
+
+    // Additional override for downscale (from settings)
+    int downscaleOverride = 0;
+
+    // Zoom limits
+    static constexpr float MIN_SCALE = 0.03125f;
+    static constexpr float MAX_SCALE = 4.0f;
+
+    // Bump epoch to invalidate all in-flight renders
+    void invalidate() { ++epoch; }
+
+    // Recalculate pyramid level from current scale.
+    // numScales = volume->numScales()
+    void recalcPyramidLevel(int numScales);
+
+    // Round scale to nearest power-of-2 if close, and clamp to min/max
+    static float roundScale(float s);
+};

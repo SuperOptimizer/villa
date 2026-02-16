@@ -2,6 +2,7 @@
 
 #include "../CSurfaceCollection.hpp"
 #include "../CVolumeViewer.hpp"
+#include "../VolumeViewerBase.hpp"
 #include "../ViewerManager.hpp"
 #include "../segmentation/tools/SegmentationEditManager.hpp"
 
@@ -617,7 +618,7 @@ void SegmentationOverlayController::performDebouncedApprovalSave()
     _approvalSaveSurface = nullptr;
 }
 
-bool SegmentationOverlayController::isOverlayEnabledFor(CVolumeViewer* viewer) const
+bool SegmentationOverlayController::isOverlayEnabledFor(VolumeViewerBase* viewer) const
 {
     Q_UNUSED(viewer);
     // Enable overlay rendering if editing is enabled OR if approval mask mode is active
@@ -626,7 +627,7 @@ bool SegmentationOverlayController::isOverlayEnabledFor(CVolumeViewer* viewer) c
     return _editingEnabled || approvalMaskActive;
 }
 
-void SegmentationOverlayController::collectPrimitives(CVolumeViewer* viewer,
+void SegmentationOverlayController::collectPrimitives(VolumeViewerBase* viewer,
                                                       ViewerOverlayControllerBase::OverlayBuilder& builder)
 {
     if (!viewer || !_currentState) {
@@ -727,7 +728,7 @@ void SegmentationOverlayController::onSurfaceChanged(std::string name, std::shar
 }
 
 void SegmentationOverlayController::buildRadiusOverlay(const State& state,
-                                                       CVolumeViewer* viewer,
+                                                       VolumeViewerBase* viewer,
                                                        ViewerOverlayControllerBase::OverlayBuilder& builder) const
 {
     if (!state.activeMarker || !state.activeMarker->isActive) {
@@ -762,7 +763,7 @@ void SegmentationOverlayController::buildRadiusOverlay(const State& state,
 }
 
 void SegmentationOverlayController::buildVertexMarkers(const State& state,
-                                                       CVolumeViewer* viewer,
+                                                       VolumeViewerBase* viewer,
                                                        ViewerOverlayControllerBase::OverlayBuilder& builder) const
 {
     const auto buildStyle = [](const VertexMarker& marker) {
@@ -801,7 +802,7 @@ void SegmentationOverlayController::buildVertexMarkers(const State& state,
     }
 }
 
-void SegmentationOverlayController::rebuildViewerCache(CVolumeViewer* viewer, QuadSurface* surface) const
+void SegmentationOverlayController::rebuildViewerCache(VolumeViewerBase* viewer, QuadSurface* surface) const
 {
     const cv::Mat_<cv::Vec3f>* points = surface->rawPointsPtr();
     if (!points || points->empty()) {
@@ -1077,7 +1078,7 @@ void SegmentationOverlayController::setApprovalMaskOpacity(int opacity)
 }
 
 void SegmentationOverlayController::buildApprovalMaskOverlay(const State& state,
-                                                              CVolumeViewer* viewer,
+                                                              VolumeViewerBase* viewer,
                                                               ViewerOverlayControllerBase::OverlayBuilder& builder) const
 {
     if (!state.surface) {
