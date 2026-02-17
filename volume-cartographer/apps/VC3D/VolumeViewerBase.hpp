@@ -26,7 +26,7 @@ class Surface;
 class QuadSurface;
 class Volume;
 class VCCollection;
-template <typename T> class ChunkCache;
+namespace vc::cache { class TieredChunkCache; }
 
 // Abstract interface for volume viewers (CVolumeViewer and CTiledVolumeViewer).
 // Overlay controllers work through this interface to support both viewer types.
@@ -63,7 +63,7 @@ public:
     virtual std::string surfName() const = 0;
     virtual std::shared_ptr<Volume> currentVolume() const = 0;
     virtual VCCollection* pointCollection() const = 0;
-    virtual ChunkCache<uint8_t>* chunkCachePtr() const = 0;
+    virtual vc::cache::TieredChunkCache* chunkCachePtr() const = 0;
 
     // --- Display settings ---
     virtual float getCurrentScale() const = 0;

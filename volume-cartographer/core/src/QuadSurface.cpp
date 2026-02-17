@@ -1,6 +1,5 @@
 #include "vc/core/util/QuadSurface.hpp"
 
-#include "vc/core/util/ChunkCache.hpp"
 #include "vc/core/util/Geometry.hpp"
 #include "vc/core/util/LoadJson.hpp"
 #include "vc/core/util/PointIndex.hpp"

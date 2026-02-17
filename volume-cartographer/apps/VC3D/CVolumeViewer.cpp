@@ -703,10 +703,7 @@ void CVolumeViewer::onVolumeClicked(QPointF scene_loc, Qt::MouseButton buttons, 
     }
 }
 
-void CVolumeViewer::setCache(ChunkCache<uint8_t> *cache_)
-{
-    cache = cache_;
-}
+// setCache removed — cache now comes from volume->tieredCache()
 
 void CVolumeViewer::setPointCollection(VCCollection* point_collection)
 {

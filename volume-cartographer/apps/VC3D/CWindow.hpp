@@ -235,7 +235,6 @@ private:
 
     bool can_change_volume_();
 
-    ChunkCache<uint8_t> *chunk_cache;
     size_t _cacheSizeBytes = 0;
 
     std::unique_ptr<VolumeOverlayController> _volumeOverlay;

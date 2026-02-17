@@ -39,6 +39,10 @@ struct TiledViewerCamera {
     // numScales = volume->numScales()
     void recalcPyramidLevel(int numScales);
 
-    // Round scale to nearest power-of-2 if close, and clamp to min/max
+    // Snap scale to the nearest predefined zoom stop
     static float roundScale(float s);
+
+    // Step to the next (+1) or previous (-1) zoom stop from current scale.
+    // |steps| > 1 skips multiple stops.  Returns the new scale.
+    static float stepScale(float current, int steps);
 };

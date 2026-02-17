@@ -42,7 +42,6 @@ SeedingWidget::SeedingWidget(VCCollection* point_collection, CSurfaceCollection*
     : QWidget(parent)
     , fVpkg(nullptr)
     , currentVolume(nullptr)
-    , chunkCache(nullptr)
     , currentZSlice(0)
     , currentMode(Mode::PointMode)
     , isDrawing(false)
@@ -401,12 +400,6 @@ void SeedingWidget::setCurrentVolume(std::shared_ptr<Volume> volume)
     updateButtonStates();
 }
 
-void SeedingWidget::setCache(ChunkCache<uint8_t>* cache)
-{
-    chunkCache = cache;
-}
-
-
 void SeedingWidget::onCollectionsAdded(const std::vector<uint64_t>& collectionIds)
 {
     onCollectionChanged(0);
@@ -548,7 +541,7 @@ void SeedingWidget::computeDistanceTransform()
     }
     
     // Read the slice data using the volume's dataset
-    readInterpolated3D(sliceData, currentVolume->zarrDataset(0), coords, chunkCache);
+    readInterpolated3D(sliceData, currentVolume->tieredCache(), 0, coords);
     
     // Threshold the slice to create a binary image for distance transform
     cv::Mat binaryImage;
@@ -635,17 +628,17 @@ void SeedingWidget::findPeaksAlongRay(
         coord(0, 0) = point;
         
         cv::Mat_<uint8_t> intensity(1, 1);
-        readInterpolated3D(intensity, currentVolume->zarrDataset(0), coord, chunkCache);
-        
+        readInterpolated3D(intensity, currentVolume->tieredCache(), 0, coord);
+
         // Store intensity and position
         intensities.push_back(intensity(0, 0));
         positions.push_back(point);
     }
-    
+
     if (intensities.empty()) {
         return;
     }
-    
+
     // Place a single point at the center of each above-threshold segment
     const int thr = thresholdSpinBox->value();
     bool inside = false;
@@ -1086,8 +1079,8 @@ void SeedingWidget::findPeaksAlongPath(const PathPrimitive& path)
             
             // Read the intensity value at this 3D point
             cv::Mat_<uint8_t> intensity(1, 1);
-            readInterpolated3D(intensity, currentVolume->zarrDataset(0), coord, chunkCache);
-            
+            readInterpolated3D(intensity, currentVolume->tieredCache(), 0, coord);
+
             intensities.push_back(intensity(0, 0));
             positions.push_back(pt);
         }
@@ -1289,7 +1282,7 @@ void SeedingWidget::findPeaksAlongPathToCollection(const PathPrimitive& path, co
             cv::Mat_<cv::Vec3f> coord(1, 1);
             coord(0, 0) = pt;
             cv::Mat_<uint8_t> intensity(1, 1);
-            readInterpolated3D(intensity, currentVolume->zarrDataset(0), coord, chunkCache);
+            readInterpolated3D(intensity, currentVolume->tieredCache(), 0, coord);
             intensities.push_back(intensity(0, 0));
             positions.push_back(pt);
         }

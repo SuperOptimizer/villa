@@ -33,7 +33,6 @@ public:
     
     void setVolumePkg(std::shared_ptr<VolumePkg> vpkg);
     void setCurrentVolume(std::shared_ptr<Volume> volume);
-    void setCache(ChunkCache<uint8_t>* cache);
     
 signals:
     void sendPathsChanged(const QList<ViewerOverlayControllerBase::PathPrimitive>& paths);
@@ -133,7 +132,6 @@ private:
     std::shared_ptr<VolumePkg> fVpkg;
     std::shared_ptr<Volume> currentVolume;
     std::string currentVolumeId;
-    ChunkCache<uint8_t>* chunkCache;
     int currentZSlice;
     VCCollection* _point_collection;
     CSurfaceCollection* _surface_collection;

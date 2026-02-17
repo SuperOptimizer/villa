@@ -1,6 +1,7 @@
 #include <random>
 
 #include "vc/core/util/Slicing.hpp"
+#include "vc/core/cache/SimpleCacheFactory.hpp"
 #include "vc/core/util/Surface.hpp"
 #include "vc/core/util/QuadSurface.hpp"
 #include "vc/core/util/Geometry.hpp"
@@ -88,7 +89,7 @@ bool check_existing_segments(const std::filesystem::path& tgt_dir, const cv::Vec
     return false;
 }
 
-static auto load_direction_fields(json const&params, ChunkCache<uint8_t> *chunk_cache, std::filesystem::path const &cache_root)
+static auto load_direction_fields(json const&params, std::filesystem::path const &cache_root)
 {
     std::vector<DirectionField> direction_fields;
     if (params.contains("direction_fields")) {
@@ -129,8 +130,8 @@ static auto load_direction_fields(json const&params, ChunkCache<uint8_t> *chunk_
 
             direction_fields.emplace_back(
                 direction,
-                std::make_unique<Chunked3dVec3fFromUint8>(std::move(direction_dss), scale_factor, chunk_cache, cache_root, unique_id),
-                maybe_weight_ds ? std::make_unique<Chunked3dFloatFromUint8>(std::move(maybe_weight_ds), scale_factor, chunk_cache, cache_root, unique_id + "_conf") : std::unique_ptr<Chunked3dFloatFromUint8>(),
+                std::make_unique<Chunked3dVec3fFromUint8>(std::move(direction_dss), scale_factor, cache_root, unique_id),
+                maybe_weight_ds ? std::make_unique<Chunked3dFloatFromUint8>(std::move(maybe_weight_ds), scale_factor, cache_root, unique_id + "_conf") : std::unique_ptr<Chunked3dFloatFromUint8>(),
                 weight);
         }
     }
@@ -268,10 +269,10 @@ int main(int argc, char *argv[])
     std::cout << "zarr dataset size for scale group 0 " << ds->shape() << std::endl;
     std::cout << "chunk shape shape " << ds->defaultChunkShape() << std::endl;
 
-    ChunkCache<uint8_t> chunk_cache(params.value("cache_size", 1e9));
+    auto chunk_cache = vc::cache::createSimpleTieredCache(ds.get(), size_t(params.value("cache_size", 1e9)), ds->path());
 
     passTroughComputor pass;
-    Chunked3d<uint8_t,passTroughComputor> tensor(pass, ds.get(), &chunk_cache);
+    Chunked3d<uint8_t,passTroughComputor> tensor(pass, ds.get(), chunk_cache.get(), 0);
     CachedChunked3dInterpolator<uint8_t,passTroughComputor> interpolator(tensor);
 
     auto chunk_size = ds->defaultChunkShape();
@@ -300,7 +301,7 @@ int main(int argc, char *argv[])
     std::cout << "min_area_cm: " << min_area_cm << std::endl;
     std::cout << "tgt_overlap_count: " << tgt_overlap_count << std::endl;
 
-    auto direction_fields = load_direction_fields(params, &chunk_cache, cache_root);
+    auto direction_fields = load_direction_fields(params, cache_root);
 
     std::unordered_map<std::string,QuadSurface*> surfs;
     std::vector<QuadSurface*> surfs_v;
@@ -1324,7 +1325,7 @@ int main(int argc, char *argv[])
         return EXIT_SUCCESS;
     }
 
-    QuadSurface *surf = tracer(ds.get(), 1.0, &chunk_cache, origin, params, cache_root, voxelsize, direction_fields, resume_surf.get(), seg_dir, meta_params, corrections);
+    QuadSurface *surf = tracer(ds.get(), 1.0, chunk_cache.get(), 0, origin, params, cache_root, voxelsize, direction_fields, resume_surf.get(), seg_dir, meta_params, corrections);
 
     double area_cm2 = (*surf->meta)["area_cm2"].get<double>();
     if (area_cm2 < min_area_cm) {

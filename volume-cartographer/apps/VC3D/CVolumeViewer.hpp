@@ -23,7 +23,6 @@
 #include "CVolumeViewerView.hpp"
 #include "vc/core/types/Volume.hpp"
 #include "vc/core/util/SurfacePatchIndex.hpp"
-#include "vc/core/util/ChunkCache.hpp"
 #include "vc/core/util/Slicing.hpp"
 
 class QGraphicsScene;
@@ -42,7 +41,7 @@ public:
     CVolumeViewer(CSurfaceCollection *col, ViewerManager* manager, QWidget* parent = 0);
     ~CVolumeViewer(void);
 
-    void setCache(ChunkCache<uint8_t> *cache);
+    // Cache is now obtained from Volume::tieredCache()
     void setPointCollection(VCCollection* point_collection);
     void setSurface(const std::string &name);
     void renderVisible(bool force = false);
@@ -72,7 +71,7 @@ public:
 
     void setResetViewOnSurfaceChange(bool reset);
     std::shared_ptr<Volume> currentVolume() const { return volume; }
-    ChunkCache<uint8_t>* chunkCachePtr() const { return cache; }
+    vc::cache::TieredChunkCache* chunkCachePtr() const { return volume ? volume->tieredCache() : nullptr; }
     int datasetScaleIndex() const { return _ds_sd_idx; }
     float datasetScaleFactor() const { return _ds_scale; }
     VCCollection* pointCollection() const { return _point_collection; }
@@ -270,7 +269,7 @@ protected:
     cv::Vec2f _vis_center = {0,0};
     std::string _surf_name;
     
-    ChunkCache<uint8_t> *cache = nullptr;
+    // Cache obtained from volume->tieredCache()
     QRect curr_img_area = {0,0,1000,1000};
     float _scale = 0.5;
     float _scene_scale = 1.0;

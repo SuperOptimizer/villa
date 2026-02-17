@@ -115,13 +115,13 @@ cv::Mat_<uint8_t> CVolumeViewer::render_composite(const cv::Rect &roi) {
 
     readCompositeFast(
         img,
-        volume->zarrDataset(_ds_sd_idx),
+        volume->tieredCache(),
+        _ds_sd_idx,
         base_coords * _ds_scale,
         lightingNormals,
         _ds_scale,
         z_start, z_end,
-        _compositeSettings.params,
-        *cache
+        _compositeSettings.params
     );
 
     postprocessComposite(img, _compositeSettings);
@@ -222,7 +222,7 @@ cv::Mat CVolumeViewer::render_area(const cv::Rect &roi)
         if (!baseDataset) {
             return cv::Mat();
         }
-        readInterpolated3D(baseGray, baseDataset, coords * _ds_scale, cache, _useFastInterpolation);
+        readInterpolated3D(baseGray, volume->tieredCache(), _ds_sd_idx, coords * _ds_scale, _useFastInterpolation);
     }
 
     if (baseGray.empty()) {
@@ -286,7 +286,7 @@ cv::Mat CVolumeViewer::render_area(const cv::Rect &roi)
 
             cv::Mat_<uint8_t> overlayValues;
             vc::VcDataset* overlayDataset = _overlayVolume->zarrDataset(overlayIdx);
-            readInterpolated3D(overlayValues, overlayDataset, coords * overlayScale, cache, /*nearest_neighbor=*/true);
+            readInterpolated3D(overlayValues, _overlayVolume->tieredCache(), overlayIdx, coords * overlayScale, /*nearest_neighbor=*/true);
 
             if (!overlayValues.empty()) {
                 const int windowLow = static_cast<int>(std::clamp(_overlayWindowLow, 0.0f, 255.0f));
@@ -655,13 +655,13 @@ cv::Mat_<uint8_t> CVolumeViewer::render_composite_plane(const cv::Rect &roi, con
 
     readCompositeFast(
         img,
-        volume->zarrDataset(_ds_sd_idx),
+        volume->tieredCache(),
+        _ds_sd_idx,
         coords * _ds_scale,
         normals,
         _ds_scale,
         z_start, z_end,
-        _compositeSettings.params,
-        *cache
+        _compositeSettings.params
     );
 
     return img;

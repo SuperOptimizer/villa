@@ -1,4 +1,5 @@
 #include "vc/core/util/Slicing.hpp"
+#include "vc/core/cache/SimpleCacheFactory.hpp"
 #include "vc/core/util/QuadSurface.hpp"
 #include "vc/core/util/Surface.hpp"
 #include "vc/core/util/Tiff.hpp"
@@ -406,7 +407,7 @@ static std::vector<cv::Mat> processRawSlices(std::vector<cv::Mat_<T>>& raw, int 
 template <typename T, typename WriteFn>
 static void renderBands(
     QuadSurface* surf, vc::VcDataset* ds,
-    ChunkCache<T>* cache,
+    vc::cache::TieredChunkCache* cache, int level,
     const cv::Size& fullSize, const cv::Rect& crop, const cv::Size& tgtSize,
     float renderScale, float scaleSeg, float dsScale,
     bool hasAffine, const AffineTransform& aff,
@@ -461,10 +462,10 @@ static void renderBands(
             // Composite mode: always u8 — callers always instantiate with T=uint8_t
             cv::Mat_<uint8_t> compOut;
             if constexpr (std::is_same_v<T, uint8_t>) {
-                readCompositeFast(compOut, ds, base, dirs,
+                readCompositeFast(compOut, cache, level, base, dirs,
                                   float(sliceStep * dsScale),
                                   compositeStart, compositeEnd,
-                                  compositeParams, *cache);
+                                  compositeParams);
             }
             cv::Mat s = compOut;
             rotateFlipIfNeeded(s, rotQuad, flipAxis);
@@ -472,7 +473,7 @@ static void renderBands(
         } else {
             // Normal: bulk read + accumulate
             std::vector<cv::Mat_<T>> raw;
-            readMultiSlice(raw, ds, cache, base, dirs, allOffsets);
+            readMultiSlice(raw, cache, level, base, dirs, allOffsets);
             slices = processRawSlices<T>(raw, numSlices, accumOffsets, accumType, cvType, rotQuad, flipAxis);
         }
 
@@ -488,17 +489,12 @@ static void renderBands(
             double elapsed = std::chrono::duration<double>(now - wallStart).count();
             double eta = done > 0 ? elapsed * (double(bandsThis) / done - 1.0) : 0.0;
             double bandsPerSec = elapsed > 0 ? done / elapsed : 0.0;
-            auto cs = cache->stats();
-            uint64_t tot = cs.hits + cs.misses;
-            double hr = tot > 0 ? 100.0 * cs.hits / tot : 0.0;
-            double gbR = cs.bytesRead / (1024.0*1024.0*1024.0);
             const char* prefix = g_logFile ? "  " : "\r  ";
             const char* suffix = g_logFile ? "\n" : "";
-            logPrintf(stderr, "%sband %u/%u (%d%%)  %.1f bands/s  %dm%02ds  eta %dm%02ds  cache %.1f%% evict %lu read %.2fGB%s",
+            logPrintf(stderr, "%sband %u/%u (%d%%)  %.1f bands/s  %dm%02ds  eta %dm%02ds%s",
                 prefix, done, bandsThis, int(100.0 * done / bandsThis),
                 bandsPerSec,
-                int(elapsed)/60, int(elapsed)%60, int(eta)/60, int(eta)%60,
-                hr, (unsigned long)cs.evictions, gbR, suffix);
+                int(elapsed)/60, int(elapsed)%60, int(eta)/60, int(eta)%60, suffix);
         }
     }
     if (!g_logFile) std::fprintf(stderr, "\n");
@@ -535,7 +531,7 @@ static void writeTifBand(std::vector<TiffWriter>& writers,
 template <typename T>
 static void renderTiles(
     QuadSurface* surf, vc::VcDataset* ds,
-    ChunkCache<T>* cache,
+    vc::cache::TieredChunkCache* cache, int level,
     const cv::Size& fullSize, const cv::Rect& crop, const cv::Size& tgtSize,
     float renderScale, float scaleSeg, float dsScale,
     bool hasAffine, const AffineTransform& aff,
@@ -681,15 +677,15 @@ static void renderTiles(
             if (isComposite) {
                 if constexpr (std::is_same_v<T, uint8_t>) {
                     cv::Mat_<uint8_t> compOut;
-                    readCompositeFast(compOut, ds, base, dirs,
+                    readCompositeFast(compOut, cache, level, base, dirs,
                                       float(sliceStep * dsScale),
                                       compositeStart, compositeEnd,
-                                      compositeParams, *cache);
+                                      compositeParams);
                     raw.resize(1);
                     raw[0] = compOut;
                 }
             } else {
-                sampleTileSlices(raw, ds, cache, base, dirs, allOffsets);
+                sampleTileSlices(raw, cache, level, base, dirs, allOffsets);
             }
 
             // Accumulate (no rotation — applied per-zarr-chunk and per-tif-band separately)
@@ -844,17 +840,12 @@ static void renderTiles(
             // Chunks written this part: done tile-rows × numTileCols chunks per row
             double chunksWritten = double(done) * double(numTileCols);
             double chunksPerSec = elapsed > 0 ? chunksWritten / elapsed : 0.0;
-            auto cs = cache->stats();
-            uint64_t tot = cs.hits + cs.misses;
-            double hr = tot > 0 ? 100.0 * cs.hits / tot : 0.0;
-            double gbR = cs.bytesRead / (1024.0*1024.0*1024.0);
             const char* prefix = g_logFile ? "  " : "\r  ";
             const char* suffix = g_logFile ? "\n" : "";
-            logPrintf(stderr, "%stile-row %u/%u (%d%%)  %.1f chunks/s  %dm%02ds  eta %dm%02ds  cache %.1f%% evict %lu read %.2fGB%s",
+            logPrintf(stderr, "%stile-row %u/%u (%d%%)  %.1f chunks/s  %dm%02ds  eta %dm%02ds%s",
                 prefix, done, tileRowsThis, int(100.0 * done / tileRowsThis),
                 chunksPerSec,
-                int(elapsed)/60, int(elapsed)%60, int(eta)/60, int(eta)%60,
-                hr, (unsigned long)cs.evictions, gbR, suffix);
+                int(elapsed)/60, int(elapsed)%60, int(eta)/60, int(eta)%60, suffix);
         }
     }
     if (!g_logFile) std::fprintf(stderr, "\n");
@@ -1117,8 +1108,7 @@ int main(int argc, char *argv[])
     if (wantTif) std::filesystem::create_directories(tifOutputArg);
 
     const size_t cache_bytes = parsed["cache-gb"].as<size_t>() * 1024ull * 1024ull * 1024ull;
-    ChunkCache<uint8_t> chunk_cache_u8(cache_bytes);
-    ChunkCache<uint16_t> chunk_cache_u16(cache_bytes);
+    auto chunk_cache = vc::cache::createSimpleTieredCache(ds.get(), cache_bytes, ds->path());
 
     if (int t = parsed["timeout"].as<int>(); t > 0) {
         logPrintf(stdout, "Timeout: %d minutes\n", t);
@@ -1341,7 +1331,7 @@ int main(int argc, char *argv[])
             if (wantZarr) {
                 // Tile-based: OMP-parallel over output zarr chunks
                 if (useU16)
-                    renderTiles<uint16_t>(surf.get(), ds.get(), &chunk_cache_u16,
+                    renderTiles<uint16_t>(surf.get(), ds.get(), chunk_cache.get(), 0,
                         full_size, crop, tgt_size, float(render_scale), scale_seg, ds_scale,
                         hasAffine, affineTransform, num_slices, slice_step,
                         accumOffsets, accumType, isCompositeMode, compositeStart, compositeEnd,
@@ -1351,7 +1341,7 @@ int main(int argc, char *argv[])
                         tifWriters.empty() ? nullptr : &tifWriters, tiffTileH, quickTif,
                         resumeFlag);
                 else
-                    renderTiles<uint8_t>(surf.get(), ds.get(), &chunk_cache_u8,
+                    renderTiles<uint8_t>(surf.get(), ds.get(), chunk_cache.get(), 0,
                         full_size, crop, tgt_size, float(render_scale), scale_seg, ds_scale,
                         hasAffine, affineTransform, num_slices, slice_step,
                         accumOffsets, accumType, isCompositeMode, compositeStart, compositeEnd,
@@ -1383,13 +1373,13 @@ int main(int argc, char *argv[])
                 };
 
                 if (useU16)
-                    renderBands<uint16_t>(surf.get(), ds.get(), &chunk_cache_u16,
+                    renderBands<uint16_t>(surf.get(), ds.get(), chunk_cache.get(), 0,
                         full_size, crop, tgt_size, float(render_scale), scale_seg, ds_scale,
                         hasAffine, affineTransform, num_slices, slice_step,
                         accumOffsets, accumType, isCompositeMode, compositeStart, compositeEnd,
                         compositeParams, rotQuad, flip_axis, numParts, partId, cvType, bandH, writerFn);
                 else
-                    renderBands<uint8_t>(surf.get(), ds.get(), &chunk_cache_u8,
+                    renderBands<uint8_t>(surf.get(), ds.get(), chunk_cache.get(), 0,
                         full_size, crop, tgt_size, float(render_scale), scale_seg, ds_scale,
                         hasAffine, affineTransform, num_slices, slice_step,
                         accumOffsets, accumType, isCompositeMode, compositeStart, compositeEnd,
@@ -1421,19 +1411,6 @@ int main(int argc, char *argv[])
     };
 
     process_one(seg_path);
-
-    // Print final cache stats
-    auto printStats = [](const char* name, const auto& s) {
-        uint64_t tot = s.hits + s.misses;
-        if (tot == 0) return;
-        logPrintf(stdout, "[%s cache] hits=%lu miss=%lu rate=%.1f%% evict=%lu read=%.2fGB re-read=%lu(%.2fGB)\n",
-                  name, (unsigned long)s.hits, (unsigned long)s.misses,
-                  100.0*s.hits/tot, (unsigned long)s.evictions,
-                  s.bytesRead/(1024.0*1024.0*1024.0),
-                  (unsigned long)s.reReads, s.reReadBytes/(1024.0*1024.0*1024.0));
-    };
-    printStats("u8", chunk_cache_u8.stats());
-    printStats("u16", chunk_cache_u16.stats());
 
     stopLogFlusher();
     return EXIT_SUCCESS;

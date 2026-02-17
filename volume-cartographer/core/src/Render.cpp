@@ -31,9 +31,6 @@ void render_binary_mask(QuadSurface* surf,
     cv::resize(rawMask, mask, targetSize, 0, 0, cv::INTER_NEAREST);
 
     // Generate coords at target resolution for rendering
-    // Use surface's scale divided by user scale, so when scale=1.0:
-    // genScale = surf->_scale (e.g. 0.05), and sx = 0.05/0.05 = 1.0
-    // This samples 1:1 from the raw points grid
     cv::Vec3f ptr(0, 0, 0);
     cv::Vec3f offset(-rawSize.width/2.0f, -rawSize.height/2.0f, 0);
     float genScale = surf->_scale[0] / scale;
@@ -75,13 +72,13 @@ void render_binary_mask(QuadSurface* surf,
 
 void render_image_from_coords(const cv::Mat_<cv::Vec3f>& coords,
                               cv::Mat_<uint8_t>& img,
-                              vc::VcDataset* ds,
-                              ChunkCache<uint8_t>* cache) {
-    if (!ds || !cache) {
-        throw std::runtime_error("Dataset or cache is null in render_image_from_coords");
+                              vc::cache::TieredChunkCache* cache,
+                              int level) {
+    if (!cache) {
+        throw std::runtime_error("Cache is null in render_image_from_coords");
     }
 
-    readInterpolated3D(img, ds, coords, cache);
+    readInterpolated3D(img, cache, level, coords);
     std::cout << "render_image_from_coords: completed" << std::endl;
 }
 
@@ -89,13 +86,13 @@ void render_image_from_coords(const cv::Mat_<cv::Vec3f>& coords,
 void render_surface_image(QuadSurface* surf,
                          cv::Mat_<uint8_t>& mask,
                          cv::Mat_<uint8_t>& img,
-                         vc::VcDataset* ds,
-                         ChunkCache<uint8_t>* cache,
+                         vc::cache::TieredChunkCache* cache,
+                         int level,
                          float scale) {
 
     cv::Mat_<cv::Vec3f> coords;
     render_binary_mask(surf, mask, coords, scale);
-    render_image_from_coords(coords, img, ds, cache);
+    render_image_from_coords(coords, img, cache, level);
 
     std::cout << "render_surface_image: completed" << std::endl;
 }

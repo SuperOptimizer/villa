@@ -39,7 +39,6 @@ DrawingWidget::DrawingWidget(QWidget* parent)
     : QWidget(parent)
     , fVpkg(nullptr)
     , currentVolume(nullptr)
-    , chunkCache(nullptr)
     , currentPathId(0)
     , brushSize(3.0f)
     , opacity(1.0f)
@@ -211,11 +210,6 @@ void DrawingWidget::setCurrentVolume(std::shared_ptr<Volume> volume)
 {
     currentVolume = volume;
     updateUI();
-}
-
-void DrawingWidget::setCache(ChunkCache<uint8_t>* cache)
-{
-    chunkCache = cache;
 }
 
 void DrawingWidget::onVolumeChanged(std::shared_ptr<Volume> vol)

@@ -619,8 +619,7 @@ CWindow::CWindow(size_t cacheSizeGB) :
     // setAttribute(Qt::WA_DeleteOnClose);
 
     _cacheSizeBytes = cacheSizeGB * 1024ULL * 1024ULL * 1024ULL;
-    chunk_cache = new ChunkCache<uint8_t>(_cacheSizeBytes);
-    std::cout << "chunk cache size is " << cacheSizeGB << " gigabytes" << std::endl;
+    std::cout << "chunk cache budget is " << cacheSizeGB << " gigabytes" << std::endl;
 
     _surf_col = new CSurfaceCollection();
 
@@ -632,7 +631,7 @@ CWindow::CWindow(size_t cacheSizeGB) :
     connect(_surf_col, &CSurfaceCollection::sendPOIChanged, this, &CWindow::onFocusPOIChanged);
     connect(_surf_col, &CSurfaceCollection::sendSurfaceWillBeDeleted, this, &CWindow::onSurfaceWillBeDeleted);
 
-    _viewerManager = std::make_unique<ViewerManager>(_surf_col, _point_collection, chunk_cache, this);
+    _viewerManager = std::make_unique<ViewerManager>(_surf_col, _point_collection, this);
     _viewerManager->setSegmentationCursorMirroring(_mirrorCursorToSegmentation);
     connect(_viewerManager.get(), &ViewerManager::viewerCreated, this, [this](CVolumeViewer* viewer) {
         configureViewerConnections(viewer);
@@ -1064,7 +1063,6 @@ CWindow::~CWindow()
     setStatusBar(nullptr);
 
     CloseVolume();
-    delete chunk_cache;
     delete _surf_col;
     delete _point_collection;
 }
@@ -1329,9 +1327,12 @@ void CWindow::setVolume(std::shared_ptr<Volume> newvol)
     POI* existingFocusPoi = _surf_col ? _surf_col->poi("focus") : nullptr;
     currentVolume = newvol;
 
-    // Propagate cache size to Volume so its internal cache matches user config
+    // Propagate cache budget to Volume so its internal cache matches user config
     if (currentVolume && _cacheSizeBytes > 0) {
-        currentVolume->setCacheSize(_cacheSizeBytes);
+        // Split budget: ~80% hot, ~20% warm
+        size_t hotBytes = _cacheSizeBytes * 8 / 10;
+        size_t warmBytes = _cacheSizeBytes - hotBytes;
+        currentVolume->setCacheBudget(hotBytes, warmBytes);
     }
 
     if (previousVolume != newvol) {
@@ -1873,8 +1874,7 @@ void CWindow::CreateWidgets(void)
         _segmentationModule.get(),
         _segmentationWidget,
         _surf_col,
-        _viewerManager.get(),
-        chunk_cache
+        _viewerManager.get()
     };
     SegmentationGrower::UiCallbacks growerCallbacks{
         [this](const QString& text, int timeout) {
@@ -1930,7 +1930,7 @@ void CWindow::CreateWidgets(void)
     connect(_drawingWidget, &DrawingWidget::sendStatusMessageAvailable, this, &CWindow::onShowStatusMessage);
     connect(this, &CWindow::sendSurfacesLoaded, _drawingWidget, &DrawingWidget::onSurfacesLoaded);
 
-    _drawingWidget->setCache(chunk_cache);
+    // Cache is now obtained from volume->tieredCache()
 
     // Create Seeding widget
     _seedingWidget = new SeedingWidget(_point_collection, _surf_col);
@@ -1941,7 +1941,7 @@ void CWindow::CreateWidgets(void)
     connect(_seedingWidget, &SeedingWidget::sendStatusMessageAvailable, this, &CWindow::onShowStatusMessage);
     connect(this, &CWindow::sendSurfacesLoaded, _seedingWidget, &SeedingWidget::onSurfacesLoaded);
 
-    _seedingWidget->setCache(chunk_cache);
+    // Cache is now obtained from volume->tieredCache()
 
     // Create and add the point collection widget
     _point_collection_widget = new CPointCollectionWidget(_point_collection, this);
@@ -3704,7 +3704,7 @@ void CWindow::onAppendMaskPressed(void)
                               << ", coords[end]: " << coords(coords.rows-5, coords.cols-5) << std::endl;
                 }
 
-                render_image_from_coords(coords, img, ds, chunk_cache);
+                render_image_from_coords(coords, img, currentVolume->tieredCache(), 0);
             }
             cv::normalize(img, img, 0, 255, cv::NORM_MINMAX, CV_8U);
 
@@ -3734,7 +3734,7 @@ void CWindow::onAppendMaskPressed(void)
                 img = segViewer->renderCompositeForSurface(surf, maskSize);
             } else {
                 // Original rendering
-                render_surface_image(surf.get(), mask, img, ds, chunk_cache, 1.0f);
+                render_surface_image(surf.get(), mask, img, currentVolume->tieredCache(), 0, 1.0f);
             }
             cv::normalize(img, img, 0, 255, cv::NORM_MINMAX, CV_8U);
 
@@ -4278,7 +4278,6 @@ void CWindow::onGrowSegmentationSurface(SegmentationGrowthMethod method,
         _segmentationWidget,
         _surf_col,
         _viewerManager.get(),
-        chunk_cache
     };
     _segmentationGrower->updateContext(context);
 

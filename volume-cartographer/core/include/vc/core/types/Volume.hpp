@@ -18,7 +18,6 @@ namespace vc::cache {
     class DiskStore;
 }
 
-template <typename T> class ChunkCache;
 struct CompositeParams;
 
 class Volume
@@ -65,27 +64,17 @@ public:
 
     // Create a TieredChunkCache backed by this volume's zarr data.
     // diskStore: optional shared disk cache (nullptr to disable cold tier).
-    // config: cache size/thread settings (uses defaults if not provided).
     std::unique_ptr<vc::cache::TieredChunkCache> createTieredCache(
         std::shared_ptr<vc::cache::DiskStore> diskStore = nullptr) const;
 
-    // Get the dataset-to-level mapper for this volume.
-    // Maps z5::Dataset* → pyramid level index. Returns -1 for unknown datasets.
-    std::function<int(const vc::VcDataset*)> datasetLevelMapper() const;
-
     // --- Cache management ---
 
-    // Lazily create and return the chunk cache for this volume.
-    ChunkCache<uint8_t>& cache();
-    ChunkCache<uint16_t>& cache16();
+    // Lazily create and return the tiered chunk cache for this volume.
+    // Thread-safe: creates on first call, returns same cache thereafter.
+    vc::cache::TieredChunkCache* tieredCache();
 
-    void setCacheSize(size_t maxBytes);
-
-    // Enable the tiered chunk cache (hot/warm/cold/ice).
-    // Rewires existing ChunkCaches to use the tiered backend.
-    void enableTieredCache(
-        std::shared_ptr<vc::cache::DiskStore> diskStore = nullptr);
-    vc::cache::TieredChunkCache* tieredCache() const;
+    // Set cache budget (must be called before first tieredCache() access).
+    void setCacheBudget(size_t hotBytes, size_t warmBytes = 0);
 
     // --- Blocking sampling (CLI / batch) ---
 
@@ -196,10 +185,11 @@ protected:
     void zarrOpen();
 
     // Cache ownership
-    mutable std::unique_ptr<ChunkCache<uint8_t>> cache8_;
-    mutable std::unique_ptr<ChunkCache<uint16_t>> cache16_;
-    std::unique_ptr<vc::cache::TieredChunkCache> tieredCache_;
-    size_t cacheMaxBytes_ = 2ULL << 30;  // 2 GB default
+    mutable std::unique_ptr<vc::cache::TieredChunkCache> tieredCache_;
+    size_t cacheBudgetHot_ = 8ULL << 30;   // 8 GB default
+    size_t cacheBudgetWarm_ = 2ULL << 30;   // 2 GB default
+
+    void ensureTieredCache() const;
 
     // Bounding box of coords in chunk index space (helper for allChunksCached/prefetch)
     struct ChunkBBox {
@@ -222,4 +212,3 @@ protected:
     std::string remoteUrl_;
     std::string remoteDelimiter_ = ".";
 };
-

@@ -5,6 +5,7 @@
 
 #include "vc/core/types/VcDataset.hpp"
 #include "vc/core/util/Slicing.hpp"
+#include "vc/core/cache/SimpleCacheFactory.hpp"
 #include "vc/core/util/Surface.hpp"
 #include "vc/core/util/PlaneSurface.hpp"
 #include "vc/core/util/StreamOperators.hpp"
@@ -32,7 +33,7 @@ shape idCoord(const std::unique_ptr<vc::VcDataset> &ds, shape id)
     return coord;
 }
 
-void timed_plane_slice(Surface &plane, vc::VcDataset *ds, int size, ChunkCache<uint8_t> *cache, std::string msg, bool nearest_neighbor)
+void timed_plane_slice(Surface &plane, vc::cache::TieredChunkCache *cache, int size, std::string msg, bool nearest_neighbor)
 {
     cv::Mat_<cv::Vec3f> coords;
     cv::Mat_<cv::Vec3f> normals;
@@ -43,7 +44,7 @@ void timed_plane_slice(Surface &plane, vc::VcDataset *ds, int size, ChunkCache<u
     auto end = std::chrono::high_resolution_clock::now();
     std::cout << std::chrono::duration<double>(end-start).count() << "s gen_coords() " << msg << std::endl;
     start = std::chrono::high_resolution_clock::now();
-    readInterpolated3D(img, ds, coords, cache, nearest_neighbor);
+    readInterpolated3D(img, cache, 0, coords, nearest_neighbor);
     end = std::chrono::high_resolution_clock::now();
     std::cout << std::chrono::duration<double>(end-start).count() << "s slicing  " << size*size/1024.0/1024.0/std::chrono::duration<double>(end-start).count() << "MiB/s " << msg << std::endl;
 }
@@ -86,7 +87,7 @@ int main(int argc, char *argv[])
   // gen_plane.gen_coords(coords, 1000, 1000);
   // gen_grid.gen(&coords, &normals, {1000, 1000}, cv::Vec3f(0, 0, 0), 1.0, {0,0,0});
 
-    ChunkCache<uint8_t> chunk_cache(10*10e9);
+    auto chunk_cache = vc::cache::createSimpleTieredCache(ds.get(), size_t(10*10e9), ds->path());
 
   // auto start = std::chrono::high_resolution_clock::now();
   // readInterpolated3D(img,ds.get(),coords, &chunk_cache);
@@ -107,14 +108,14 @@ int main(int argc, char *argv[])
 
   std::cout << "testing different slice directions / caching" << std::endl;
   for(int r=0;r<3;r++) {
-      timed_plane_slice(plane_x, ds.get(), size, &chunk_cache, "yz cold", nearest_neighbor);
-      timed_plane_slice(plane_x, ds.get(), size, &chunk_cache, "yz", nearest_neighbor);
-      timed_plane_slice(plane_y, ds.get(), size, &chunk_cache, "xz cold", nearest_neighbor);
-      timed_plane_slice(plane_y, ds.get(), size, &chunk_cache, "xz", nearest_neighbor);
-      timed_plane_slice(plane_z, ds.get(), size, &chunk_cache, "xy cold", nearest_neighbor);
-      timed_plane_slice(plane_z, ds.get(), size, &chunk_cache, "xy", nearest_neighbor);
-      timed_plane_slice(gen_plane, ds.get(), size, &chunk_cache, "diag cold", nearest_neighbor);
-      timed_plane_slice(gen_plane, ds.get(), size, &chunk_cache, "diag", nearest_neighbor);
+      timed_plane_slice(plane_x, chunk_cache.get(), size,"yz cold", nearest_neighbor);
+      timed_plane_slice(plane_x, chunk_cache.get(), size,"yz", nearest_neighbor);
+      timed_plane_slice(plane_y, chunk_cache.get(), size,"xz cold", nearest_neighbor);
+      timed_plane_slice(plane_y, chunk_cache.get(), size,"xz", nearest_neighbor);
+      timed_plane_slice(plane_z, chunk_cache.get(), size,"xy cold", nearest_neighbor);
+      timed_plane_slice(plane_z, chunk_cache.get(), size,"xy", nearest_neighbor);
+      timed_plane_slice(gen_plane, chunk_cache.get(), size,"diag cold", nearest_neighbor);
+      timed_plane_slice(gen_plane, chunk_cache.get(), size,"diag", nearest_neighbor);
   }
 
 
@@ -130,7 +131,7 @@ int main(int argc, char *argv[])
 
         plane_s.gen(&coords, &normals, {size, size}, cv::Vec3f(0, 0, 0), 1.0, {0,0,0});
 
-        readInterpolated3D(img, ds.get(), coords, &chunk_cache);
+        readInterpolated3D(img, chunk_cache.get(), 0, coords);
     }
 
     auto end = std::chrono::high_resolution_clock::now();
@@ -149,7 +150,7 @@ int main(int argc, char *argv[])
 
           plane_s.gen(&coords, &normals, {size, size}, cv::Vec3f(0, 0, 0), 1.0, {0,0,0});
 
-          readInterpolated3D(img, ds.get(), coords, &chunk_cache);
+          readInterpolated3D(img, chunk_cache.get(), 0, coords);
       }
 
       auto end = std::chrono::high_resolution_clock::now();

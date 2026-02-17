@@ -14,6 +14,7 @@
 #include "vc/core/util/PlaneSurface.hpp"
 #include "vc/core/util/QuadSurface.hpp"
 #include "vc/core/util/Slicing.hpp"
+#include "vc/core/cache/SimpleCacheFactory.hpp"
 #include "vc/core/util/StreamOperators.hpp"
 #include "vc/core/util/Surface.hpp"
 
@@ -139,9 +140,9 @@ bool istype(const std::string &line, const std::string &type)
 
 
 struct DSReader {
-    vc::VcDataset* ds;
+    vc::cache::TieredChunkCache* cache;
     float scale;
-    ChunkCache<uint8_t>* cache;
+    int level;
     std::mutex read_mutex;
 };
 
@@ -168,7 +169,7 @@ float alphacomp_offset(DSReader &reader, cv::Vec3f point, cv::Vec3f normal, floa
         cv::Mat_<cv::Vec3f> offmat(size, normal*off*reader.scale);
         {
             std::lock_guard<std::mutex> lock(reader.read_mutex);
-            readInterpolated3D(slice, reader.ds, coords+offmat, reader.cache);
+            readInterpolated3D(slice, reader.cache, reader.level, coords+offmat);
         }
 
         cv::Mat floatslice;
@@ -267,7 +268,7 @@ int process_obj(const std::string& src,
     if (vertexcolor) {
         std::lock_guard<std::mutex> lock(reader.read_mutex);
         cv::Mat_<cv::Vec3f> vs_mat(static_cast<int>(vs.size()), 1, vs.data());
-        readInterpolated3D(slice, reader.ds, vs_mat*reader.scale, reader.cache);
+        readInterpolated3D(slice, reader.cache, reader.level, vs_mat*reader.scale);
     }
 
     obj.clear();
@@ -411,9 +412,9 @@ int main(int argc, char *argv[])
     std::cout << "zarr dataset size for scale group " << cfg.dataset_group << " " << ds->shape() << std::endl;
     std::cout << "chunk shape shape " << ds->defaultChunkShape() << std::endl;
     std::cout << "chunk cache size (bytes) " << cfg.cache_bytes << std::endl;
-    ChunkCache<uint8_t> chunk_cache(cfg.cache_bytes);
+    auto chunk_cache = vc::cache::createSimpleTieredCache(ds.get(), cfg.cache_bytes, ds->path());
 
-    DSReader reader = {ds.get(), cfg.reader_scale, &chunk_cache};
+    DSReader reader = {chunk_cache.get(), cfg.reader_scale, 0};
 
     MeasureLife timer("processing surface ...\n");
 

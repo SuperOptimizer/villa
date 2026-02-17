@@ -32,7 +32,6 @@
 #include <QDebug>
 #include "vc/core/cache/TieredChunkCache.hpp"
 
-constexpr double ZOOM_FACTOR = 1.05;
 constexpr auto COLOR_CURSOR = Qt::cyan;
 #define COLOR_FOCUS QColor(50, 255, 215)
 #define COLOR_SEG_YZ Qt::yellow
@@ -130,7 +129,6 @@ CTiledVolumeViewer::~CTiledVolumeViewer()
 // Data setup
 // ============================================================================
 
-void CTiledVolumeViewer::setCache(ChunkCache<uint8_t>* cache) { _cache = cache; }
 
 void CTiledVolumeViewer::setPointCollection(VCCollection* pc)
 {
@@ -175,10 +173,8 @@ void CTiledVolumeViewer::OnVolumeChanged(std::shared_ptr<Volume> vol)
     _pinReceived = 0;
     _pinLevel = -1;
 
-    // Enable tiered chunk cache for progressive rendering
-    if (!_volume->tieredCache() && _volume->numScales() >= 1) {
-        _volume->enableTieredCache();
-
+    // Set up tiered chunk cache for progressive rendering
+    if (_volume->numScales() >= 1) {
         // Wire chunk-ready callback BEFORE pin to ensure no callbacks are missed
         auto* ctrl = _renderController;
         auto* viewer = this;
@@ -262,6 +258,14 @@ void CTiledVolumeViewer::onSurfaceChanged(std::string name, std::shared_ptr<Surf
             if (!isEditUpdate) {
                 _camera.zOff = 0.0f;
             }
+
+            // Clear rendered tile cache and visible tiles — the cache keys
+            // have no surface identifier so stale entries from the previous
+            // surface would be served as false hits.
+            _renderController->cancelAll();
+            _renderController->sliceCache().clear();
+            _tileScene->clearAll();
+
             updateContentMinScale();
             rebuildContentGrid();
             centerViewport();
@@ -438,7 +442,16 @@ void CTiledVolumeViewer::panBy(int dx, int dy)
 
 void CTiledVolumeViewer::zoomAt(float factor, const QPointF& scenePos)
 {
-    const float newScale = std::max(TiledViewerCamera::roundScale(_camera.scale * factor), _contentMinScale);
+    // Convert continuous factor into discrete zoom-stop steps
+    int steps = (factor > 1.0f) ? 1 : (factor < 1.0f) ? -1 : 0;
+    if (steps == 0) return;
+    zoomStepsAt(steps, scenePos);
+}
+
+void CTiledVolumeViewer::zoomStepsAt(int steps, const QPointF& scenePos)
+{
+    const float newScale = std::max(
+        TiledViewerCamera::stepScale(_camera.scale, steps), _contentMinScale);
     if (std::abs(newScale - _camera.scale) < 0.001f) {
         return;
     }
@@ -465,38 +478,15 @@ void CTiledVolumeViewer::zoomAt(float factor, const QPointF& scenePos)
         }
     }
 
-    // Decide whether to do a full re-render or just a visual transform
-    bool pyramidChanged = (_camera.dsScaleIdx != oldDsIdx);
-    float logRatio = std::abs(std::log2(_camera.scale / _renderScale));
-    bool significantZoom = (logRatio > 0.15f);
-
-    if (pyramidChanged || significantZoom) {
-        _renderController->cancelZoomSettle();
-        fGraphicsView->resetTransform();
-        _renderScale = _camera.scale;
-        _renderSurfacePtr = _camera.surfacePtr;
-        rebuildContentGrid();
-        centerViewport();
-        _camera.invalidate();
-        submitRender();
-    } else {
-        // Small zoom change: apply visual transform, defer re-render
-        float ratio = _camera.scale / _renderScale;
-        float mouseX = static_cast<float>(vpPos.x());
-        float mouseY = static_cast<float>(vpPos.y());
-
-        float tx = (_renderSurfacePtr[0] - _camera.surfacePtr[0]) * _renderScale;
-        float ty = (_renderSurfacePtr[1] - _camera.surfacePtr[1]) * _renderScale;
-
-        QTransform t;
-        t.translate(mouseX, mouseY);
-        t.scale(ratio, ratio);
-        t.translate(-mouseX, -mouseY);
-        t.translate(tx, ty);
-        fGraphicsView->setTransform(t);
-
-        _renderController->startZoomSettle();
-    }
+    // Every stop change is significant — always do a full re-render
+    _renderController->cancelZoomSettle();
+    fGraphicsView->resetTransform();
+    _renderScale = _camera.scale;
+    _renderSurfacePtr = _camera.surfacePtr;
+    rebuildContentGrid();
+    centerViewport();
+    _camera.invalidate();
+    submitRender();
 }
 
 void CTiledVolumeViewer::setSliceOffset(float dz)
@@ -553,9 +543,12 @@ void CTiledVolumeViewer::onZoom(int steps, QPointF scene_point, Qt::KeyboardModi
             setSliceOffset(static_cast<float>(adjustedSteps));
         }
     } else {
-        float zoom = std::pow(static_cast<float>(ZOOM_FACTOR), steps);
-        zoomAt(zoom, scene_point);
-        emit overlaysUpdated();
+        // One zoom stop per scroll tick, regardless of scroll delta magnitude
+        int zoomDir = (steps > 0) ? 1 : (steps < 0) ? -1 : 0;
+        if (zoomDir != 0) {
+            zoomStepsAt(zoomDir, scene_point);
+            emit overlaysUpdated();
+        }
     }
 
     updateStatusLabel();
@@ -567,11 +560,14 @@ void CTiledVolumeViewer::adjustZoomByFactor(float factor)
     auto surf = _surfWeak.lock();
     if (!surf) return;
 
-    // Zoom centered on viewport center (pass as scene coords for zoomAt)
+    int steps = (factor > 1.0f) ? 1 : (factor < 1.0f) ? -1 : 0;
+    if (steps == 0) return;
+
+    // Zoom centered on viewport center
     QSize vpSize = fGraphicsView->viewport()->size();
     QPointF vpCenter(vpSize.width() * 0.5, vpSize.height() * 0.5);
     QPointF sceneCenter = fGraphicsView->mapToScene(vpCenter.toPoint());
-    zoomAt(factor, sceneCenter);
+    zoomStepsAt(steps, sceneCenter);
 
     emit overlaysUpdated();
     updateStatusLabel();
@@ -1033,7 +1029,17 @@ void CTiledVolumeViewer::onMouseRelease(QPointF scene_loc, Qt::MouseButton butto
     }
 }
 
-void CTiledVolumeViewer::onKeyRelease(int /*key*/, Qt::KeyboardModifiers /*modifiers*/) {}
+void CTiledVolumeViewer::onKeyRelease(int key, Qt::KeyboardModifiers /*modifiers*/)
+{
+    constexpr int PAN_PX = 64;
+    switch (key) {
+    case Qt::Key_Left:  panBy( PAN_PX, 0); break;
+    case Qt::Key_Right: panBy(-PAN_PX, 0); break;
+    case Qt::Key_Up:    panBy(0,  PAN_PX); break;
+    case Qt::Key_Down:  panBy(0, -PAN_PX); break;
+    default: break;
+    }
+}
 
 // ============================================================================
 // POI handling

@@ -34,13 +34,14 @@ struct NormalFitQualityWeightField {
     NormalFitQualityWeightField(std::unique_ptr<vc::VcDataset>&& rms_ds,
                                 std::unique_ptr<vc::VcDataset>&& frac_ds,
                                 float scale,
-                                ChunkCache<uint8_t>* cache,
                                 const std::string& cache_root,
                                 const std::string& unique_id)
         : _passthrough_rms{unique_id + "_fit_rms"},
           _passthrough_frac{unique_id + "_fit_frac"},
-          _rms(_passthrough_rms, rms_ds.get(), cache, cache_root),
-          _frac(_passthrough_frac, frac_ds.get(), cache, cache_root),
+          _cacheRms(vc::cache::createSimpleTieredCache(rms_ds.get(), 128ULL << 20, rms_ds->path())),
+          _cacheFrac(vc::cache::createSimpleTieredCache(frac_ds.get(), 128ULL << 20, frac_ds->path())),
+          _rms(_passthrough_rms, rms_ds.get(), _cacheRms.get(), 0, cache_root),
+          _frac(_passthrough_frac, frac_ds.get(), _cacheFrac.get(), 0, cache_root),
           _scale(scale),
           _rms_ds(std::move(rms_ds)),
           _frac_ds(std::move(frac_ds)),
@@ -88,6 +89,8 @@ private:
 
     passTroughComputor _passthrough_rms;
     passTroughComputor _passthrough_frac;
+    std::unique_ptr<vc::cache::TieredChunkCache> _cacheRms;
+    std::unique_ptr<vc::cache::TieredChunkCache> _cacheFrac;
     Chunked3d<uint8_t, passTroughComputor> _rms;
     Chunked3d<uint8_t, passTroughComputor> _frac;
     float _scale;

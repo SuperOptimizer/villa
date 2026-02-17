@@ -10,7 +10,6 @@ add_library(vc_core
         src/SurfacePatchIndex.cpp
         src/PointIndex.cpp
         src/Logging.cpp
-        src/ChunkCache.cpp
         src/Slicing.cpp
         src/Compositing.cpp
         src/PlaneSurface.cpp
@@ -23,6 +22,7 @@ add_library(vc_core
         src/cache/IOPool.cpp
         src/cache/TieredChunkCache.cpp
         src/cache/VcDecompressor.cpp
+        src/cache/SimpleCacheFactory.cpp
         src/VcDataset.cpp
         src/cache/HttpMetadataFetcher.cpp
         src/Geometry.cpp

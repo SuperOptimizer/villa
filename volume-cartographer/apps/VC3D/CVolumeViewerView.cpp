@@ -155,8 +155,22 @@ void CVolumeViewerView::mouseReleaseEvent(QMouseEvent *event)
 
 void CVolumeViewerView::keyPressEvent(QKeyEvent *event)
 {
-    // Key handling moved to global QShortcut objects in CWindow
-    // Pass the event to the base class
+    // When scroll-pan is disabled (tiled renderer), block arrow keys from
+    // reaching QGraphicsView's built-in scroll handler.  They'll be handled
+    // via sendKeyRelease → onKeyRelease in CTiledVolumeViewer instead.
+    if (_scrollPanDisabled) {
+        switch (event->key()) {
+        case Qt::Key_Left:
+        case Qt::Key_Right:
+        case Qt::Key_Up:
+        case Qt::Key_Down:
+            event->accept();
+            return;
+        default:
+            break;
+        }
+    }
+
     QGraphicsView::keyPressEvent(event);
 }
 

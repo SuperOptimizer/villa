@@ -1,6 +1,7 @@
 #include "vc/core/util/Surface.hpp"
 #include "vc/core/util/QuadSurface.hpp"
 #include "vc/core/util/Slicing.hpp"
+#include "vc/core/cache/SimpleCacheFactory.hpp"
 #include "vc/core/types/Volume.hpp"
 #include "vc/core/types/VcDataset.hpp"
 #include <opencv2/imgcodecs.hpp>
@@ -13,17 +14,16 @@ namespace fs = std::filesystem;
 void generate_mask(QuadSurface* surf,
                             cv::Mat_<uint8_t>& mask,
                             cv::Mat_<uint8_t>& img,
-                            vc::VcDataset* ds_high = nullptr,
-                            vc::VcDataset* ds_low = nullptr,
-                            ChunkCache<uint8_t>* cache = nullptr) {
+                            vc::cache::TieredChunkCache* cache_high = nullptr,
+                            vc::cache::TieredChunkCache* cache_low = nullptr) {
     cv::Mat_<cv::Vec3f> points = surf->rawPoints();
     cv::Mat_<uint8_t> rawMask = surf->validMask();
 
     // Choose resolution based on surface size
     if (points.cols >= 4000) {
         // Large surface: work at 0.25x scale
-        if (ds_low && cache) {
-            readInterpolated3D(img, ds_low, points * 0.25, cache);
+        if (cache_low) {
+            readInterpolated3D(img, cache_low, 0, points * 0.25);
         } else {
             img.create(points.size());
             img.setTo(0);
@@ -35,8 +35,8 @@ void generate_mask(QuadSurface* surf,
         cv::Vec2f scale = surf->scale();
         cv::resize(points, scaled, {0,0}, 1.0/scale[0], 1.0/scale[1], cv::INTER_CUBIC);
 
-        if (ds_high && cache) {
-            readInterpolated3D(img, ds_high, scaled, cache);
+        if (cache_high) {
+            readInterpolated3D(img, cache_high, 0, scaled);
             cv::resize(img, img, {0,0}, 0.25, 0.25, cv::INTER_CUBIC);
         } else {
             img.create(cv::Size(points.cols/4.0, points.rows/4.0));
@@ -98,31 +98,26 @@ int main(int argc, char *argv[])
 
     // If volume path provided, generate with image data
     if (!volume_path.empty()) {
-        std::shared_ptr<Volume> volume;
-        ChunkCache<uint8_t>* cache = nullptr;
-
         try {
-            volume = Volume::New(volume_path);
-            cache = new ChunkCache<uint8_t>(1ULL * 1024ULL * 1024ULL * 1024ULL);
+            auto volume = Volume::New(volume_path);
+            auto cache_high = vc::cache::createSimpleTieredCache(
+                volume->zarrDataset(0), 512ULL << 20, volume->zarrDataset(0)->path());
+            auto cache_low = vc::cache::createSimpleTieredCache(
+                volume->zarrDataset(2), 512ULL << 20, volume->zarrDataset(2)->path());
 
             generate_mask(surf.get(), mask, img,
-                         volume->zarrDataset(0),
-                         volume->zarrDataset(2),
-                         cache);
+                         cache_high.get(),
+                         cache_low.get());
 
             // Save as multi-layer TIFF
             std::vector<cv::Mat> layers = {mask, img};
             if (!cv::imwritemulti(mask_path.string(), layers)) {
                 std::cerr << "Error writing mask to " << mask_path << std::endl;
-                delete cache;
                 return EXIT_FAILURE;
             }
-
-            delete cache;
         }
         catch (const std::exception& e) {
             std::cerr << "Error processing volume: " << e.what() << std::endl;
-            if (cache) delete cache;
             return EXIT_FAILURE;
         }
     } else {

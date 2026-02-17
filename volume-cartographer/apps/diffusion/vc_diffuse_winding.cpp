@@ -29,6 +29,7 @@
 
 #include "vc/ui/VCCollection.hpp"
 #include "vc/core/util/Slicing.hpp"
+#include "vc/core/cache/SimpleCacheFactory.hpp"
 #include "vc/core/util/GridStore.hpp"
 
 #include "discrete.hpp"
@@ -196,8 +197,8 @@ int main(int argc, char** argv) {
     std::vector<size_t> slice_shape = {1, shape[1], shape[2]};
     xt::xtensor<uint8_t, 3, xt::layout_type::column_major> slice_data = xt::zeros<uint8_t>(slice_shape);
     cv::Vec3i offset = {z_slice, 0, 0};
-    ChunkCache<uint8_t> cache(4llu*1024*1024*1024);
-    readArea3D(slice_data, offset, ds.get(), &cache);
+    auto cache = vc::cache::createSimpleTieredCache(ds.get(), 4llu*1024*1024*1024, ds->path());
+    readArea3D(slice_data, offset, cache.get(), 0);
     
     for (int y = 0; y < shape[1]; ++y) {
         for (int x = 0; x < shape[2]; ++x) {

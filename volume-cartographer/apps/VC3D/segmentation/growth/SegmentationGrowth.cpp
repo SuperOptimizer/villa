@@ -144,16 +144,10 @@ QString directionToString(SegmentationGrowthDirection direction)
 }
 
 bool appendDirectionField(const SegmentationDirectionFieldConfig& config,
-                          ChunkCache<uint8_t>* cache,
                           const QString& cacheRoot,
                           std::vector<DirectionField>& out,
                           QString& error)
 {
-    if (!cache) {
-        error = QStringLiteral("Direction field loading failed: chunk cache unavailable");
-        return false;
-    }
-
     if (!config.isValid()) {
         return true;
     }
@@ -192,7 +186,6 @@ bool appendDirectionField(const SegmentationDirectionFieldConfig& config,
         out.emplace_back(segmentationDirectionFieldOrientationKey(config.orientation).toStdString(),
                          std::make_unique<Chunked3dVec3fFromUint8>(std::move(datasets),
                                                                    scaleFactor,
-                                                                   cache,
                                                                    cacheRootStr,
                                                                    uniqueId),
                          std::unique_ptr<Chunked3dFloatFromUint8>(),
@@ -462,7 +455,7 @@ TracerGrowthResult runTracerGrowth(const SegmentationGrowthRequest& request,
         }
 
         QString loadError;
-        if (!appendDirectionField(config, context.cache, context.cacheRoot, directionFields, loadError)) {
+        if (!appendDirectionField(config, context.cacheRoot, directionFields, loadError)) {
             result.error = loadError;
             return result;
         }
@@ -498,6 +491,7 @@ TracerGrowthResult runTracerGrowth(const SegmentationGrowthRequest& request,
         QuadSurface* surface = tracer(dataset,
                                       1.0f,
                                       context.cache,
+                                      context.level,
                                       origin,
                                       params,
                                       context.cacheRoot.toStdString(),

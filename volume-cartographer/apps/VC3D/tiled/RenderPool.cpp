@@ -3,6 +3,8 @@
 #include <QDebug>
 #include <QThreadPool>
 
+#include <omp.h>
+
 #include "vc/core/util/Surface.hpp"
 #include "vc/core/types/Volume.hpp"
 
@@ -29,6 +31,12 @@ void TileRenderTask::run()
         _pool->_pendingCount.fetch_sub(1, std::memory_order_relaxed);
         return;
     }
+
+    // Disable OMP parallelism for tile rendering — tiles are already parallelized
+    // at the task level by the RenderPool.  Without this, each tile render spawns
+    // ~N_cores OMP threads that busy-wait (spin) after the parallel region ends,
+    // causing 100% CPU usage at idle.
+    omp_set_num_threads(1);
 
     TileRenderResult result = TileRenderer::renderTile(_params, _surface, _volume);
 

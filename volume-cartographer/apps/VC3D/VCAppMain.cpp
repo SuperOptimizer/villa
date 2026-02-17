@@ -21,8 +21,11 @@ static void setThreadPoliciesEarly()
 {
     // overwrite=0: respect user's explicit env settings if present.
     setenv("OMP_WAIT_POLICY", "passive", 0);
+    setenv("KMP_BLOCKTIME", "0", 0);        // LLVM/Intel OpenMP: sleep immediately
+    setenv("KMP_AFFINITY", "disabled", 0);   // skip sched_setaffinity per fork/join
     setenv("OPENBLAS_NUM_THREADS", "1", 0);
-    setenv("GOTO_NUM_THREADS", "1", 0);  // legacy name for OpenBLAS
+    setenv("GOTO_NUM_THREADS", "1", 0);      // legacy name for OpenBLAS
+    setenv("MKL_NUM_THREADS", "1", 0);       // Intel MKL
 }
 __attribute__((section(".preinit_array"), used))
 static auto preinitFn = &setThreadPoliciesEarly;

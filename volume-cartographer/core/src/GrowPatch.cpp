@@ -694,8 +694,8 @@ struct Vec3iEqual {
 };
 
 struct SDTContext {
-    vc::VcDataset* dataset = nullptr;
-    ChunkCache<uint8_t>* cache = nullptr;
+    vc::cache::TieredChunkCache* cache = nullptr;
+    int level = 0;
     int chunk_size = 64;
     float threshold = 1.0f;
     float max_move = 20.0f;
@@ -713,7 +713,7 @@ static cv::Vec3i sdt_chunk_origin(const cv::Vec3f& world_pt, int chunk_size)
 
 static SDTChunk* get_or_compute_sdt_chunk(SDTContext& ctx, const cv::Vec3f& world_pt)
 {
-    if (!ctx.dataset || !ctx.cache || ctx.chunk_size <= 0) {
+    if (!ctx.cache || ctx.chunk_size <= 0) {
         return nullptr;
     }
 
@@ -732,7 +732,7 @@ static SDTChunk* get_or_compute_sdt_chunk(SDTContext& ctx, const cv::Vec3f& worl
         std::array<size_t, 3>{static_cast<size_t>(cs), static_cast<size_t>(cs), static_cast<size_t>(cs)});
     binary_data.fill(0);
 
-    auto shape = ctx.dataset->shape(); // z,y,x
+    auto shape = ctx.cache->levelShape(ctx.level); // z,y,x
     cv::Vec3i clamped_origin(
         std::max(0, origin[0]),
         std::max(0, origin[1]),
@@ -750,7 +750,7 @@ static SDTChunk* get_or_compute_sdt_chunk(SDTContext& ctx, const cv::Vec3f& worl
             std::array<size_t, 3>{static_cast<size_t>(read_size_zyx[0]),
                                   static_cast<size_t>(read_size_zyx[1]),
                                   static_cast<size_t>(read_size_zyx[2])});
-        readArea3D(read_buf, clamped_origin_zyx, ctx.dataset, ctx.cache);
+        readArea3D(read_buf, clamped_origin_zyx, ctx.cache, ctx.level);
 
         const cv::Vec3i offset = clamped_origin - origin;
         for (int z = 0; z < read_size[2]; ++z) {
@@ -2751,7 +2751,7 @@ struct thresholdedDistance
 };
 
 
-QuadSurface *tracer(vc::VcDataset *ds, float scale, ChunkCache<uint8_t> *cache, cv::Vec3f origin, const nlohmann::json &params, const std::string &cache_root, float voxelsize, std::vector<DirectionField> const &direction_fields, QuadSurface* resume_surf, const std::filesystem::path& tgt_path, const nlohmann::json& meta_params, const VCCollection &corrections)
+QuadSurface *tracer(vc::VcDataset *ds, float scale, vc::cache::TieredChunkCache *cache, int level, cv::Vec3f origin, const nlohmann::json &params, const std::string &cache_root, float voxelsize, std::vector<DirectionField> const &direction_fields, QuadSurface* resume_surf, const std::filesystem::path& tgt_path, const nlohmann::json& meta_params, const VCCollection &corrections)
 {
     std::unique_ptr<NeuralTracerConnection> neural_tracer;
     int pre_neural_gens = 0, neural_batch_size = 1;
@@ -2787,8 +2787,8 @@ QuadSurface *tracer(vc::VcDataset *ds, float scale, ChunkCache<uint8_t> *cache, 
     }
     if (trace_data.cell_reopt_mode && loss_settings.w[LossType::SURFACE_SDT] > 0.0f) {
         auto sdt_context = std::make_shared<SDTContext>();
-        sdt_context->dataset = ds;
         sdt_context->cache = cache;
+        sdt_context->level = level;
         sdt_context->chunk_size = std::clamp(params.value("sdt_chunk_size", 64), 32, 256);
         sdt_context->threshold = std::clamp(static_cast<float>(params.value("sdt_threshold", 1.0)), 0.0f, 255.0f);
         sdt_context->max_move = std::max(0.0f, static_cast<float>(params.value("sdt_max_move", 20.0)));
@@ -2895,7 +2895,7 @@ QuadSurface *tracer(vc::VcDataset *ds, float scale, ChunkCache<uint8_t> *cache, 
             }
 
             const std::string unique_id = std::to_string(std::hash<std::string>{}(zarr_root.string()));
-            trace_data.normal3d_field = std::make_unique<Chunked3dVec3fFromUint8>(std::move(dss), scale_factor, cache, cache_root, unique_id + "_n3d");
+            trace_data.normal3d_field = std::make_unique<Chunked3dVec3fFromUint8>(std::move(dss), scale_factor, cache_root, unique_id + "_n3d");
 
             // Optional normal-fit diagnostics (written by vc_ngrids) to modulate loss weights.
             // Expected layout: <root>/fit_rms/0 and <root>/fit_frac_short_paths/0 (uint8, ZYX).
@@ -2907,7 +2907,7 @@ QuadSurface *tracer(vc::VcDataset *ds, float scale, ChunkCache<uint8_t> *cache, 
                     zarr_root / "fit_frac_short_paths" / std::to_string(scale_level));
 
                 trace_data.normal3d_fit_quality = std::make_unique<NormalFitQualityWeightField>(
-                    std::move(ds_rms), std::move(ds_frac), scale_factor, cache, cache_root, unique_id + "_n3d_fitq");
+                    std::move(ds_rms), std::move(ds_frac), scale_factor, cache_root, unique_id + "_n3d_fitq");
             } catch (const std::exception& e) {
                 std::cerr << "Normal3d fit-quality fields not loaded (optional): " << e.what() << std::endl;
                 trace_data.normal3d_fit_quality.reset();
@@ -3094,13 +3094,13 @@ QuadSurface *tracer(vc::VcDataset *ds, float scale, ChunkCache<uint8_t> *cache, 
 
     // Together these represent the cached distance-transform of the thresholded surface volume
     thresholdedDistance compute;
-    Chunked3d<uint8_t,thresholdedDistance> proc_tensor(compute, ds, cache, cache_root);
+    Chunked3d<uint8_t,thresholdedDistance> proc_tensor(compute, ds, cache, level, cache_root);
 
     if (loss_settings.w[LossType::SPACELINE] > 0.0f && loss_settings.space_line_steps >= 2) {
         trace_data.space_line_compute = std::make_unique<lineLossDistance>(loss_settings.space_line_threshold,
                                                                            loss_settings.space_line_invert);
         trace_data.space_line_volume = std::make_unique<Chunked3d<uint8_t, lineLossDistance>>(
-            *trace_data.space_line_compute, ds, cache, cache_root);
+            *trace_data.space_line_compute, ds, cache, level, cache_root);
         std::cout << "Space-line loss EDT enabled (threshold=" << loss_settings.space_line_threshold
                   << ", steps=" << loss_settings.space_line_steps
                   << ", invert=" << loss_settings.space_line_invert << ")" << std::endl;
@@ -3108,7 +3108,7 @@ QuadSurface *tracer(vc::VcDataset *ds, float scale, ChunkCache<uint8_t> *cache, 
 
     // Debug: test the chunk cache by reading one voxel
     passTroughComputor pass;
-    Chunked3d<uint8_t,passTroughComputor> dbg_tensor(pass, ds, cache);
+    Chunked3d<uint8_t,passTroughComputor> dbg_tensor(pass, ds, cache, level);
     trace_data.raw_volume = &dbg_tensor;
     std::cout << "seed val " << origin << " " <<
     (int)dbg_tensor(origin[2],origin[1],origin[0]) << std::endl;

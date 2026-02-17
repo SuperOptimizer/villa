@@ -20,6 +20,7 @@
 
 #include "vc/core/types/VcDataset.hpp"
 #include "vc/core/util/Slicing.hpp"
+#include "vc/core/cache/SimpleCacheFactory.hpp"
 #include <vc/core/util/GridStore.hpp>
 #include "vc/core/util/Thinning.hpp"
 #include "support.hpp"
@@ -288,7 +289,7 @@ void run_generate(const po::variables_map& vm) {
     std::ofstream o(output_fs_path / "metadata.json");
     o << std::setw(4) << metadata << std::endl;
 
-    ChunkCache<uint8_t> cache(10llu*1024*1024*1024);
+    auto cache = vc::cache::createSimpleTieredCache(ds.get(), 10llu*1024*1024*1024, ds->path());
 
     int num_threads = omp_get_max_threads();
     if (num_threads == 0) num_threads = 1;
@@ -374,7 +375,7 @@ void run_generate(const po::variables_map& vm) {
             xt::xtensor<uint8_t, 3, xt::layout_type::column_major> chunk_data =
                 xt::xtensor<uint8_t, 3, xt::layout_type::column_major>::from_shape(chunk_shape);
             chunk_timer.mark("xtensor init");
-            readArea3D(chunk_data, chunk_offset, ds.get(), &cache);
+            readArea3D(chunk_data, chunk_offset, cache.get(), 0);
             chunk_timer.mark("read_chunk");
 
             for (const auto& mark : chunk_timer.getMarks()) {

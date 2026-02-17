@@ -12,6 +12,7 @@
 #include <opencv2/videoio.hpp>
 
 #include "vc/core/util/Slicing.hpp"
+#include "vc/core/cache/SimpleCacheFactory.hpp"
 #include "vc/core/util/Surface.hpp"
 #include "vc/core/util/QuadSurface.hpp"
 
@@ -97,7 +98,7 @@ int main(int argc, char *argv[])
 
     cv::Size tgt_size = {3840, 2160};
 
-    ChunkCache<uint8_t> chunk_cache(10e9);
+    auto chunk_cache = vc::cache::createSimpleTieredCache(ds.get(), 10e9, ds->path());
 
     cv::VideoWriter vid(tgt_fn, cv::VideoWriter::fourcc('H','F','Y','U'), 5, tgt_size);
 
@@ -118,7 +119,7 @@ int main(int argc, char *argv[])
 
         points = points*0.5;
 
-        readInterpolated3D(img, ds.get(), points, &chunk_cache);
+        readInterpolated3D(img, chunk_cache.get(), 0, points);
 
         cv::Mat_<uint8_t> frame(tgt_size, 0);
         int pad_x = (tgt_size.width - img.size().width)/2;

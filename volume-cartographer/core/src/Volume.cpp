@@ -9,7 +9,6 @@
 #include <nlohmann/json.hpp>
 
 #include "vc/core/util/LoadJson.hpp"
-#include "vc/core/util/ChunkCache.hpp"
 #include "vc/core/util/Slicing.hpp"
 #include "vc/core/cache/TieredChunkCache.hpp"
 #include "vc/core/cache/ChunkSource.hpp"
@@ -232,8 +231,6 @@ std::unique_ptr<vc::cache::TieredChunkCache> Volume::createTieredCache(
             remoteUrl_, remoteDelimiter_, std::move(levels));
 
         // For remote volumes, use the staging dir itself as the disk store.
-        // Chunks are written with zarr-compatible paths so the staging dir
-        // progressively becomes a complete local zarr volume.
         if (!diskStore) {
             vc::cache::DiskStore::Config dsCfg;
             dsCfg.root = path_;
@@ -256,6 +253,8 @@ std::unique_ptr<vc::cache::TieredChunkCache> Volume::createTieredCache(
 
     vc::cache::TieredChunkCache::Config config;
     config.volumeId = id();
+    config.hotMaxBytes = cacheBudgetHot_;
+    config.warmMaxBytes = cacheBudgetWarm_;
 
     return std::make_unique<vc::cache::TieredChunkCache>(
         std::move(config),
@@ -264,69 +263,27 @@ std::unique_ptr<vc::cache::TieredChunkCache> Volume::createTieredCache(
         std::move(diskStore));
 }
 
-std::function<int(const vc::VcDataset*)> Volume::datasetLevelMapper() const
-{
-    // Build a map from dataset pointer to level index
-    std::unordered_map<const vc::VcDataset*, int> dsToLevel;
-    for (size_t i = 0; i < zarrDs_.size(); i++) {
-        dsToLevel[zarrDs_[i].get()] = static_cast<int>(i);
-    }
-    return [dsToLevel = std::move(dsToLevel)](const vc::VcDataset* ds) -> int {
-        auto it = dsToLevel.find(ds);
-        return (it != dsToLevel.end()) ? it->second : -1;
-    };
-}
-
 // ============================================================================
 // Cache management
 // ============================================================================
 
-ChunkCache<uint8_t>& Volume::cache()
+void Volume::ensureTieredCache() const
 {
-    if (!cache8_) {
-        cache8_ = std::make_unique<ChunkCache<uint8_t>>(cacheMaxBytes_);
-        if (tieredCache_)
-            cache8_->setTieredBackend(tieredCache_.get(), datasetLevelMapper());
-    }
-    return *cache8_;
-}
-
-ChunkCache<uint16_t>& Volume::cache16()
-{
-    if (!cache16_) {
-        cache16_ = std::make_unique<ChunkCache<uint16_t>>(cacheMaxBytes_);
-        if (tieredCache_)
-            cache16_->setTieredBackend(tieredCache_.get(), datasetLevelMapper());
-    }
-    return *cache16_;
-}
-
-void Volume::setCacheSize(size_t maxBytes)
-{
-    cacheMaxBytes_ = maxBytes;
-    if (cache8_) cache8_->setMaxBytes(maxBytes);
-    if (cache16_) cache16_->setMaxBytes(maxBytes);
-}
-
-void Volume::enableTieredCache(std::shared_ptr<vc::cache::DiskStore> diskStore)
-{
-    fprintf(stderr, "[TILED] enableTieredCache: path=%s numScales=%zu\n",
-            path_.string().c_str(), zarrDs_.size());
-    tieredCache_ = createTieredCache(std::move(diskStore));
-    fprintf(stderr, "[TILED] enableTieredCache: tieredCache=%p numLevels=%d\n",
-            (void*)tieredCache_.get(),
-            tieredCache_ ? tieredCache_->numLevels() : -1);
-    // Rewire existing caches if they exist
-    if (tieredCache_) {
-        auto mapper = datasetLevelMapper();
-        if (cache8_)  cache8_->setTieredBackend(tieredCache_.get(), mapper);
-        if (cache16_) cache16_->setTieredBackend(tieredCache_.get(), mapper);
+    if (!tieredCache_) {
+        tieredCache_ = const_cast<Volume*>(this)->createTieredCache();
     }
 }
 
-vc::cache::TieredChunkCache* Volume::tieredCache() const
+vc::cache::TieredChunkCache* Volume::tieredCache()
 {
+    ensureTieredCache();
     return tieredCache_.get();
+}
+
+void Volume::setCacheBudget(size_t hotBytes, size_t warmBytes)
+{
+    cacheBudgetHot_ = hotBytes;
+    cacheBudgetWarm_ = warmBytes;
 }
 
 // ============================================================================
@@ -337,8 +294,6 @@ void Volume::sample(cv::Mat_<uint8_t>& out,
                     const cv::Mat_<cv::Vec3f>& coords,
                     int level, vc::Sampling method)
 {
-    vc::VcDataset* ds = zarrDataset(level);
-    if (!ds) return;
     float scale = 1.0f / std::pow(2.0f, level);
     cv::Mat_<cv::Vec3f> scaled;
     if (level > 0) {
@@ -346,7 +301,7 @@ void Volume::sample(cv::Mat_<uint8_t>& out,
     } else {
         scaled = coords;
     }
-    readInterpolated3D(out, ds, scaled, &cache(), method);
+    readInterpolated3D(out, tieredCache(), level, scaled, method);
 }
 
 void Volume::sampleComposite(cv::Mat_<uint8_t>& out,
@@ -356,8 +311,6 @@ void Volume::sampleComposite(cv::Mat_<uint8_t>& out,
                               const CompositeParams& params,
                               int level)
 {
-    vc::VcDataset* ds = zarrDataset(level);
-    if (!ds) return;
     float scale = 1.0f / std::pow(2.0f, level);
     cv::Mat_<cv::Vec3f> scaled;
     if (level > 0) {
@@ -365,8 +318,8 @@ void Volume::sampleComposite(cv::Mat_<uint8_t>& out,
     } else {
         scaled = baseCoords;
     }
-    readCompositeFast(out, ds, scaled, normals, scale,
-                      zStart, zEnd, params, cache());
+    readCompositeFast(out, tieredCache(), level, scaled, normals, scale,
+                      zStart, zEnd, params);
 }
 
 int Volume::sampleBestEffort(cv::Mat_<uint8_t>& out,
@@ -380,7 +333,7 @@ int Volume::sampleBestEffort(cv::Mat_<uint8_t>& out,
         if (allChunksCached(coords, lvl)) {
             float scale = 1.0f / std::pow(2.0f, lvl);
             cv::Mat_<cv::Vec3f> scaled = (lvl > 0) ? cv::Mat_<cv::Vec3f>(coords * scale) : coords;
-            readInterpolated3D(out, zarrDataset(lvl), scaled, &cache(), method);
+            readInterpolated3D(out, tieredCache(), lvl, scaled, method);
             // If we fell back to a coarser level, prefetch the requested level
             if (lvl > level) {
                 prefetchChunks(coords, level);
@@ -398,7 +351,7 @@ int Volume::sampleBestEffort(cv::Mat_<uint8_t>& out,
     });
     float scale = 1.0f / std::pow(2.0f, last);
     cv::Mat_<cv::Vec3f> scaled = (last > 0) ? cv::Mat_<cv::Vec3f>(coords * scale) : coords;
-    readInterpolated3D(out, zarrDataset(last), scaled, &cache(), method);
+    readInterpolated3D(out, tieredCache(), last, scaled, method);
     // Prefetch the requested level in background
     if (last > level) {
         prefetchChunks(coords, level);
@@ -535,14 +488,16 @@ bool Volume::allCompositeChunksCached(
     const cv::Mat_<cv::Vec3f>& normals,
     int zStart, int zEnd, int level) const
 {
+    ensureTieredCache();
+    if (!tieredCache_ || coords.empty()) return false;
+
     vc::VcDataset* ds = zarrDataset(level);
-    if (!ds || coords.empty()) return false;
+    if (!ds) return false;
 
     float scale = 1.0f / std::pow(2.0f, level);
     auto cs = ds->defaultChunkShape();  // {cz, cy, cx}
     const auto& shape = ds->shape();    // {z, y, x}
 
-    // Compute bounding box of all sampling points including normal offsets
     float loX = std::numeric_limits<float>::max();
     float loY = std::numeric_limits<float>::max();
     float loZ = std::numeric_limits<float>::max();
@@ -560,7 +515,6 @@ bool Volume::allCompositeChunksCached(
             float sz = v[2] * scale;
 
             cv::Vec3f n = hasNormals ? normals(r, c) : cv::Vec3f(1, 0, 0);
-            // Normal offsets are scaled by zStep (which is `scale` itself)
             for (int z : {zStart, zEnd}) {
                 float off = z * scale;
                 float px = sx + n[0] * off;
@@ -573,7 +527,6 @@ bool Volume::allCompositeChunksCached(
         }
     }
 
-    // Add interpolation margin
     loX -= 1.0f; loY -= 1.0f; loZ -= 1.0f;
     hiX += 1.0f; hiY += 1.0f; hiZ += 1.0f;
 
@@ -589,24 +542,11 @@ bool Volume::allCompositeChunksCached(
 
     if (minIx > maxIx || minIy > maxIy || minIz > maxIz) return false;
 
-    // Prefer tiered cache: non-blocking get() checks hot + warm tiers
-    if (tieredCache_) {
-        for (int iz = minIz; iz <= maxIz; iz++)
-            for (int iy = minIy; iy <= maxIy; iy++)
-                for (int ix = minIx; ix <= maxIx; ix++)
-                    if (!tieredCache_->get(vc::cache::ChunkKey{level, iz, iy, ix}))
-                        return false;
-        return true;
-    }
-
-    // Fallback: check ChunkCache local map
-    if (!cache8_) return false;
     for (int iz = minIz; iz <= maxIz; iz++)
         for (int iy = minIy; iy <= maxIy; iy++)
             for (int ix = minIx; ix <= maxIx; ix++)
-                if (!cache8_->getIfCached(ds, iz, iy, ix))
+                if (!tieredCache_->get(vc::cache::ChunkKey{level, iz, iy, ix}))
                     return false;
-
     return true;
 }
 
@@ -615,6 +555,9 @@ void Volume::prefetchCompositeChunks(
     const cv::Mat_<cv::Vec3f>& normals,
     int zStart, int zEnd, int level)
 {
+    ensureTieredCache();
+    if (!tieredCache_) return;
+
     vc::VcDataset* ds = zarrDataset(level);
     if (!ds || coords.empty()) return;
 
@@ -666,38 +609,26 @@ void Volume::prefetchCompositeChunks(
 
     if (minIx > maxIx || minIy > maxIy || minIz > maxIz) return;
 
-    if (tieredCache_) {
-        tieredCache_->prefetchRegion(level, minIz, minIy, minIx, maxIz, maxIy, maxIx);
-    } else {
-        cache().prefetch(ds, minIz, minIy, minIx, maxIz, maxIy, maxIx);
-    }
+    tieredCache_->prefetchRegion(level, minIz, minIy, minIx, maxIz, maxIy, maxIx);
 }
 
 void Volume::pinCoarsestLevel(bool blocking)
 {
-    if (!tieredCache_ || zarrDs_.empty()) {
-        fprintf(stderr, "[TILED] pinCoarsestLevel: SKIP tieredCache=%p zarrDs=%zu\n",
-                (void*)tieredCache_.get(), zarrDs_.size());
-        return;
-    }
+    ensureTieredCache();
+    if (!tieredCache_ || zarrDs_.empty()) return;
+
     int last = static_cast<int>(zarrDs_.size()) - 1;
     vc::VcDataset* ds = zarrDataset(last);
-    if (!ds) {
-        fprintf(stderr, "[TILED] pinCoarsestLevel: no dataset at level %d\n", last);
-        return;
-    }
-    const auto& shape = ds->shape();         // {z, y, x}
-    const auto& chunks = ds->defaultChunkShape(); // {cz, cy, cx}
+    if (!ds) return;
+
+    const auto& shape = ds->shape();
+    const auto& chunks = ds->defaultChunkShape();
     std::array<int, 3> gridDims = {
         static_cast<int>((shape[0] + chunks[0] - 1) / chunks[0]),
         static_cast<int>((shape[1] + chunks[1] - 1) / chunks[1]),
         static_cast<int>((shape[2] + chunks[2] - 1) / chunks[2])
     };
-    fprintf(stderr, "[TILED] pinCoarsestLevel: level=%d shape=(%zu,%zu,%zu) chunks=(%zu,%zu,%zu) grid=(%d,%d,%d) blocking=%d\n",
-            last, shape[0], shape[1], shape[2], chunks[0], chunks[1], chunks[2],
-            gridDims[0], gridDims[1], gridDims[2], blocking);
     tieredCache_->pinLevel(last, gridDims, blocking);
-    fprintf(stderr, "[TILED] pinCoarsestLevel: done\n");
 }
 
 // ============================================================================
@@ -752,55 +683,31 @@ Volume::ChunkBBox Volume::coordsToChunkBBox(
 
 bool Volume::allChunksCached(const cv::Mat_<cv::Vec3f>& coords, int level) const
 {
-    vc::VcDataset* ds = zarrDataset(level);
-    if (!ds) return false;
+    ensureTieredCache();
+    if (!tieredCache_) return false;
 
     auto bb = coordsToChunkBBox(coords, level);
     if (bb.minIx > bb.maxIx) return false;  // invalid bbox
 
-    int totalChunks = (bb.maxIz - bb.minIz + 1) * (bb.maxIy - bb.minIy + 1) * (bb.maxIx - bb.minIx + 1);
-
-    // Prefer tiered cache: its non-blocking get() checks hot + warm tiers
-    // and returns immediately (nullptr on miss). Prefetched chunks land in
-    // hot tier, so this correctly detects them.
-    if (tieredCache_) {
-        for (int iz = bb.minIz; iz <= bb.maxIz; iz++)
-            for (int iy = bb.minIy; iy <= bb.maxIy; iy++)
-                for (int ix = bb.minIx; ix <= bb.maxIx; ix++)
-                    if (!tieredCache_->get(vc::cache::ChunkKey{level, iz, iy, ix}))
-                        return false;
-        return true;
-    }
-
-    // Fallback: check ChunkCache local map
-    if (!cache8_) return false;
     for (int iz = bb.minIz; iz <= bb.maxIz; iz++)
         for (int iy = bb.minIy; iy <= bb.maxIy; iy++)
             for (int ix = bb.minIx; ix <= bb.maxIx; ix++)
-                if (!cache8_->getIfCached(ds, iz, iy, ix))
+                if (!tieredCache_->get(vc::cache::ChunkKey{level, iz, iy, ix}))
                     return false;
     return true;
 }
 
 void Volume::prefetchChunks(const cv::Mat_<cv::Vec3f>& coords, int level)
 {
+    ensureTieredCache();
+    if (!tieredCache_) return;
+
     auto bb = coordsToChunkBBox(coords, level);
     if (bb.minIx > bb.maxIx) return;  // invalid bbox
 
-    // Prefer tiered cache (non-blocking async prefetch)
-    if (tieredCache_) {
-        tieredCache_->prefetchRegion(level,
-            bb.minIz, bb.minIy, bb.minIx,
-            bb.maxIz, bb.maxIy, bb.maxIx);
-    } else {
-        // Fallback: ChunkCache::prefetch (blocking, OMP parallel)
-        vc::VcDataset* ds = zarrDataset(level);
-        if (ds) {
-            cache().prefetch(ds,
-                bb.minIz, bb.minIy, bb.minIx,
-                bb.maxIz, bb.maxIy, bb.maxIx);
-        }
-    }
+    tieredCache_->prefetchRegion(level,
+        bb.minIz, bb.minIy, bb.minIx,
+        bb.maxIz, bb.maxIy, bb.maxIx);
 }
 
 void Volume::cancelPendingPrefetch()
@@ -812,6 +719,7 @@ void Volume::cancelPendingPrefetch()
 
 void Volume::prefetchWorldBBox(const cv::Vec3f& lo, const cv::Vec3f& hi, int level)
 {
+    ensureTieredCache();
     if (!tieredCache_) return;
 
     vc::VcDataset* ds = zarrDataset(level);
@@ -821,8 +729,6 @@ void Volume::prefetchWorldBBox(const cv::Vec3f& lo, const cv::Vec3f& hi, int lev
     auto cs = ds->defaultChunkShape();  // {cz, cy, cx}
     const auto& shape = ds->shape();    // {z, y, x}
 
-    // Scale world coords to level coords, add 1-voxel interpolation margin
-    // Coords are (x, y, z) in Vec3f; chunks are (z, y, x)
     int minIx = std::max(0, static_cast<int>(std::floor(lo[0] * scale - 1) / static_cast<int>(cs[2])));
     int maxIx = std::min(static_cast<int>((shape[2] - 1) / cs[2]),
                          static_cast<int>(std::floor(hi[0] * scale + 1) / static_cast<int>(cs[2])));

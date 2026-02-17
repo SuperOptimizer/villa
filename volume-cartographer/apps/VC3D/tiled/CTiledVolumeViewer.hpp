@@ -20,7 +20,6 @@
 #include "CVolumeViewerView.hpp"
 #include "vc/core/types/Volume.hpp"
 #include "vc/core/util/SurfacePatchIndex.hpp"
-#include "vc/core/util/ChunkCache.hpp"
 #include "vc/core/util/Slicing.hpp"
 
 #include "tiled/TiledViewerCamera.hpp"
@@ -50,7 +49,6 @@ public:
     ~CTiledVolumeViewer();
 
     // --- Data setup ---
-    void setCache(ChunkCache<uint8_t>* cache);
     void setPointCollection(VCCollection* point_collection);
     void setSurface(const std::string& name);
     void setIntersects(const std::set<std::string>& set);
@@ -65,8 +63,8 @@ public:
     // --- Accessors ---
     std::string surfName() const { return _surfName; }
     std::shared_ptr<Volume> currentVolume() const { return _volume; }
-    ChunkCache<uint8_t>* chunkCachePtr() const {
-        return _volume ? &_volume->cache() : _cache;
+    vc::cache::TieredChunkCache* chunkCachePtr() const override {
+        return _volume ? _volume->tieredCache() : nullptr;
     }
     int datasetScaleIndex() const { return _camera.dsScaleIdx; }
     float datasetScaleFactor() const { return _camera.dsScale; }
@@ -238,6 +236,7 @@ private:
     // Camera-based navigation (replaces scrollbar-based)
     void panBy(int dx, int dy);
     void zoomAt(float factor, const QPointF& widgetPos);
+    void zoomStepsAt(int steps, const QPointF& scenePos);
     void setSliceOffset(float dz);
 
     // Build TileRenderParams for a given tile key
@@ -277,7 +276,6 @@ private:
     std::shared_ptr<Volume> _volume;
     std::weak_ptr<Surface> _surfWeak;
     std::string _surfName;
-    ChunkCache<uint8_t>* _cache = nullptr;
     CSurfaceCollection* _surfCol = nullptr;
     ViewerManager* _viewerManager = nullptr;
     VCCollection* _pointCollection = nullptr;

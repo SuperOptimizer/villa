@@ -1,6 +1,7 @@
 #include "TileRenderController.hpp"
 
 #include <QDebug>
+#include <QThread>
 #include <QTimer>
 #include <QImage>
 #include <vector>
@@ -12,7 +13,7 @@
 TileRenderController::TileRenderController(TileScene* tileScene, QObject* parent)
     : QObject(parent)
     , _tileScene(tileScene)
-    , _renderPool(2, this)
+    , _renderPool(std::max(2, QThread::idealThreadCount()), this)
 {
     // Tick timer (~30 Hz) handles periodic work; started on-demand, auto-stops
     // when idle to avoid burning CPU.
@@ -174,10 +175,11 @@ void TileRenderController::tick()
         _chunkArrived = false;
     }
 
-    // 3. Progressive refinement: re-submit stale tiles when pool is idle
-    //    or when new chunks just arrived (some tiles may now have all chunks cached).
-    if (_progressiveEnabled && _lastSurface && _lastVolume && _lastBuildParams
-        && (chunksJustArrived || _renderPool.pendingCount() == 0)) {
+    // 3. Progressive refinement: re-submit stale tiles only when new chunks
+    //    have arrived (meaning finer data may now be available).
+    //    Without the chunksJustArrived guard, idle pool + stale tiles = infinite loop.
+    if (_progressiveEnabled && chunksJustArrived
+        && _lastSurface && _lastVolume && _lastBuildParams) {
         auto stale = _tileScene->staleTilesInRect(_desiredLevel, _currentEpoch, _lastViewportRect, 1);
         if (!stale.empty()) {
             for (const auto& wk : stale) {

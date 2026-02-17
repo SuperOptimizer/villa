@@ -43,12 +43,10 @@ struct CellRegion {
 
 ViewerManager::ViewerManager(CSurfaceCollection* surfaces,
                              VCCollection* points,
-                             ChunkCache<uint8_t>* cache,
                              QObject* parent)
     : QObject(parent)
     , _surfaces(surfaces)
     , _points(points)
-    , _chunkCache(cache)
 {
     using namespace vc3d::settings;
     QSettings settings(vc3d::settingsFilePath(), QSettings::IniFormat);
@@ -100,7 +98,6 @@ CVolumeViewer* ViewerManager::createViewer(const std::string& surfaceName,
     win->setWindowFlags(Qt::WindowTitleHint | Qt::WindowMinMaxButtonsHint);
     win->installEventFilter(viewer);
 
-    viewer->setCache(_chunkCache);
     viewer->setPointCollection(_points);
 
     if (_surfaces) {
@@ -182,7 +179,6 @@ CTiledVolumeViewer* ViewerManager::createTiledViewer(const std::string& surfaceN
     win->setWindowFlags(Qt::WindowTitleHint | Qt::WindowMinMaxButtonsHint);
     win->installEventFilter(viewer);
 
-    viewer->setCache(_chunkCache);
     viewer->setPointCollection(_points);
 
     if (_surfaces) {
