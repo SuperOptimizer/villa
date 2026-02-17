@@ -1,47 +1,38 @@
 #include <nlohmann/json.hpp>
 
-#include <xtensor/containers/xarray.hpp>
-#include <xtensor/io/xio.hpp>
-#include <xtensor/views/xview.hpp>
-
-#include "z5/factory.hxx"
-#include "z5/filesystem/handle.hxx"
-#include "z5/multiarray/xtensor_access.hxx"
-#include "z5/attributes.hxx"
-
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/core.hpp>
 
+#include "vc/core/types/VcDataset.hpp"
 #include "vc/core/util/Slicing.hpp"
 #include "vc/core/util/Surface.hpp"
 #include "vc/core/util/PlaneSurface.hpp"
 #include "vc/core/util/StreamOperators.hpp"
 
 
-using shape = z5::types::ShapeType;
-using namespace xt::placeholders;
+using shape = std::vector<size_t>;
 
 
 
-shape chunkId(const std::unique_ptr<z5::Dataset> &ds, shape coord)
+shape chunkId(const std::unique_ptr<vc::VcDataset> &ds, shape coord)
 {
-    shape div = ds->chunking().blockShape();
+    shape div = ds->defaultChunkShape();
     shape id = coord;
     for(int i=0;i<id.size();i++)
         id[i] /= div[i];
     return id;
 }
 
-shape idCoord(const std::unique_ptr<z5::Dataset> &ds, shape id)
+shape idCoord(const std::unique_ptr<vc::VcDataset> &ds, shape id)
 {
-    shape mul = ds->chunking().blockShape();
+    shape mul = ds->defaultChunkShape();
     shape coord = id;
     for(int i=0;i<coord.size();i++)
         coord[i] *= mul[i];
     return coord;
 }
 
-void timed_plane_slice(Surface &plane, z5::Dataset *ds, int size, ChunkCache<uint8_t> *cache, std::string msg, bool nearest_neighbor)
+void timed_plane_slice(Surface &plane, vc::VcDataset *ds, int size, ChunkCache<uint8_t> *cache, std::string msg, bool nearest_neighbor)
 {
     cv::Mat_<cv::Vec3f> coords;
     cv::Mat_<cv::Vec3f> normals;
@@ -61,16 +52,13 @@ void timed_plane_slice(Surface &plane, z5::Dataset *ds, int size, ChunkCache<uin
 int main(int argc, char *argv[])
 {
   assert(argc == 2 || argc == 3);
-  // z5::filesystem::handle::File f(argv[1]);
-  z5::filesystem::handle::Group group(argv[1], z5::FileMode::FileMode::r);
-  z5::filesystem::handle::Dataset ds_handle(group, "1", "/");
-  std::unique_ptr<z5::Dataset> ds = z5::filesystem::openDataset(ds_handle);
+  std::filesystem::path vol_path(argv[1]);
+  auto ds = std::make_unique<vc::VcDataset>(vol_path / "1");
 
    bool nearest_neighbor =  (argc == 3 && strncmp(argv[2],"nearest",7) == 0);
 
   std::cout << "ds shape " << ds->shape() << std::endl;
-  std::cout << "ds shape via chunk " << ds->chunking().shape() << std::endl;
-  std::cout << "chunk shape shape " << ds->chunking().blockShape() << std::endl;
+  std::cout << "chunk shape " << ds->defaultChunkShape() << std::endl;
   if (nearest_neighbor) {
     std::cout << "doing nearest neighbor interpolation" << std::endl;
   }

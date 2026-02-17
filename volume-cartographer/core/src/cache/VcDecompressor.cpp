@@ -1,14 +1,12 @@
-#include "vc/core/cache/Z5Decompressor.hpp"
-
-#include "z5/dataset.hxx"
-#include "z5/types/types.hxx"
+#include "vc/core/cache/VcDecompressor.hpp"
+#include "vc/core/types/VcDataset.hpp"
 
 #include <cstring>
 #include <stdexcept>
 
 namespace vc::cache {
 
-DecompressFn makeZ5Decompressor(const std::vector<z5::Dataset*>& datasets)
+DecompressFn makeVcDecompressor(const std::vector<vc::VcDataset*>& datasets)
 {
     // Capture the dataset pointers (caller guarantees lifetime)
     return [datasets](const std::vector<uint8_t>& compressed,
@@ -19,7 +17,7 @@ DecompressFn makeZ5Decompressor(const std::vector<z5::Dataset*>& datasets)
             return nullptr;
         }
 
-        z5::Dataset& ds = *datasets[key.level];
+        vc::VcDataset& ds = *datasets[key.level];
         const auto& chunkShape = ds.defaultChunkShape();
         const size_t chunkSize = ds.defaultChunkSize();
         const auto dtype = ds.getDtype();
@@ -30,16 +28,15 @@ DecompressFn makeZ5Decompressor(const std::vector<z5::Dataset*>& datasets)
             static_cast<int>(chunkShape[1]),
             static_cast<int>(chunkShape[2])};
 
-        // Decompress into the appropriate dtype
-        // The compressed buffer needs to be non-const for z5's API
+        // The compressed buffer needs to be char-based for VcDataset API
         auto compressedCopy =
             std::vector<char>(compressed.begin(), compressed.end());
 
-        if (dtype == z5::types::Datatype::uint8) {
+        if (dtype == vc::VcDtype::uint8) {
             result->elementSize = 1;
             result->bytes.resize(chunkSize);
             ds.decompress(compressedCopy, result->bytes.data(), chunkSize);
-        } else if (dtype == z5::types::Datatype::uint16) {
+        } else if (dtype == vc::VcDtype::uint16) {
             // Decompress as uint16 then convert to uint8 (divide by 257)
             result->elementSize = 1;
             std::vector<uint16_t> tmp(chunkSize);
@@ -57,9 +54,9 @@ DecompressFn makeZ5Decompressor(const std::vector<z5::Dataset*>& datasets)
     };
 }
 
-DecompressFn makeZ5Decompressor(z5::Dataset* ds)
+DecompressFn makeVcDecompressor(vc::VcDataset* ds)
 {
-    return makeZ5Decompressor(std::vector<z5::Dataset*>{ds});
+    return makeVcDecompressor(std::vector<vc::VcDataset*>{ds});
 }
 
 }  // namespace vc::cache

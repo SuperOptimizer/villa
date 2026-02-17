@@ -5,7 +5,7 @@
 #include "vc/core/util/Surface.hpp"
 #include "vc/core/util/SurfaceModeling.hpp"
 
-#include "z5/factory.hxx"
+#include "vc/core/types/VcDataset.hpp"
 #include <nlohmann/json.hpp>
 
 #include <opencv2/imgcodecs.hpp>

@@ -1471,10 +1471,8 @@ void SurfacePanelController::applyFiltersInternal()
             const auto idStr = item->data(SURFACE_ID_COLUMN, Qt::UserRole).toString();
             std::string id = idStr.toStdString();
             if (!id.empty() && !item->isHidden()) {
+                // Only use already-loaded surfaces; never trigger TIFF I/O from filters.
                 auto meta = _volumePkg->getSurface(id);
-                if (!meta) {
-                    meta = _volumePkg->loadSurface(id);
-                }
                 if (meta) {
                     out.insert(id);
                     if (_surfaces && !_surfaces->surface(id)) {
@@ -1520,13 +1518,8 @@ void SurfacePanelController::applyFiltersInternal()
         std::string id = item->data(SURFACE_ID_COLUMN, Qt::UserRole).toString().toStdString();
 
         bool show = true;
+        // Only use already-loaded surfaces; never trigger TIFF I/O from filters.
         auto surf = _volumePkg->getSurface(id);
-        if (!surf) {
-            surf = _volumePkg->loadSurface(id);
-        }
-        if (surf && _surfaces && !_surfaces->surface(id)) {
-            _surfaces->setSurface(id, surf, true, false);
-        }
 
         if (restrictToCurrent && !id.empty()) {
             show = show && (id == _currentSurfaceId);

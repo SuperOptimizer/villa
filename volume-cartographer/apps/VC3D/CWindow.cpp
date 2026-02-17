@@ -1350,6 +1350,10 @@ void CWindow::setVolume(std::shared_ptr<Volume> newvol)
             }
         }
     }
+    // Fallback for remote volumes (no fVpkg)
+    if (currentVolumeId.empty() && currentVolume) {
+        currentVolumeId = currentVolume->id();
+    }
 
     const bool growthVolumeValid = fVpkg && !_segmentationGrowthVolumeId.empty() &&
                                    fVpkg->hasVolume(_segmentationGrowthVolumeId);
@@ -3653,7 +3657,7 @@ void CWindow::onAppendMaskPressed(void)
     cv::Mat_<uint8_t> img;
     std::vector<cv::Mat> existing_layers;
 
-    z5::Dataset* ds = currentVolume->zarrDataset(0);
+    vc::VcDataset* ds = currentVolume->zarrDataset(0);
 
     try {
         // Find the segmentation viewer and check if composite is enabled
@@ -4611,9 +4615,7 @@ void CWindow::startWatchingWithInotify()
 
 void CWindow::stopWatchingWithInotify()
 {
-    if (_inotifyProcessTimer) {if (_inotifyProcessTimer) {
-        _inotifyProcessTimer->stop();
-    }
+    if (_inotifyProcessTimer) {
         _inotifyProcessTimer->stop();
     }
 

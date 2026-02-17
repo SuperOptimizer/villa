@@ -4,13 +4,21 @@
 #include "vc/core/util/HashFunctions.hpp"
 
 #include <opencv2/core.hpp>
-#include "z5/dataset.hxx"
 
 #include <xtensor/containers/xtensor.hpp>
 #include <xtensor/containers/xadapt.hpp>
 #include <xtensor/views/xview.hpp>
 
-#include "z5/multiarray/xtensor_access.hxx"
+#include "vc/core/types/VcDataset.hpp"
+
+#include <deque>
+#include <fstream>
+#include <iomanip>
+#include <mutex>
+#include <set>
+#include <shared_mutex>
+#include <thread>
+#include <unordered_map>
 
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -60,7 +68,7 @@ class Chunked3d {
 public:
     using CHUNKT = xt::xtensor<T,3,xt::layout_type::column_major>;
 
-    Chunked3d(C &compute_f, z5::Dataset *ds, ChunkCache<T> *cache) : _compute_f(compute_f), _ds(ds), _cache(cache)
+    Chunked3d(C &compute_f, vc::VcDataset *ds, ChunkCache<T> *cache) : _compute_f(compute_f), _ds(ds), _cache(cache)
     {
         _border = compute_f.BORDER;
     };
@@ -69,7 +77,7 @@ public:
         if (!_persistent)
             remove_all(_cache_dir);
     };
-    Chunked3d(C &compute_f, z5::Dataset *ds, ChunkCache<T> *cache, const std::filesystem::path &cache_root) : _compute_f(compute_f), _ds(ds), _cache(cache)
+    Chunked3d(C &compute_f, vc::VcDataset *ds, ChunkCache<T> *cache, const std::filesystem::path &cache_root) : _compute_f(compute_f), _ds(ds), _cache(cache)
     {
         _border = compute_f.BORDER;
         
@@ -427,7 +435,7 @@ public:
     }
 
     std::unordered_map<cv::Vec3i,T*,vec3i_hash> _chunks;
-    z5::Dataset *_ds;
+    vc::VcDataset *_ds;
     ChunkCache<T> *_cache;
     size_t _border;
     C &_compute_f;
@@ -654,7 +662,7 @@ private:
 
 struct Chunked3dFloatFromUint8
 {
-    Chunked3dFloatFromUint8(std::unique_ptr<z5::Dataset> &&ds, float scale, ChunkCache<uint8_t> *cache, std::string const &cache_root, std::string const &unique_id) :
+    Chunked3dFloatFromUint8(std::unique_ptr<vc::VcDataset> &&ds, float scale, ChunkCache<uint8_t> *cache, std::string const &cache_root, std::string const &unique_id) :
         _passthrough{unique_id},
         _x(_passthrough, ds.get(), cache, cache_root),
         _scale(scale),  // multiplying by this maps indices of the 'canonical' volume to indices of our dataset
@@ -679,12 +687,12 @@ struct Chunked3dFloatFromUint8
     passTroughComputor _passthrough;
     Chunked3d<uint8_t, passTroughComputor> _x;
     float _scale;
-    std::unique_ptr<z5::Dataset> _ds;
+    std::unique_ptr<vc::VcDataset> _ds;
 };
 
 struct Chunked3dVec3fFromUint8
 {
-    Chunked3dVec3fFromUint8(std::vector<std::unique_ptr<z5::Dataset>> &&dss, float scale, ChunkCache<uint8_t> *cache, std::string const &cache_root, std::string const &unique_id) :
+    Chunked3dVec3fFromUint8(std::vector<std::unique_ptr<vc::VcDataset>> &&dss, float scale, ChunkCache<uint8_t> *cache, std::string const &cache_root, std::string const &unique_id) :
         _passthrough_x{unique_id + "_x"},
         _passthrough_y{unique_id + "_y"},
         _passthrough_z{unique_id + "_z"},
@@ -715,5 +723,5 @@ struct Chunked3dVec3fFromUint8
     passTroughComputor _passthrough_x, _passthrough_y, _passthrough_z;
     Chunked3d<uint8_t, passTroughComputor> _x, _y, _z;
     float _scale;
-    std::vector<std::unique_ptr<z5::Dataset>> _dss;
+    std::vector<std::unique_ptr<vc::VcDataset>> _dss;
 };

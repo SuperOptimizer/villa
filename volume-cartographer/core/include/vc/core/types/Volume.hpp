@@ -11,14 +11,7 @@
 #include "vc/core/types/Sampling.hpp"
 
 // Forward declarations
-namespace z5 {
-    class Dataset;
-
-        namespace filesystem::handle {
-            class File;
-        }
-
-}
+namespace vc { class VcDataset; }
 
 namespace vc::cache {
     class TieredChunkCache;
@@ -47,6 +40,14 @@ public:
 
     static std::shared_ptr<Volume> New(std::filesystem::path path, std::string uuid, std::string name);
 
+    // Create a Volume backed by a remote zarr store over HTTP.
+    // Downloads metadata (.zarray files) to a local staging dir, then
+    // fetches chunk data on demand via HttpChunkSource.
+    static std::shared_ptr<Volume> NewFromUrl(
+        const std::string& url,
+        const std::filesystem::path& cacheRoot = {});
+
+    [[nodiscard]] bool isRemote() const { return isRemote_; }
     [[nodiscard]] std::string id() const;
     [[nodiscard]] std::string name() const;
     void setName(const std::string& n);
@@ -59,7 +60,7 @@ public:
     [[nodiscard]] std::array<int, 3> shape() const;
     [[nodiscard]] double voxelSize() const;
 
-    [[nodiscard]] z5::Dataset *zarrDataset(int level = 0) const;
+    [[nodiscard]] vc::VcDataset *zarrDataset(int level = 0) const;
     [[nodiscard]] size_t numScales() const;
 
     // Create a TieredChunkCache backed by this volume's zarr data.
@@ -70,7 +71,7 @@ public:
 
     // Get the dataset-to-level mapper for this volume.
     // Maps z5::Dataset* → pyramid level index. Returns -1 for unknown datasets.
-    std::function<int(const z5::Dataset*)> datasetLevelMapper() const;
+    std::function<int(const vc::VcDataset*)> datasetLevelMapper() const;
 
     // --- Cache management ---
 
@@ -190,8 +191,7 @@ protected:
     int _height{0};
     int _slices{0};
 
-    std::unique_ptr<z5::filesystem::handle::File> zarrFile_;
-    std::vector<std::unique_ptr<z5::Dataset>> zarrDs_;
+    std::vector<std::unique_ptr<vc::VcDataset>> zarrDs_;
     nlohmann::json zarrGroup_;
     void zarrOpen();
 
@@ -216,5 +216,10 @@ protected:
                                  int zStart, int zEnd, int level);
 
     void loadMetadata();
+
+    // Remote volume state
+    bool isRemote_ = false;
+    std::string remoteUrl_;
+    std::string remoteDelimiter_ = ".";
 };
 

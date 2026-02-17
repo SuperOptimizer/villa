@@ -22,7 +22,9 @@ add_library(vc_core
         src/cache/DiskStore.cpp
         src/cache/IOPool.cpp
         src/cache/TieredChunkCache.cpp
-        src/cache/Z5Decompressor.cpp
+        src/cache/VcDecompressor.cpp
+        src/VcDataset.cpp
+        src/cache/HttpMetadataFetcher.cpp
         src/Geometry.cpp
         src/Thinning.cpp
         src/Umbilicus.cpp
@@ -38,14 +40,32 @@ target_link_libraries(vc_core
         opencv_calib3d
         opencv_video
         nlohmann_json::nlohmann_json
-        z5
+        xtensor
         OpenMP::OpenMP_CXX
         TIFF::TIFF
         OpenABF
-        #${CURL_LIBRARIES}
-        #${OPENSSL_LIBRARIES}
-        #${ZLIB_LIBRARIES}
+        CURL::libcurl
 )
+
+# Compression libraries for VcDataset::decompress() — vendored by utils
+# Wrapped in BUILD_INTERFACE so they don't leak into the install export set
+target_link_libraries(vc_core PRIVATE
+    $<BUILD_INTERFACE:utils_zarr>
+    $<BUILD_INTERFACE:blosc_static>
+    $<BUILD_INTERFACE:libzstd_static>
+    $<BUILD_INTERFACE:lz4_static>
+    $<BUILD_INTERFACE:zlibstatic>
+)
+target_include_directories(vc_core PRIVATE
+    ${c-blosc_SOURCE_DIR}/blosc
+    ${c-blosc_BINARY_DIR}/blosc
+    ${zstd_SOURCE_DIR}/lib
+    ${lz4_SOURCE_DIR}/lib
+    ${zlib_SOURCE_DIR}
+    ${zlib_BINARY_DIR}
+)
+
+target_compile_definitions(vc_core PUBLIC VC_USE_CURL)
 
 # Precompiled headers for faster builds
 if(VC_USE_PCH)
@@ -107,17 +127,11 @@ target_precompile_headers(vc_core PRIVATE
     <Eigen/Dense>
     # Boost (used by CLI apps)
     <boost/program_options.hpp>
-    # z5/xtensor (zarr volume access - heavy templates)
+    # xtensor (chunk buffer type - heavy templates)
     <xtensor/containers/xarray.hpp>
     <xtensor/containers/xadapt.hpp>
     <xtensor/views/xview.hpp>
     <xtensor/generators/xbuilder.hpp>
-    <z5/factory.hxx>
-    <z5/dataset.hxx>
-    <z5/attributes.hxx>
-    <z5/filesystem/handle.hxx>
-    <z5/filesystem/dataset.hxx>
-    <z5/multiarray/xtensor_access.hxx>
 )
 endif()
 

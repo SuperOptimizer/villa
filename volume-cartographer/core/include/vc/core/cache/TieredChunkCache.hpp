@@ -10,6 +10,7 @@
 #include <shared_mutex>
 #include <string>
 #include <unordered_map>
+#include <optional>
 #include <unordered_set>
 #include <vector>
 
@@ -111,6 +112,12 @@ public:
     // Number of pyramid levels in the source.
     int numLevels() const;
 
+    // Chunk shape at a given level, in {z, y, x} order.
+    std::array<int, 3> chunkShape(int level) const;
+
+    // Full dataset shape at a given level, in {z, y, x} order.
+    std::array<int, 3> levelShape(int level) const;
+
     // --- Notifications ---
 
     // Called from IOPool worker thread when a chunk becomes available.
@@ -160,7 +167,7 @@ private:
         uint64_t generation;
     };
 
-    CompressedChunk* warmGet(const ChunkKey& key);
+    std::optional<CompressedChunk> warmGet(const ChunkKey& key);
     void warmPut(const ChunkKey& key, std::vector<uint8_t> compressed,
                  size_t decompressedSize);
     void warmEvictIfNeeded();
@@ -200,7 +207,7 @@ private:
     // --- Promotion helpers ---
 
     // Load from warm → hot. Returns the decompressed data.
-    ChunkDataPtr promoteFromWarm(const ChunkKey& key, CompressedChunk& warm);
+    ChunkDataPtr promoteFromWarm(const ChunkKey& key, CompressedChunk warm);
 
     // Load from cold → warm → hot. Returns the decompressed data.
     ChunkDataPtr promoteFromCold(const ChunkKey& key);

@@ -26,9 +26,14 @@ std::filesystem::path DiskStore::chunkPath(
     const std::string& volumeId,
     const ChunkKey& key) const
 {
-    return config_.root / volumeId / std::to_string(key.level) /
-           (std::to_string(key.iz) + "." + std::to_string(key.iy) + "." +
-            std::to_string(key.ix));
+    auto base = config_.directMode
+                    ? config_.root
+                    : config_.root / volumeId;
+    const auto& d = config_.delimiter;
+    std::string name = std::to_string(key.iz) + d +
+                       std::to_string(key.iy) + d +
+                       std::to_string(key.ix);
+    return base / std::to_string(key.level) / name;
 }
 
 size_t DiskStore::lockIndex(
@@ -158,7 +163,9 @@ void DiskStore::evictToSize(size_t targetBytes)
          std::filesystem::recursive_directory_iterator(config_.root, ec)) {
         if (!entry.is_regular_file()) continue;
         auto name = entry.path().filename().string();
-        if (name.starts_with(".") || name.ends_with(".tmp")) continue;
+        if (name.starts_with(".") || name.ends_with(".tmp") ||
+            name.ends_with(".json"))
+            continue;
 
         auto sz = entry.file_size();
         totalSize += sz;

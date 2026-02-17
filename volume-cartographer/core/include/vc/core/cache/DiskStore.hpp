@@ -24,6 +24,8 @@ public:
         std::filesystem::path root;           // cache root directory
         size_t maxBytes = 100ULL << 30;       // 100 GB default
         bool persistent = true;               // if false, cleaned up on destruction
+        bool directMode = false;              // skip volumeId subdirectory
+        std::string delimiter = ".";          // chunk index separator ("." or "/")
     };
 
     explicit DiskStore(Config config);

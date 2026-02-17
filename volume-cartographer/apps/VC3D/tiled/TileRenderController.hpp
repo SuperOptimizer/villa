@@ -90,6 +90,9 @@ private slots:
     // Unified tick: runs at ~30 Hz, handles all periodic work.
     void tick();
 
+    // Start the tick timer if not already running.
+    void ensureTickRunning();
+
 private:
     TileScene* _tileScene;
     SliceCache _cache;

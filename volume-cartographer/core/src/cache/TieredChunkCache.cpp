@@ -90,7 +90,7 @@ TieredChunkCache::TieredChunkCache(
             warmPut(key, std::move(compressed), decompSize);
 
             // Decompress and store in hot tier
-            CompressedChunk* warmEntry = warmGet(key);
+            auto warmEntry = warmGet(key);
             if (warmEntry && decompress_) {
                 auto data = decompress_(warmEntry->data, key);
                 if (data) {
@@ -138,10 +138,10 @@ ChunkDataPtr TieredChunkCache::get(const ChunkKey& key)
     }
 
     // Check warm tier — decompress and promote to hot
-    CompressedChunk* warm = warmGet(key);
+    auto warm = warmGet(key);
     if (warm) {
         statWarmHits_.fetch_add(1, std::memory_order_relaxed);
-        return promoteFromWarm(key, *warm);
+        return promoteFromWarm(key, std::move(*warm));
     }
 
     statMisses_.fetch_add(1, std::memory_order_relaxed);
@@ -181,10 +181,10 @@ ChunkDataPtr TieredChunkCache::getBlocking(const ChunkKey& key)
 
     // Check warm
     {
-        CompressedChunk* warm = warmGet(key);
+        auto warm = warmGet(key);
         if (warm) {
             statWarmHits_.fetch_add(1, std::memory_order_relaxed);
-            return promoteFromWarm(key, *warm);
+            return promoteFromWarm(key, std::move(*warm));
         }
     }
 
@@ -207,7 +207,7 @@ void TieredChunkCache::prefetch(const ChunkKey& key)
 {
     // Already in hot or warm? No-op.
     if (hotGet(key)) return;
-    if (warmGet(key)) return;
+    if (warmGet(key).has_value()) return;
 
     ioPool_.submit(key);
 }
@@ -222,7 +222,7 @@ void TieredChunkCache::prefetchRegion(
             for (int ix = ix0; ix <= ix1; ix++) {
                 totalChecked++;
                 ChunkKey key{level, iz, iy, ix};
-                if (!hotGet(key) && !warmGet(key)) {
+                if (!hotGet(key) && !warmGet(key).has_value()) {
                     keys.push_back(key);
                 }
             }
@@ -326,6 +326,16 @@ void TieredChunkCache::clearAll()
 int TieredChunkCache::numLevels() const
 {
     return source_ ? source_->numLevels() : 0;
+}
+
+std::array<int, 3> TieredChunkCache::chunkShape(int level) const
+{
+    return source_ ? source_->chunkShape(level) : std::array<int, 3>{0, 0, 0};
+}
+
+std::array<int, 3> TieredChunkCache::levelShape(int level) const
+{
+    return source_ ? source_->levelShape(level) : std::array<int, 3>{0, 0, 0};
 }
 
 void TieredChunkCache::setChunkReadyCallback(ChunkReadyCallback cb)
@@ -468,13 +478,13 @@ void TieredChunkCache::hotEvictIfNeeded()
 // Warm tier
 // =============================================================================
 
-CompressedChunk* TieredChunkCache::warmGet(const ChunkKey& key)
+std::optional<CompressedChunk> TieredChunkCache::warmGet(const ChunkKey& key)
 {
     std::lock_guard lock(warmMutex_);
     auto it = warm_.find(key);
-    if (it == warm_.end()) return nullptr;
+    if (it == warm_.end()) return std::nullopt;
     it->second.generation = warmGen_++;
-    return &it->second.chunk;
+    return it->second.chunk;  // copy while lock is held
 }
 
 void TieredChunkCache::warmPut(
@@ -547,7 +557,7 @@ void TieredChunkCache::warmEvictIfNeeded()
 // =============================================================================
 
 ChunkDataPtr TieredChunkCache::promoteFromWarm(
-    const ChunkKey& key, CompressedChunk& warm)
+    const ChunkKey& key, CompressedChunk warm)
 {
     if (!decompress_) return nullptr;
 
@@ -578,10 +588,10 @@ ChunkDataPtr TieredChunkCache::promoteFromCold(const ChunkKey& key)
     warmPut(key, std::move(*compressed), decompSize);
 
     // Decompress and promote to hot
-    CompressedChunk* warmEntry = warmGet(key);
+    auto warmEntry = warmGet(key);
     if (!warmEntry) return nullptr;
 
-    return promoteFromWarm(key, *warmEntry);
+    return promoteFromWarm(key, std::move(*warmEntry));
 }
 
 ChunkDataPtr TieredChunkCache::promoteFromIce(const ChunkKey& key)
@@ -607,10 +617,10 @@ ChunkDataPtr TieredChunkCache::promoteFromIce(const ChunkKey& key)
     warmPut(key, std::move(compressed), decompSize);
 
     // Decompress and promote to hot
-    CompressedChunk* warmEntry = warmGet(key);
+    auto warmEntry = warmGet(key);
     if (!warmEntry) return nullptr;
 
-    return promoteFromWarm(key, *warmEntry);
+    return promoteFromWarm(key, std::move(*warmEntry));
 }
 
 ChunkDataPtr TieredChunkCache::loadFull(const ChunkKey& key)
@@ -636,7 +646,7 @@ void TieredChunkCache::onIOComplete(
 
     warmPut(key, std::move(compressed), decompSize);
 
-    CompressedChunk* warmEntry = warmGet(key);
+    auto warmEntry = warmGet(key);
     if (warmEntry && decompress_) {
         auto data = decompress_(warmEntry->data, key);
         if (data) {

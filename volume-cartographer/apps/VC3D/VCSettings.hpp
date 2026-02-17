@@ -107,6 +107,9 @@ namespace viewer {
     constexpr auto USE_TILED_RENDERER = "viewer/use_tiled_renderer";
     constexpr bool USE_TILED_RENDERER_DEFAULT = true;
 
+    // Remote volume chunk cache directory
+    constexpr auto REMOTE_CACHE_DIR = "viewer/remote_cache_dir";
+
     // Audio/UX
     constexpr auto PLAY_SOUND_AFTER_SEG_RUN = "viewer/play_sound_after_seg_run";
     constexpr auto USERNAME = "viewer/username";

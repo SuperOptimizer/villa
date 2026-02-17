@@ -11,24 +11,49 @@
 #include <thread>
 #include <omp.h>
 #include <blosc.h>
+#include <cstdlib>
+#include <dlfcn.h>
 
-// Weak stub for Intel OpenMP's kmp_set_blocktime.
-// If the real function exists (Intel/LLVM OpenMP runtime), it overrides this.
-// If not (e.g., GCC's libgomp), this no-op stub is used instead.
-extern "C" __attribute__((weak)) void kmp_set_blocktime(int) {}
+// Runs before main() AND before all shared-library constructors.
+// .preinit_array is processed by the dynamic linker before any .init_array,
+// so env vars are visible when OpenBLAS/OpenMP create their thread pools.
+static void setThreadPoliciesEarly()
+{
+    // overwrite=0: respect user's explicit env settings if present.
+    setenv("OMP_WAIT_POLICY", "passive", 0);
+    setenv("OPENBLAS_NUM_THREADS", "1", 0);
+    setenv("GOTO_NUM_THREADS", "1", 0);  // legacy name for OpenBLAS
+}
+__attribute__((section(".preinit_array"), used))
+static auto preinitFn = &setThreadPoliciesEarly;
 
 auto main(int argc, char* argv[]) -> int
 {
-    cv::setNumThreads(std::thread::hardware_concurrency());
-    kmp_set_blocktime(0);
+    // LLVM/Intel OpenMP: set blocktime=0 so threads sleep immediately after
+    // parallel regions. dlsym avoids weak-symbol issues under LTO.
+    if (auto fn = reinterpret_cast<void(*)(int)>(dlsym(RTLD_DEFAULT, "kmp_set_blocktime")))
+        fn(0);
+
+    // Also call openblas_set_num_threads(1) at runtime in case the env var
+    // was too late for this particular build's init order.
+    if (auto fn = reinterpret_cast<void(*)(int)>(dlsym(RTLD_DEFAULT, "openblas_set_num_threads")))
+        fn(1);
+
+    // Kill OpenBLAS spin-waiting thread pool entirely. The pthreads build
+    // creates N threads at init that busy-wait even when set to 1 thread.
+    // blas_shutdown() terminates all pool threads. If OpenBLAS is needed
+    // later, blas_thread_init() will be called automatically.
+    if (auto fn = reinterpret_cast<void(*)()>(dlsym(RTLD_DEFAULT, "blas_shutdown")))
+        fn();
+
+    cv::setNumThreads(1); //todo: also set to 1?
     blosc_set_nthreads(1);  // We parallelize at tile level; blosc internal threads just spin-wait
 
     // Workaround for Qt dock widget issues on Wayland (QTBUG-87332)
     // Floating dock widgets become unmovable after initial drag on Wayland.
     // Force XCB (X11/XWayland) platform to restore full functionality.
     if (qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM")) {
-        const char* waylandDisplay = qgetenv("WAYLAND_DISPLAY").constData();
-        if (waylandDisplay && *waylandDisplay) {
+        if (!qEnvironmentVariableIsEmpty("WAYLAND_DISPLAY")) {
             qputenv("QT_QPA_PLATFORM", "xcb");
         }
     }

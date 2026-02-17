@@ -14,6 +14,7 @@
 #include "ui_VCMain.h"
 #include "Keybinds.hpp"
 
+#include "vc/core/types/Volume.hpp"
 #include "vc/core/types/VolumePkg.hpp"
 #include "vc/core/Version.hpp"
 #include "vc/core/util/Logging.hpp"
@@ -22,6 +23,9 @@
 #include <QAction>
 #include <QApplication>
 #include <QClipboard>
+#include <QFutureWatcher>
+#include <QInputDialog>
+#include <QtConcurrent>
 #include <QDateTime>
 #include <QDesktopServices>
 #include <QDialog>
@@ -119,6 +123,9 @@ void MenuActionController::populateMenus(QMenuBar* menuBar)
     _openAct->setShortcut(vc3d::keybinds::sequenceFor(vc3d::keybinds::shortcuts::OpenVolpkg));
     connect(_openAct, &QAction::triggered, this, &MenuActionController::openVolpkg);
 
+    _openRemoteAct = new QAction(QObject::tr("Open &Remote Volume..."), this);
+    connect(_openRemoteAct, &QAction::triggered, this, &MenuActionController::openRemoteVolume);
+
     _settingsAct = new QAction(QObject::tr("Settings"), this);
     connect(_settingsAct, &QAction::triggered, this, &MenuActionController::showSettingsDialog);
 
@@ -170,6 +177,7 @@ void MenuActionController::populateMenus(QMenuBar* menuBar)
     // Build menus
     _fileMenu = new QMenu(QObject::tr("&File"), qWindow);
     _fileMenu->addAction(_openAct);
+    _fileMenu->addAction(_openRemoteAct);
 
     _recentMenu = new QMenu(QObject::tr("Open &recent volpkg"), _fileMenu);
     _recentMenu->setEnabled(false);
@@ -355,6 +363,84 @@ void MenuActionController::openVolpkgAt(const QString& path)
     _window->CloseVolume();
     _window->OpenVolume(path);
     _window->UpdateView();
+}
+
+void MenuActionController::openRemoteVolume()
+{
+    if (!_window) return;
+
+    bool ok = false;
+    QString url = QInputDialog::getText(
+        _window,
+        QObject::tr("Open Remote Volume"),
+        QObject::tr("Enter zarr volume URL:"),
+        QLineEdit::Normal,
+        QString(),
+        &ok);
+
+    if (!ok || url.trimmed().isEmpty()) return;
+
+    // Determine cache directory — use saved setting or ask user
+    QSettings settings(vc3d::settingsFilePath(), QSettings::IniFormat);
+    QString defaultCache = QDir::homePath() + "/.VC3D/remote_cache";
+    QString cacheDir = settings.value(
+        vc3d::settings::viewer::REMOTE_CACHE_DIR, defaultCache).toString();
+
+    QString selectedDir = QFileDialog::getExistingDirectory(
+        _window,
+        QObject::tr("Select Chunk Cache Directory"),
+        cacheDir,
+        QFileDialog::ShowDirsOnly);
+
+    if (selectedDir.isEmpty()) return;
+
+    // Save the choice for next time
+    settings.setValue(vc3d::settings::viewer::REMOTE_CACHE_DIR, selectedDir);
+
+    // Disable the action while loading to prevent double-open
+    _openRemoteAct->setEnabled(false);
+    if (_window->statusBar()) {
+        _window->statusBar()->showMessage(QObject::tr("Opening remote volume..."));
+    }
+
+    // Run Volume::NewFromUrl on a background thread so the UI doesn't freeze
+    auto urlStr = url.trimmed().toStdString();
+    auto cachePath = selectedDir.toStdString();
+    auto* watcher = new QFutureWatcher<std::shared_ptr<Volume>>(this);
+
+    connect(watcher, &QFutureWatcher<std::shared_ptr<Volume>>::finished, this,
+        [this, watcher]() {
+            watcher->deleteLater();
+            _openRemoteAct->setEnabled(true);
+
+            try {
+                auto vol = watcher->result();
+                _window->CloseVolume();
+                _window->setVolume(vol);
+                _window->UpdateView();
+
+                if (_window->statusBar()) {
+                    _window->statusBar()->showMessage(
+                        QObject::tr("Opened remote volume: %1")
+                            .arg(QString::fromStdString(vol->id())),
+                        5000);
+                }
+            } catch (const std::exception& e) {
+                QMessageBox::critical(
+                    _window,
+                    QObject::tr("Remote Volume Error"),
+                    QObject::tr("Failed to open remote volume:\n%1").arg(e.what()));
+                if (_window->statusBar()) {
+                    _window->statusBar()->clearMessage();
+                }
+            }
+        });
+
+    auto future = QtConcurrent::run(
+        [urlStr, cachePath]() -> std::shared_ptr<Volume> {
+            return Volume::NewFromUrl(urlStr, cachePath);
+        });
+    watcher->setFuture(future);
 }
 
 void MenuActionController::triggerTeleaInpaint()

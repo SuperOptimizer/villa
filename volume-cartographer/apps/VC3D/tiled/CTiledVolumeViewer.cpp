@@ -170,22 +170,52 @@ void CTiledVolumeViewer::OnVolumeChanged(std::shared_ptr<Volume> vol)
 
     _volume = vol;
 
+    // Reset pin progress tracking
+    _pinTotal = 0;
+    _pinReceived = 0;
+    _pinLevel = -1;
+
     // Enable tiered chunk cache for progressive rendering
     if (!_volume->tieredCache() && _volume->numScales() >= 1) {
         _volume->enableTieredCache();
 
         // Wire chunk-ready callback BEFORE pin to ensure no callbacks are missed
         auto* ctrl = _renderController;
+        auto* viewer = this;
+        int coarsestLevel = static_cast<int>(_volume->numScales()) - 1;
         _volume->tieredCache()->setChunkReadyCallback(
-            [ctrl](const vc::cache::ChunkKey&) {
+            [ctrl, viewer, coarsestLevel](const vc::cache::ChunkKey& key) {
                 QMetaObject::invokeMethod(ctrl, [ctrl]() { ctrl->markChunkArrived(); },
                                           Qt::QueuedConnection);
+                // Track coarsest-level pin progress for remote volumes
+                if (key.level == coarsestLevel && viewer->_pinTotal > 0) {
+                    QMetaObject::invokeMethod(viewer, [viewer]() {
+                        viewer->_pinReceived++;
+                        viewer->updateStatusLabel();
+                    }, Qt::QueuedConnection);
+                }
             });
 
-        // Pin coarsest pyramid level in hot tier (blocking).
-        // This is a small number of chunks and ensures sampleBestEffort
-        // always has fallback data without hitting "ALL LEVELS MISS".
-        _volume->pinCoarsestLevel(true);
+        // Pin coarsest pyramid level in hot tier.
+        // For local volumes this blocks (fast), ensuring sampleBestEffort
+        // always has fallback data. For remote volumes, pin non-blocking
+        // to avoid freezing the UI during HTTP downloads.
+        const bool isRemote = _volume->isRemote();
+        if (isRemote) {
+            // Set up progress tracking before pin so we can show download progress
+            auto* tc = _volume->tieredCache();
+            auto shape = tc->levelShape(coarsestLevel);
+            auto chunks = tc->chunkShape(coarsestLevel);
+            if (chunks[0] > 0 && chunks[1] > 0 && chunks[2] > 0) {
+                _pinTotal = static_cast<int>(
+                    ((shape[0] + chunks[0] - 1) / chunks[0]) *
+                    ((shape[1] + chunks[1] - 1) / chunks[1]) *
+                    ((shape[2] + chunks[2] - 1) / chunks[2]));
+                _pinReceived = 0;
+                _pinLevel = coarsestLevel;
+            }
+        }
+        _volume->pinCoarsestLevel(!isRemote);
     }
 
     _camera.recalcPyramidLevel(_volume->numScales());
@@ -1116,6 +1146,11 @@ void CTiledVolumeViewer::updateStatusLabel()
             int hitPct = static_cast<int>(100 * sc.hits() / total);
             status += QString(" | tile$ %1%").arg(hitPct);
         }
+    }
+
+    // Remote volume pin progress
+    if (_pinTotal > 0 && _pinReceived < _pinTotal) {
+        status += QString(" | downloading %1/%2").arg(_pinReceived).arg(_pinTotal);
     }
 
     status += " [tiled]";

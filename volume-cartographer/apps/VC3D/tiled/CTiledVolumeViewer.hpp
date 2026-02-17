@@ -353,6 +353,11 @@ private:
     // --- Zoom limits ---
     float _contentMinScale = TiledViewerCamera::MIN_SCALE;  // dynamic minimum so content fills viewport
 
+    // --- Remote volume pin progress ---
+    int _pinTotal = 0;      // total chunks to pin at coarsest level
+    int _pinReceived = 0;   // chunks received so far
+    int _pinLevel = -1;     // pyramid level being pinned
+
     // --- Zoom debounce ---
     float _renderScale = 0.5f;           // scale at which tiles were last rendered
     cv::Vec3f _renderSurfacePtr{0,0,0};  // surfacePtr at last render

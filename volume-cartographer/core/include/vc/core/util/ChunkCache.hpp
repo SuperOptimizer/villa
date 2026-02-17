@@ -13,7 +13,7 @@
 #include <shared_mutex>
 
 // Forward declarations
-namespace z5 { class Dataset; }
+namespace vc { class VcDataset; }
 namespace vc::cache { class TieredChunkCache; }
 
 /**
@@ -21,7 +21,7 @@ namespace vc::cache { class TieredChunkCache; }
  *
  * @tparam T Data type of cached chunks (uint8_t or uint16_t)
  *
- * Supports caching chunks from multiple z5::Dataset instances simultaneously.
+ * Supports caching chunks from multiple vc::VcDataset instances simultaneously.
  * Chunks are stored as shared_ptr so eviction removes from the cache but
  * doesn't free memory until all readers are done.
  *
@@ -61,25 +61,25 @@ public:
      * @brief Get a chunk, loading from disk if needed.
      * Returns shared_ptr — caller holds the chunk alive even if evicted.
      */
-    ChunkPtr get(z5::Dataset* ds, int iz, int iy, int ix);
+    ChunkPtr get(vc::VcDataset* ds, int iz, int iy, int ix);
 
     /**
      * @brief Check if chunk is cached without loading.
      */
-    ChunkPtr getIfCached(z5::Dataset* ds, int iz, int iy, int ix) const;
+    ChunkPtr getIfCached(vc::VcDataset* ds, int iz, int iy, int ix) const;
 
-    void prefetch(z5::Dataset* ds, int minIz, int minIy, int minIx, int maxIz, int maxIy, int maxIx);
+    void prefetch(vc::VcDataset* ds, int minIz, int minIy, int minIx, int maxIz, int maxIy, int maxIx);
     void clear();
     void flush();
 
     // --- Tiered cache delegation ---
 
-    // Map from z5::Dataset* to pyramid level index.
-    using DatasetLevelMapper = std::function<int(const z5::Dataset*)>;
+    // Map from vc::VcDataset* to pyramid level index.
+    using DatasetLevelMapper = std::function<int(const vc::VcDataset*)>;
 
     // Enable delegation to a TieredChunkCache backend.
     // When set, get() checks the tiered cache first (warm/cold/ice tiers).
-    // The levelMapper converts z5::Dataset* to pyramid level index.
+    // The levelMapper converts vc::VcDataset* to pyramid level index.
     // The tiered cache pointer must outlive this ChunkCache.
     void setTieredBackend(
         vc::cache::TieredChunkCache* tiered,
@@ -91,10 +91,10 @@ private:
     // Tiered cache delegation
     vc::cache::TieredChunkCache* _tiered = nullptr;
     DatasetLevelMapper _levelMapper;
-    ChunkPtr loadFromTiered(z5::Dataset* ds, int iz, int iy, int ix);
+    ChunkPtr loadFromTiered(vc::VcDataset* ds, int iz, int iy, int ix);
 
     struct ChunkKey {
-        z5::Dataset* ds;
+        vc::VcDataset* ds;
         int iz, iy, ix;
         bool operator==(const ChunkKey& o) const {
             return ds == o.ds && iz == o.iz && iy == o.iy && ix == o.ix;
@@ -131,7 +131,7 @@ private:
 
     size_t lockIndex(const ChunkKey& k) const { return ChunkKeyHash()(k) % kLockPoolSize; }
 
-    ChunkPtr loadChunk(z5::Dataset* ds, int iz, int iy, int ix);
+    ChunkPtr loadChunk(vc::VcDataset* ds, int iz, int iy, int ix);
     void evictIfNeeded();
 
     // Stats counters

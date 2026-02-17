@@ -13,7 +13,7 @@ class Surface;
 class PlaneSurface;
 class QuadSurface;
 class Volume;
-namespace z5 { class Dataset; }
+namespace vc { class VcDataset; }
 
 // Parameters for a single tile render call.
 // Collected on the main thread, passed to the renderer.

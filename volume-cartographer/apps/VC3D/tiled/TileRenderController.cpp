@@ -14,11 +14,12 @@ TileRenderController::TileRenderController(TileScene* tileScene, QObject* parent
     , _tileScene(tileScene)
     , _renderPool(2, this)
 {
-    // Single unified tick timer (~30 Hz) handles all periodic work
+    // Tick timer (~30 Hz) handles periodic work; started on-demand, auto-stops
+    // when idle to avoid burning CPU.
     _tickTimer = new QTimer(this);
     _tickTimer->setInterval(33);
     connect(_tickTimer, &QTimer::timeout, this, &TileRenderController::tick);
-    _tickTimer->start();
+    // Not started here — ensureTickRunning() starts it when work arrives.
 
     // Also drain immediately when a tile completes (makes draining more responsive)
     connect(&_renderPool, &RenderPool::tileReady, this, &TileRenderController::drainResults,
@@ -31,6 +32,12 @@ TileRenderController::~TileRenderController()
     _renderPool.cancelAll();
 }
 
+void TileRenderController::ensureTickRunning()
+{
+    if (!_tickTimer->isActive())
+        _tickTimer->start();
+}
+
 void TileRenderController::onCameraChanged(
     const TiledViewerCamera& camera,
     const std::shared_ptr<Surface>& surface,
@@ -38,6 +45,7 @@ void TileRenderController::onCameraChanged(
     const std::function<TileRenderParams(const WorldTileKey&)>& buildParams,
     const QRectF& viewportRect)
 {
+    ensureTickRunning();
     bool epochChanged = (camera.epoch != _currentEpoch);
     _currentEpoch = camera.epoch;
     _renderPool.setCurrentEpoch(_currentEpoch);
@@ -99,6 +107,7 @@ void TileRenderController::scheduleRender(
     _pendingBuildParams = buildParams;
     _pendingViewportRect = viewportRect;
     _pendingDirty = true;
+    ensureTickRunning();
 }
 
 void TileRenderController::cancelAll()
@@ -151,6 +160,8 @@ void TileRenderController::drainResults()
 
 void TileRenderController::tick()
 {
+    bool moreWork = false;
+
     // 1. Drain completed render results
     drainResults();
 
@@ -173,6 +184,7 @@ void TileRenderController::tick()
                 TileRenderParams params = _lastBuildParams(wk);
                 _renderPool.submit(params, _lastSurface, _lastVolume);
             }
+            moreWork = true;
         }
     }
 
@@ -183,6 +195,7 @@ void TileRenderController::tick()
             if (_zoomSettleCallback) _zoomSettleCallback();
         } else {
             _zoomSettleTicksLeft--;
+            moreWork = true;
         }
     }
 
@@ -191,21 +204,32 @@ void TileRenderController::tick()
         _overlaysDirty = false;
         if (_overlayCallback) _overlayCallback();
     }
+
+    // Still have in-flight renders? Keep ticking to drain them.
+    if (_renderPool.pendingCount() > 0 || _pendingDirty)
+        moreWork = true;
+
+    // Auto-stop when idle to avoid burning CPU
+    if (!moreWork)
+        _tickTimer->stop();
 }
 
 void TileRenderController::markOverlaysDirty()
 {
     _overlaysDirty = true;
+    ensureTickRunning();
 }
 
 void TileRenderController::markChunkArrived()
 {
     _chunkArrived = true;
+    ensureTickRunning();
 }
 
 void TileRenderController::startZoomSettle()
 {
     _zoomSettlePending = true;
+    ensureTickRunning();
     _zoomSettleTicksLeft = 6;  // ~200ms at 33ms/tick
 }
 

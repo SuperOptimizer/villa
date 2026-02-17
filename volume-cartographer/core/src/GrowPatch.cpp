@@ -17,9 +17,7 @@
 #include "vc/core/util/CostFunctions.hpp"
 #include "vc/core/util/HashFunctions.hpp"
 
-#include "z5/factory.hxx"
-#include "z5/filesystem/handle.hxx"
-#include "z5/dataset.hxx"
+#include "vc/core/types/VcDataset.hpp"
 
 #include <xtensor/views/xview.hpp>
 #include <xtensor/containers/xtensor.hpp>
@@ -696,7 +694,7 @@ struct Vec3iEqual {
 };
 
 struct SDTContext {
-    z5::Dataset* dataset = nullptr;
+    vc::VcDataset* dataset = nullptr;
     ChunkCache<uint8_t>* cache = nullptr;
     int chunk_size = 64;
     float threshold = 1.0f;
@@ -2753,7 +2751,7 @@ struct thresholdedDistance
 };
 
 
-QuadSurface *tracer(z5::Dataset *ds, float scale, ChunkCache<uint8_t> *cache, cv::Vec3f origin, const nlohmann::json &params, const std::string &cache_root, float voxelsize, std::vector<DirectionField> const &direction_fields, QuadSurface* resume_surf, const std::filesystem::path& tgt_path, const nlohmann::json& meta_params, const VCCollection &corrections)
+QuadSurface *tracer(vc::VcDataset *ds, float scale, ChunkCache<uint8_t> *cache, cv::Vec3f origin, const nlohmann::json &params, const std::string &cache_root, float voxelsize, std::vector<DirectionField> const &direction_fields, QuadSurface* resume_surf, const std::filesystem::path& tgt_path, const nlohmann::json& meta_params, const VCCollection &corrections)
 {
     std::unique_ptr<NeuralTracerConnection> neural_tracer;
     int pre_neural_gens = 0, neural_batch_size = 1;
@@ -2839,10 +2837,7 @@ QuadSurface *tracer(z5::Dataset *ds, float scale, ChunkCache<uint8_t> *cache, cv
 
             // Assert the direction-field was aligned by vc_ngrids --align-normals.
             try {
-                z5::filesystem::handle::File rootFile(zarr_root);
-                z5::filesystem::handle::Group root(rootFile, "");
-                nlohmann::json attrs;
-                z5::filesystem::readAttributes(root, attrs);
+                nlohmann::json attrs = vc::readZarrAttributes(zarr_root);
                 const bool aligned = attrs.value("align_normals", false);
                 if (!aligned) {
                     throw std::runtime_error("normal3d_zarr_path is not marked aligned (missing attrs.align_normals=true); run vc_ngrids --align-normals");
@@ -2852,16 +2847,13 @@ QuadSurface *tracer(z5::Dataset *ds, float scale, ChunkCache<uint8_t> *cache, cv
             }
 
             // Derive scale purely from shapes: main volume is full-res, normal zarr is downsampled.
-            const auto vol_shape_zyx = ds->shape();
+            const auto& vol_shape_zyx = ds->shape();
             const int vol_z = static_cast<int>(vol_shape_zyx.at(0));
             const int vol_y = static_cast<int>(vol_shape_zyx.at(1));
             const int vol_x = static_cast<int>(vol_shape_zyx.at(2));
 
-            z5::filesystem::handle::Group dirs_group(zarr_root.string(), z5::FileMode::FileMode::r);
-            z5::filesystem::handle::Group x_group(dirs_group, "x");
-            z5::filesystem::handle::Dataset x_ds_handle(x_group, "0", delim);
-            auto x_ds = z5::filesystem::openDataset(x_ds_handle);
-            const auto nshape = x_ds->shape();
+            auto x_ds = std::make_unique<vc::VcDataset>(zarr_root / "x" / "0");
+            const auto& nshape = x_ds->shape();
             if (nshape.size() != 3) {
                 throw std::runtime_error("normal3d x/0 dataset is not 3D");
             }
@@ -2896,26 +2888,23 @@ QuadSurface *tracer(z5::Dataset *ds, float scale, ChunkCache<uint8_t> *cache, cv
 
             const float scale_factor = 1.0f / static_cast<float>(ratio);
 
-            std::vector<std::unique_ptr<z5::Dataset>> dss;
+            std::vector<std::unique_ptr<vc::VcDataset>> dss;
             for (auto dim : std::string("xyz")) {
-                z5::filesystem::handle::Group dim_group(dirs_group, std::string(&dim, 1));
-                z5::filesystem::handle::Dataset ds_handle(dim_group, std::to_string(scale_level), delim);
-                dss.push_back(z5::filesystem::openDataset(ds_handle));
+                dss.push_back(std::make_unique<vc::VcDataset>(
+                    zarr_root / std::string(&dim, 1) / std::to_string(scale_level)));
             }
 
-            const std::string unique_id = std::to_string(std::hash<std::string>{}(dirs_group.path().string()));
+            const std::string unique_id = std::to_string(std::hash<std::string>{}(zarr_root.string()));
             trace_data.normal3d_field = std::make_unique<Chunked3dVec3fFromUint8>(std::move(dss), scale_factor, cache, cache_root, unique_id + "_n3d");
 
             // Optional normal-fit diagnostics (written by vc_ngrids) to modulate loss weights.
             // Expected layout: <root>/fit_rms/0 and <root>/fit_frac_short_paths/0 (uint8, ZYX).
             try {
-                z5::filesystem::handle::Group g_rms(dirs_group, "fit_rms");
-                z5::filesystem::handle::Dataset ds_rms_handle(g_rms, std::to_string(scale_level), delim);
-                auto ds_rms = z5::filesystem::openDataset(ds_rms_handle);
+                auto ds_rms = std::make_unique<vc::VcDataset>(
+                    zarr_root / "fit_rms" / std::to_string(scale_level));
 
-                z5::filesystem::handle::Group g_frac(dirs_group, "fit_frac_short_paths");
-                z5::filesystem::handle::Dataset ds_frac_handle(g_frac, std::to_string(scale_level), delim);
-                auto ds_frac = z5::filesystem::openDataset(ds_frac_handle);
+                auto ds_frac = std::make_unique<vc::VcDataset>(
+                    zarr_root / "fit_frac_short_paths" / std::to_string(scale_level));
 
                 trace_data.normal3d_fit_quality = std::make_unique<NormalFitQualityWeightField>(
                     std::move(ds_rms), std::move(ds_frac), scale_factor, cache, cache_root, unique_id + "_n3d_fitq");

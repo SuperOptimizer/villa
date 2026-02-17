@@ -1,11 +1,45 @@
 # --- VC dependencies ----------------------------------------------------------
 include(FetchContent)
 
+# ---- SuperOptimizer/utils (zarr I/O) ----------------------------------------
+# c-blosc vendored by utils has cmake_minimum_required < 3.5; newer CMake rejects it.
+if(NOT DEFINED CMAKE_POLICY_VERSION_MINIMUM)
+    set(CMAKE_POLICY_VERSION_MINIMUM 3.5 CACHE STRING "" FORCE)
+endif()
+set(UTILS_COMPONENT_ZARR    ON  CACHE BOOL "" FORCE)
+set(UTILS_COMPONENT_TENSOR  ON  CACHE BOOL "" FORCE)
+set(UTILS_COMPONENT_JSON    ON  CACHE BOOL "" FORCE)
+# Disable components we don't need
+set(UTILS_COMPONENT_TIFF               OFF CACHE BOOL "" FORCE)
+set(UTILS_COMPONENT_INTERPOLATION      OFF CACHE BOOL "" FORCE)
+set(UTILS_COMPONENT_CONNECTED_COMPONENTS OFF CACHE BOOL "" FORCE)
+set(UTILS_COMPONENT_DISTANCE_TRANSFORM OFF CACHE BOOL "" FORCE)
+set(UTILS_COMPONENT_LINALG             OFF CACHE BOOL "" FORCE)
+set(UTILS_COMPONENT_LOGGING            OFF CACHE BOOL "" FORCE)
+set(UTILS_COMPONENT_TIMER              OFF CACHE BOOL "" FORCE)
+set(UTILS_BUILD_TESTS       OFF CACHE BOOL "" FORCE)
+set(UTILS_BUILD_BENCHMARKS  OFF CACHE BOOL "" FORCE)
+set(UTILS_BUILD_PYTHON      OFF CACHE BOOL "" FORCE)
 
-set(BUILD_Z5PY OFF CACHE BOOL "Disable Python bits for z5" FORCE)
-set(WITH_BLOSC ON  CACHE BOOL "Enable Blosc in z5"        FORCE)
+FetchContent_Declare(
+    utils
+    GIT_REPOSITORY https://github.com/SuperOptimizer/utils.git
+    GIT_TAG        5127793c32813d176cbb16c9308dc21390c30814
+)
+FetchContent_MakeAvailable(utils)
 
-# ---- xtl / xsimd / xtensor from source (before z5, which needs them) --------
+# Mark utils headers as SYSTEM to suppress warnings
+foreach(_target utils_zarr utils_tensor utils_json)
+    if(TARGET ${_target})
+        get_target_property(_inc_dirs ${_target} INTERFACE_INCLUDE_DIRECTORIES)
+        if(_inc_dirs)
+            set_target_properties(${_target} PROPERTIES INTERFACE_INCLUDE_DIRECTORIES "")
+            target_include_directories(${_target} SYSTEM INTERFACE ${_inc_dirs})
+        endif()
+    endif()
+endforeach()
+
+# ---- xtl / xsimd / xtensor (chunk buffer type, used throughout) --------------
 set(XTENSOR_USE_XSIMD 1)
 
 FetchContent_Declare(
@@ -29,7 +63,6 @@ FetchContent_MakeAvailable(xtl xsimd xtensor)
 set_property(TARGET xtensor PROPERTY INTERFACE_COMPILE_FEATURES cxx_std_23)
 
 # Mark xtensor-stack headers as SYSTEM to suppress warnings from -Weverything
-# This requires getting the interface include dirs and re-adding them as SYSTEM
 foreach(_target xtl xsimd xtensor)
     get_target_property(_inc_dirs ${_target} INTERFACE_INCLUDE_DIRECTORIES)
     if(_inc_dirs)
@@ -38,32 +71,8 @@ foreach(_target xtl xsimd xtensor)
     endif()
 endforeach()
 
-# Point z5's find_package(xtensor) (and transitive deps) at FetchContent builds
-set(xtl_DIR     "${FETCHCONTENT_BASE_DIR}/xtl-build"     CACHE PATH "" FORCE)
-set(xsimd_DIR   "${FETCHCONTENT_BASE_DIR}/xsimd-build"   CACHE PATH "" FORCE)
-set(xtensor_DIR "${FETCHCONTENT_BASE_DIR}/xtensor-build" CACHE PATH "" FORCE)
-
-
-FetchContent_Declare(
-    z5
-    GIT_REPOSITORY https://github.com/constantinpape/z5.git
-    GIT_TAG        2.0.20
-)
-FetchContent_MakeAvailable(z5)
-
-# z5's CMakeLists uses include_directories() which doesn't propagate;
-# link xtensor onto the z5 INTERFACE target so consumers get the headers.
-target_link_libraries(z5 INTERFACE xtensor)
-
-# Mark z5 headers as SYSTEM to suppress warnings
-get_target_property(_z5_inc_dirs z5 INTERFACE_INCLUDE_DIRECTORIES)
-if(_z5_inc_dirs)
-    set_target_properties(z5 PROPERTIES INTERFACE_INCLUDE_DIRECTORIES "")
-    target_include_directories(z5 SYSTEM INTERFACE ${_z5_inc_dirs})
-endif()
-
 # ---- Qt (apps / utils) -------------------------------------------------------
-find_package(Qt6 QUIET REQUIRED COMPONENTS Widgets Gui Core Network)
+find_package(Qt6 QUIET REQUIRED COMPONENTS Widgets Gui Core Network Concurrent)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
@@ -138,7 +147,7 @@ else()
     install(TARGETS openmp_stub EXPORT "${targets_export_name}")
 endif()
 
-# ---- xtensor/xsimd (already fetched above, before z5) -----------------------
+# ---- xtensor/xsimd (already fetched above) -----------------------------------
 
 # ---- nlohmann/json -----------------------------------------------------------
 FetchContent_Declare(
@@ -153,6 +162,9 @@ if (NOT json_POPULATED)
     FetchContent_Populate(json)
     add_subdirectory(${json_SOURCE_DIR} ${json_BINARY_DIR} EXCLUDE_FROM_ALL)
 endif()
+
+# ---- CURL (for HTTP chunk source / remote volumes) ---------------------------
+find_package(CURL REQUIRED)
 
 # ---- TIFF --------------------------------------------------------------------
 find_package(TIFF REQUIRED)

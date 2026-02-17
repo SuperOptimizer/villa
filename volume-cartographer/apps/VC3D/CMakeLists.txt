@@ -160,9 +160,11 @@ target_link_libraries(VC3D
     vc_ui
     vc_tracer
     Qt6::Core
+    Qt6::Concurrent
     Qt6::Gui
     Qt6::Widgets
     opencv_ximgproc
+    blosc_static
 )
 
 if (${VC_INSTALL_APPS})

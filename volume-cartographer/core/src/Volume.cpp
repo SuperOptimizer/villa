@@ -13,17 +13,10 @@
 #include "vc/core/util/Slicing.hpp"
 #include "vc/core/cache/TieredChunkCache.hpp"
 #include "vc/core/cache/ChunkSource.hpp"
-#include "vc/core/cache/Z5Decompressor.hpp"
+#include "vc/core/cache/VcDecompressor.hpp"
 #include "vc/core/cache/DiskStore.hpp"
-
-#include "z5/attributes.hxx"
-#include "z5/dataset.hxx"
-#include "z5/filesystem/handle.hxx"
-#include "z5/handle.hxx"
-#include "z5/types/types.hxx"
-#include "z5/factory.hxx"
-#include "z5/filesystem/metadata.hxx"
-#include "z5/multiarray/xtensor_access.hxx"
+#include "vc/core/cache/HttpMetadataFetcher.hpp"
+#include "vc/core/types/VcDataset.hpp"
 
 static const std::filesystem::path METADATA_FILE = "meta.json";
 static const std::filesystem::path METADATA_FILE_ALT = "metadata.json";
@@ -120,31 +113,17 @@ void Volume::zarrOpen()
     if (!metadata_.contains("format") || metadata_["format"].get<std::string>() != "zarr")
         return;
 
-    zarrFile_ = std::make_unique<z5::filesystem::handle::File>(path_);
-    z5::filesystem::handle::Group group(path_, z5::FileMode::FileMode::r);
-    z5::readAttributes(group, zarrGroup_);
+    zarrGroup_ = vc::readZarrAttributes(path_);
+    zarrDs_ = vc::openZarrLevels(path_);
 
-    std::vector<std::string> groups;
-    zarrFile_->keys(groups);
-    std::sort(groups.begin(), groups.end());
-
-    //FIXME hardcoded assumption that groups correspond to power-2 scaledowns ...
-    for(auto name : groups) {
-        // Read metadata first to discover the dimension separator
-        z5::filesystem::handle::Dataset tmp_handle(path_ / name, z5::FileMode::FileMode::r);
-        z5::DatasetMetadata dsMeta;
-        z5::filesystem::readMetadata(tmp_handle, dsMeta);
-
-        // Re-create handle with correct delimiter so chunk keys resolve properly
-        z5::filesystem::handle::Dataset ds_handle(group, name, dsMeta.zarrDelimiter);
-
-        zarrDs_.push_back(z5::filesystem::openDataset(ds_handle));
-        if (zarrDs_.back()->getDtype() != z5::types::Datatype::uint8 && zarrDs_.back()->getDtype() != z5::types::Datatype::uint16)
-            throw std::runtime_error("only uint8 & uint16 is currently supported for zarr datasets incompatible type found in "+path_.string()+" / " +name);
+    for (size_t i = 0; i < zarrDs_.size(); i++) {
+        auto dtype = zarrDs_[i]->getDtype();
+        if (dtype != vc::VcDtype::uint8 && dtype != vc::VcDtype::uint16)
+            throw std::runtime_error("only uint8 & uint16 is currently supported for zarr datasets, incompatible type found in " + path_.string());
 
         // Verify level 0 shape matches meta.json dimensions
         // zarr shape is [z, y, x] = [slices, height, width]
-        if (zarrDs_.size() == 1 && !skipShapeCheck) {
+        if (i == 0 && !skipShapeCheck) {
             const auto& shape = zarrDs_[0]->shape();
             if (static_cast<int>(shape[0]) != _slices ||
                 static_cast<int>(shape[1]) != _height ||
@@ -170,6 +149,36 @@ std::shared_ptr<Volume> Volume::New(std::filesystem::path path, std::string uuid
     return std::make_shared<Volume>(path, uuid, name);
 }
 
+std::shared_ptr<Volume> Volume::NewFromUrl(
+    const std::string& url,
+    const std::filesystem::path& cacheRoot)
+{
+    namespace fs = std::filesystem;
+
+    // Determine cache root
+    fs::path root = cacheRoot;
+    if (root.empty()) {
+        root = fs::path(std::getenv("HOME") ? std::getenv("HOME") : "/tmp") / ".VC3D" / "remote_cache";
+    }
+
+    // Fetch remote metadata (downloads .zarray files, synthesizes meta.json)
+    auto info = vc::cache::fetchRemoteZarrMetadata(url, root);
+
+    // Temporarily skip shape validation (staging dir has no chunk data)
+    auto prevSkip = skipShapeCheck;
+    skipShapeCheck = true;
+
+    auto vol = std::make_shared<Volume>(info.stagingDir);
+
+    skipShapeCheck = prevSkip;
+
+    vol->isRemote_ = true;
+    vol->remoteUrl_ = info.url;
+    vol->remoteDelimiter_ = info.delimiter;
+
+    return vol;
+}
+
 int Volume::sliceWidth() const { return _width; }
 int Volume::sliceHeight() const { return _height; }
 int Volume::numSlices() const { return _slices; }
@@ -179,8 +188,8 @@ double Volume::voxelSize() const
     return metadata_["voxelsize"].get<double>();
 }
 
-z5::Dataset *Volume::zarrDataset(int level) const {
-    if (level >= zarrDs_.size())
+vc::VcDataset *Volume::zarrDataset(int level) const {
+    if (level >= static_cast<int>(zarrDs_.size()))
         return nullptr;
 
     return zarrDs_[level].get();
@@ -213,31 +222,37 @@ std::unique_ptr<vc::cache::TieredChunkCache> Volume::createTieredCache(
         levels.push_back(lm);
     }
 
-    // Detect delimiter from the first dataset's chunk path
-    std::string delimiter = ".";
-    if (zarrDs_[0]->isZarr()) {
-        z5::types::ShapeType probe = {0, 0, 1};
-        std::filesystem::path p;
-        zarrDs_[0]->chunkPath(probe, p);
-        std::string basePath = zarrDs_[0]->path().string();
-        std::string suffix = p.string().substr(basePath.size() + 1);
-        size_t pos = suffix.find_first_not_of("0123456789");
-        if (pos != std::string::npos) {
-            size_t end = suffix.find_first_of("0123456789", pos);
-            delimiter = suffix.substr(pos, end - pos);
+    // Get delimiter from VcDataset
+    std::string delimiter = zarrDs_[0]->delimiter();
+
+    // Create chunk source: HTTP for remote volumes, filesystem for local
+    std::unique_ptr<vc::cache::ChunkSource> source;
+    if (isRemote_) {
+        source = std::make_unique<vc::cache::HttpChunkSource>(
+            remoteUrl_, remoteDelimiter_, std::move(levels));
+
+        // For remote volumes, use the staging dir itself as the disk store.
+        // Chunks are written with zarr-compatible paths so the staging dir
+        // progressively becomes a complete local zarr volume.
+        if (!diskStore) {
+            vc::cache::DiskStore::Config dsCfg;
+            dsCfg.root = path_;
+            dsCfg.directMode = true;
+            dsCfg.delimiter = remoteDelimiter_;
+            diskStore = std::make_shared<vc::cache::DiskStore>(std::move(dsCfg));
         }
+    } else {
+        source = std::make_unique<vc::cache::FileSystemChunkSource>(
+            path_, delimiter, std::move(levels));
     }
 
-    auto source = std::make_unique<vc::cache::FileSystemChunkSource>(
-        path_, delimiter, std::move(levels));
-
     // Build dataset pointers for the decompressor
-    std::vector<z5::Dataset*> dsPtrs;
+    std::vector<vc::VcDataset*> dsPtrs;
     dsPtrs.reserve(zarrDs_.size());
     for (auto& ds : zarrDs_) {
         dsPtrs.push_back(ds.get());
     }
-    auto decompress = vc::cache::makeZ5Decompressor(dsPtrs);
+    auto decompress = vc::cache::makeVcDecompressor(dsPtrs);
 
     vc::cache::TieredChunkCache::Config config;
     config.volumeId = id();
@@ -249,14 +264,14 @@ std::unique_ptr<vc::cache::TieredChunkCache> Volume::createTieredCache(
         std::move(diskStore));
 }
 
-std::function<int(const z5::Dataset*)> Volume::datasetLevelMapper() const
+std::function<int(const vc::VcDataset*)> Volume::datasetLevelMapper() const
 {
     // Build a map from dataset pointer to level index
-    std::unordered_map<const z5::Dataset*, int> dsToLevel;
+    std::unordered_map<const vc::VcDataset*, int> dsToLevel;
     for (size_t i = 0; i < zarrDs_.size(); i++) {
         dsToLevel[zarrDs_[i].get()] = static_cast<int>(i);
     }
-    return [dsToLevel = std::move(dsToLevel)](const z5::Dataset* ds) -> int {
+    return [dsToLevel = std::move(dsToLevel)](const vc::VcDataset* ds) -> int {
         auto it = dsToLevel.find(ds);
         return (it != dsToLevel.end()) ? it->second : -1;
     };
@@ -322,7 +337,7 @@ void Volume::sample(cv::Mat_<uint8_t>& out,
                     const cv::Mat_<cv::Vec3f>& coords,
                     int level, vc::Sampling method)
 {
-    z5::Dataset* ds = zarrDataset(level);
+    vc::VcDataset* ds = zarrDataset(level);
     if (!ds) return;
     float scale = 1.0f / std::pow(2.0f, level);
     cv::Mat_<cv::Vec3f> scaled;
@@ -341,7 +356,7 @@ void Volume::sampleComposite(cv::Mat_<uint8_t>& out,
                               const CompositeParams& params,
                               int level)
 {
-    z5::Dataset* ds = zarrDataset(level);
+    vc::VcDataset* ds = zarrDataset(level);
     if (!ds) return;
     float scale = 1.0f / std::pow(2.0f, level);
     cv::Mat_<cv::Vec3f> scaled;
@@ -520,7 +535,7 @@ bool Volume::allCompositeChunksCached(
     const cv::Mat_<cv::Vec3f>& normals,
     int zStart, int zEnd, int level) const
 {
-    z5::Dataset* ds = zarrDataset(level);
+    vc::VcDataset* ds = zarrDataset(level);
     if (!ds || coords.empty()) return false;
 
     float scale = 1.0f / std::pow(2.0f, level);
@@ -600,7 +615,7 @@ void Volume::prefetchCompositeChunks(
     const cv::Mat_<cv::Vec3f>& normals,
     int zStart, int zEnd, int level)
 {
-    z5::Dataset* ds = zarrDataset(level);
+    vc::VcDataset* ds = zarrDataset(level);
     if (!ds || coords.empty()) return;
 
     float scale = 1.0f / std::pow(2.0f, level);
@@ -666,7 +681,7 @@ void Volume::pinCoarsestLevel(bool blocking)
         return;
     }
     int last = static_cast<int>(zarrDs_.size()) - 1;
-    z5::Dataset* ds = zarrDataset(last);
+    vc::VcDataset* ds = zarrDataset(last);
     if (!ds) {
         fprintf(stderr, "[TILED] pinCoarsestLevel: no dataset at level %d\n", last);
         return;
@@ -692,7 +707,7 @@ void Volume::pinCoarsestLevel(bool blocking)
 Volume::ChunkBBox Volume::coordsToChunkBBox(
     const cv::Mat_<cv::Vec3f>& coords, int level) const
 {
-    z5::Dataset* ds = zarrDataset(level);
+    vc::VcDataset* ds = zarrDataset(level);
     if (!ds || coords.empty()) {
         return {0, -1, 0, -1, 0, -1};  // invalid bbox
     }
@@ -737,7 +752,7 @@ Volume::ChunkBBox Volume::coordsToChunkBBox(
 
 bool Volume::allChunksCached(const cv::Mat_<cv::Vec3f>& coords, int level) const
 {
-    z5::Dataset* ds = zarrDataset(level);
+    vc::VcDataset* ds = zarrDataset(level);
     if (!ds) return false;
 
     auto bb = coordsToChunkBBox(coords, level);
@@ -779,7 +794,7 @@ void Volume::prefetchChunks(const cv::Mat_<cv::Vec3f>& coords, int level)
             bb.maxIz, bb.maxIy, bb.maxIx);
     } else {
         // Fallback: ChunkCache::prefetch (blocking, OMP parallel)
-        z5::Dataset* ds = zarrDataset(level);
+        vc::VcDataset* ds = zarrDataset(level);
         if (ds) {
             cache().prefetch(ds,
                 bb.minIz, bb.minIy, bb.minIx,
@@ -799,7 +814,7 @@ void Volume::prefetchWorldBBox(const cv::Vec3f& lo, const cv::Vec3f& hi, int lev
 {
     if (!tieredCache_) return;
 
-    z5::Dataset* ds = zarrDataset(level);
+    vc::VcDataset* ds = zarrDataset(level);
     if (!ds) return;
 
     float scale = 1.0f / std::pow(2.0f, level);

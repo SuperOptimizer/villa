@@ -526,13 +526,15 @@ build_openblas() {
     # OpenBLAS's native make build with explicit ZEN target for AMD Ryzen
     # ZEN target optimizes for AMD Zen architecture (all Ryzen CPUs)
     # Use gfortran for Fortran (flang runtime not easily linkable with GCC)
+    # Build serial (no thread pool). The pthreads build creates N spinning
+    # threads at init that burn CPU even when idle. USE_THREAD=0 avoids this.
     make -j"$JOBS" \
         CC="ccache clang" \
         FC="ccache gfortran" \
         HOSTCC="ccache clang" \
         AR="llvm-ar" \
         RANLIB="llvm-ranlib" \
-        USE_OPENMP=1 \
+        USE_OPENMP=0 \
         NO_SHARED=0 \
         NO_STATIC=1 \
         NO_LAPACK=0 \
@@ -601,7 +603,7 @@ build_gklib() {
     cmake .. -G Ninja \
         -DCMAKE_C_COMPILER=clang \
         -DCMAKE_INSTALL_PREFIX="$PREFIX" \
-        -DOPENMP=ON \
+        -DOPENMP=OFF \
         -DSHARED=ON \
         -DGKLIB_BUILD_APPS=OFF
 
@@ -647,7 +649,7 @@ build_metis() {
         -DCMAKE_C_COMPILER=clang \
         -DCMAKE_INSTALL_PREFIX="$PREFIX" \
         -DGKLIB_PATH="$PREFIX" \
-        -DOPENMP=ON \
+        -DOPENMP=OFF \
         -DSHARED=ON \
         -DCMAKE_SHARED_LINKER_FLAGS="-L$PREFIX/lib -lGKlib -Wl,-rpath,$PREFIX/lib" \
         -DCMAKE_BUILD_RPATH="$PREFIX/lib" \
@@ -689,7 +691,7 @@ build_suitesparse() {
         -DLAPACK_LIBRARIES="$PREFIX/lib/libopenblas.so" \
         -DSUITESPARSE_ENABLE_PROJECTS="suitesparse_config;amd;camd;ccolamd;colamd;cholmod;spqr" \
         -DSUITESPARSE_USE_CUDA=OFF \
-        -DSUITESPARSE_USE_OPENMP=ON \
+        -DSUITESPARSE_USE_OPENMP=OFF \
         -DSUITESPARSE_DEMOS=OFF
     ninja -j"$JOBS"
     ninja install
@@ -1085,7 +1087,7 @@ build_opencv() {
     cd "$BUILDDIR/opencv"
     cmake "$OPENCV_SRC" -G Ninja "${CMAKE_COMMON[@]}" \
         -DOPENCV_EXTRA_MODULES_PATH="$OPENCV_CONTRIB/modules" \
-        -DBUILD_LIST=core,imgcodecs,imgproc,calib3d,photo,videoio,ximgproc \
+        -DBUILD_LIST=core,imgcodecs,imgproc,calib3d,ximgproc \
         -DBUILD_EXAMPLES=OFF \
         -DBUILD_TESTS=OFF \
         -DBUILD_PERF_TESTS=OFF \
@@ -1094,14 +1096,14 @@ build_opencv() {
         -DWITH_CUDA=OFF \
         -DWITH_OPENCL=OFF \
         -DWITH_OPENCL_SVM=OFF \
-        -DWITH_OPENGL=ON \
+        -DWITH_OPENGL=OFF \
         -DWITH_QT=OFF \
         -DWITH_GTK=OFF \
         -DWITH_TBB=OFF \
-        -DWITH_IPP=ON \
+        -DWITH_IPP=OFF \
         -DWITH_EIGEN=ON \
-        -DWITH_LAPACK=ON \
-        -DWITH_OPENMP=ON \
+        -DWITH_LAPACK=OFF \
+        -DWITH_OPENMP=OFF \
         -DWITH_JPEG=ON \
         -DWITH_PNG=ON \
         -DWITH_TIFF=ON \
@@ -1111,7 +1113,7 @@ build_opencv() {
         -DWITH_OPENJPEG=OFF \
         -DWITH_V4L=OFF \
         -DWITH_GSTREAMER=OFF \
-        -DWITH_FFMPEG=ON \
+        -DWITH_FFMPEG=OFF \
         -DBUILD_opencv_python2=OFF \
         -DBUILD_opencv_python3=OFF \
         -DBUILD_opencv_java=OFF \
@@ -1231,8 +1233,8 @@ main() {
     # Compression libraries (build first - needed by everything)
     build_zlib
     build_zstd
-    build_bzip2
-    build_brotli
+    # NOTE: bzip2 removed - not used by VC3D or its dependencies
+    # NOTE: brotli removed - not used by VC3D or its dependencies
     build_libdeflate
 
     # Image format libraries
@@ -1247,7 +1249,7 @@ main() {
 
     # Math libraries
     build_openblas
-    build_tbb
+    # NOTE: TBB removed - not used by VC3D
     build_metis
     build_suitesparse
     build_eigen
@@ -1266,17 +1268,14 @@ main() {
     build_xtensor
     build_json
 
-    # z5 (depends on xtensor, blosc2 with H264, json)
-    build_z5
+    # NOTE: z5 removed - replaced by utils zarr (vendored via FetchContent)
 
-    # Python blosc2 (with openh264 from vendored c-blosc2)
-    build_python_blosc2
-
-    # Numcodecs (vendored fork with Blosc2/openh264 support)
-    build_numcodecs
-
-    # Zarr-Python (vendored fork with Blosc2/openh264 codec)
-    build_zarr
+    # NOTE: Python packages (python-blosc2, numcodecs, zarr-python) are optional.
+    # They are only needed for Python zarr tooling, not for the C++ VC3D build.
+    # Uncomment if needed:
+    # build_python_blosc2
+    # build_numcodecs
+    # build_zarr
 
     # OpenCV (with contrib modules)
     build_opencv
