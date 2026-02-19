@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <fcntl.h>
 #include <fstream>
+#include <mutex>
 #include <nlohmann/json.hpp>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -196,16 +197,12 @@ HttpChunkSource::HttpChunkSource(
     }
 
 #ifdef VC_USE_CURL
-    curl_global_init(CURL_GLOBAL_DEFAULT);
+    static std::once_flag curlOnce;
+    std::call_once(curlOnce, [] { curl_global_init(CURL_GLOBAL_DEFAULT); });
 #endif
 }
 
-HttpChunkSource::~HttpChunkSource()
-{
-#ifdef VC_USE_CURL
-    curl_global_cleanup();
-#endif
-}
+HttpChunkSource::~HttpChunkSource() = default;
 
 std::string HttpChunkSource::chunkUrl(const ChunkKey& key) const
 {
@@ -217,18 +214,30 @@ std::string HttpChunkSource::chunkUrl(const ChunkKey& key) const
 std::vector<uint8_t> HttpChunkSource::fetch(const ChunkKey& key)
 {
 #ifdef VC_USE_CURL
+    // Thread-local CURL handle: reuses TCP+TLS connections across requests
+    // on the same IOPool worker thread.
+    thread_local CURL* curl = [] {
+        CURL* c = curl_easy_init();
+        if (c) {
+            // One-time options that survive curl_easy_reset()
+            curl_easy_setopt(c, CURLOPT_NOSIGNAL, 1L);
+        }
+        return c;
+    }();
+    if (!curl) return {};
+
+    // Reset clears per-request state but keeps the connection alive
+    curl_easy_reset(curl);
+
     std::string url = chunkUrl(key);
     std::vector<uint8_t> response;
-
-    CURL* curl = curl_easy_init();
-    if (!curl) return {};
 
     curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curlWriteCallback);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
-    curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);  // thread-safe
+    curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
     curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1L);
 
     struct curl_slist* headers = nullptr;
@@ -247,7 +256,6 @@ std::vector<uint8_t> HttpChunkSource::fetch(const ChunkKey& key)
 
     CURLcode res = curl_easy_perform(curl);
     if (headers) curl_slist_free_all(headers);
-    curl_easy_cleanup(curl);
 
     if (res != CURLE_OK) return {};
     return response;
@@ -260,10 +268,19 @@ std::vector<uint8_t> HttpChunkSource::fetch(const ChunkKey& key)
 bool HttpChunkSource::exists(const ChunkKey& key) const
 {
 #ifdef VC_USE_CURL
-    std::string url = chunkUrl(key);
-
-    CURL* curl = curl_easy_init();
+    // Thread-local CURL handle for HEAD requests (shares connection pool)
+    thread_local CURL* curl = [] {
+        CURL* c = curl_easy_init();
+        if (c) {
+            curl_easy_setopt(c, CURLOPT_NOSIGNAL, 1L);
+        }
+        return c;
+    }();
     if (!curl) return false;
+
+    curl_easy_reset(curl);
+
+    std::string url = chunkUrl(key);
 
     curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
     curl_easy_setopt(curl, CURLOPT_NOBODY, 1L);  // HEAD request
@@ -288,7 +305,6 @@ bool HttpChunkSource::exists(const ChunkKey& key) const
 
     CURLcode res = curl_easy_perform(curl);
     if (existsHeaders) curl_slist_free_all(existsHeaders);
-    curl_easy_cleanup(curl);
 
     return res == CURLE_OK;
 #else

@@ -4,6 +4,7 @@
 #include <memory>
 #include <string>
 #include <opencv2/core.hpp>
+#include <QImage>
 
 #include "TiledViewerCamera.hpp"
 #include "TileScene.hpp"
@@ -49,7 +50,7 @@ struct TileRenderParams {
 struct TileRenderResult {
     WorldTileKey worldKey;
     bool isPlaneSurface = false;
-    cv::Mat image;       // BGR cv::Mat
+    QImage image;        // RGB QImage (converted on worker thread)
     uint64_t epoch = 0;
 
     // Camera state snapshot for cache key reconstruction

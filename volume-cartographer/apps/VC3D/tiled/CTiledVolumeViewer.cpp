@@ -4,7 +4,6 @@
 #include "VCSettings.hpp"
 #include "VolumeViewerCmaps.hpp"
 #include "CSurfaceCollection.hpp"
-#include "vc/ui/UDataManipulateUtils.hpp"
 #include "vc/ui/VCCollection.hpp"
 #include "vc/core/types/VolumePkg.hpp"
 #include "vc/core/util/Surface.hpp"
@@ -654,10 +653,9 @@ void CTiledVolumeViewer::renderAllTiles()
         TileRenderParams params = buildRenderParams(wk);
         TileRenderResult result = TileRenderer::renderTile(params, surf, _volume.get());
 
-        if (!result.image.empty()) {
-            QImage qimg = Mat2QImage(result.image);
+        if (!result.image.isNull()) {
             QPixmap pixmap = QPixmap::fromImage(
-                qimg, _skipImageFormatConv ? Qt::NoFormatConversion : Qt::AutoColor);
+                result.image, _skipImageFormatConv ? Qt::NoFormatConversion : Qt::AutoColor);
             _tileScene->setTileWorld(wk, pixmap, _camera.epoch, static_cast<int8_t>(result.actualLevel));
         }
     });

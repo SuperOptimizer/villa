@@ -8,7 +8,6 @@
 
 #include "vc/core/types/Volume.hpp"
 #include "vc/core/util/Surface.hpp"
-#include "vc/ui/UDataManipulateUtils.hpp"
 
 TileRenderController::TileRenderController(TileScene* tileScene, QObject* parent)
     : QObject(parent)
@@ -123,14 +122,13 @@ void TileRenderController::drainResults()
 
 
     for (auto& result : results) {
-        if (result.image.empty()) {
+        if (result.image.isNull()) {
             continue;
         }
 
-        // Convert cv::Mat to QPixmap
-        QImage qimg = Mat2QImage(result.image);
+        // QImage was already built on the worker thread (BGR→RGB + copy)
         QPixmap pixmap = QPixmap::fromImage(
-            qimg, _skipImageFormatConv ? Qt::NoFormatConversion : Qt::AutoColor);
+            result.image, _skipImageFormatConv ? Qt::NoFormatConversion : Qt::AutoColor);
 
         // Always cache with world tile key (even if tile is no longer visible)
         TiledViewerCamera snapCamera;

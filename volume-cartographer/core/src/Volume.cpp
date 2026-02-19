@@ -276,6 +276,9 @@ std::unique_ptr<vc::cache::TieredChunkCache> Volume::createTieredCache(
     config.volumeId = id();
     config.hotMaxBytes = cacheBudgetHot_;
     config.warmMaxBytes = cacheBudgetWarm_;
+    if (isRemote_) {
+        config.ioThreads = 32;
+    }
 
     return std::make_unique<vc::cache::TieredChunkCache>(
         std::move(config),
@@ -374,20 +377,15 @@ int Volume::sampleBestEffort(cv::Mat_<uint8_t>& out,
         }
     }
 
-    // Coarsest level: block if needed (should be pinned hot)
-    int last = nScales - 1;
-    if (last < 0) last = 0;
+    // No level has cached chunks. Return empty (black tile) and kick prefetch.
+    // The progressive rendering pipeline will re-render when chunks arrive.
+    int last = std::max(0, nScales - 1);
     static std::once_flag allMissWarn;
     std::call_once(allMissWarn, [last]() {
-        fprintf(stderr, "[TILED] sampleBestEffort: ALL LEVELS MISS, blocking at coarsest=%d\n", last);
+        fprintf(stderr, "[TILED] sampleBestEffort: ALL LEVELS MISS, returning empty (coarsest=%d)\n", last);
     });
-    float scale = 1.0f / std::pow(2.0f, last);
-    cv::Mat_<cv::Vec3f> scaled = (last > 0) ? cv::Mat_<cv::Vec3f>(coords * scale) : coords;
-    readInterpolated3D(out, tieredCache(), last, scaled, method);
-    // Prefetch the requested level in background
-    if (last > level) {
-        prefetchChunks(coords, level);
-    }
+    out = cv::Mat_<uint8_t>();  // empty — caller treats as black tile
+    prefetchChunks(coords, level);
     return last;
 }
 

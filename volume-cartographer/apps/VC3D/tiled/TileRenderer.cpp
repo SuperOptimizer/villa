@@ -110,7 +110,18 @@ TileRenderResult TileRenderer::renderTile(
     pp.postStretchValues = params.compositeSettings.postStretchValues;
     pp.removeSmallComponents = params.compositeSettings.postRemoveSmallComponents;
     pp.minComponentSize = params.compositeSettings.postMinComponentSize;
-    result.image = applyPostProcess(gray, pp);
+    cv::Mat bgr = applyPostProcess(gray, pp);
+
+    // Convert BGR→RGB and build QImage on the worker thread
+    // (keeps the expensive cvtColor + memcpy off the main thread)
+    if (!bgr.empty()) {
+        cv::Mat rgb;
+        cv::cvtColor(bgr, rgb, cv::COLOR_BGR2RGB);
+        result.image = QImage(
+            static_cast<const uint8_t*>(rgb.data),
+            rgb.cols, rgb.rows, rgb.step, QImage::Format_RGB888)
+            .copy();  // deep copy — detach from cv::Mat memory
+    }
     return result;
 }
 

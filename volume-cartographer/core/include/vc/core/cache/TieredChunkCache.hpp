@@ -49,7 +49,7 @@ public:
         size_t hotMaxBytes = 10ULL << 30;    // 10 GB
         size_t warmMaxBytes = 2ULL << 30;    // 2 GB
         std::string volumeId;                // for disk store keying
-        int ioThreads = 4;
+        int ioThreads = 32;
     };
 
     // source: where to fetch chunks (filesystem, HTTP, etc.)
