@@ -9,6 +9,7 @@
 #include <opencv2/core.hpp>
 
 #include "vc/core/types/Sampling.hpp"
+#include "vc/core/cache/HttpMetadataFetcher.hpp"  // HttpAuth
 
 // Forward declarations
 namespace vc { class VcDataset; }
@@ -216,4 +217,5 @@ protected:
     bool isRemote_ = false;
     std::string remoteUrl_;
     std::string remoteDelimiter_ = ".";
+    vc::cache::HttpAuth remoteAuth_;
 };

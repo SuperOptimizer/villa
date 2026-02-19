@@ -373,7 +373,7 @@ void MenuActionController::openRemoteVolume()
     QString url = QInputDialog::getText(
         _window,
         QObject::tr("Open Remote Volume"),
-        QObject::tr("Enter zarr volume URL:"),
+        QObject::tr("Enter volume URL (http://, https://, s3://):"),
         QLineEdit::Normal,
         QString(),
         &ok);

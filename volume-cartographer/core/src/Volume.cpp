@@ -15,6 +15,7 @@
 #include "vc/core/cache/VcDecompressor.hpp"
 #include "vc/core/cache/DiskStore.hpp"
 #include "vc/core/cache/HttpMetadataFetcher.hpp"
+#include "vc/core/util/RemoteUrl.hpp"
 #include "vc/core/types/VcDataset.hpp"
 
 static const std::filesystem::path METADATA_FILE = "meta.json";
@@ -154,6 +155,12 @@ std::shared_ptr<Volume> Volume::NewFromUrl(
 {
     namespace fs = std::filesystem;
 
+    // Resolve s3:// URLs to https:// and detect AWS credentials
+    auto resolved = vc::resolveRemoteUrl(url);
+    vc::cache::HttpAuth auth;
+    auth.awsSigv4 = resolved.useAwsSigv4;
+    auth.region = resolved.awsRegion;
+
     // Determine cache root
     fs::path root = cacheRoot;
     if (root.empty()) {
@@ -161,7 +168,7 @@ std::shared_ptr<Volume> Volume::NewFromUrl(
     }
 
     // Fetch remote metadata (downloads .zarray files, synthesizes meta.json)
-    auto info = vc::cache::fetchRemoteZarrMetadata(url, root);
+    auto info = vc::cache::fetchRemoteZarrMetadata(resolved.httpsUrl, root, auth);
 
     // Temporarily skip shape validation (staging dir has no chunk data)
     auto prevSkip = skipShapeCheck;
@@ -174,6 +181,7 @@ std::shared_ptr<Volume> Volume::NewFromUrl(
     vol->isRemote_ = true;
     vol->remoteUrl_ = info.url;
     vol->remoteDelimiter_ = info.delimiter;
+    vol->remoteAuth_ = auth;
 
     return vol;
 }
@@ -228,7 +236,7 @@ std::unique_ptr<vc::cache::TieredChunkCache> Volume::createTieredCache(
     std::unique_ptr<vc::cache::ChunkSource> source;
     if (isRemote_) {
         source = std::make_unique<vc::cache::HttpChunkSource>(
-            remoteUrl_, remoteDelimiter_, std::move(levels));
+            remoteUrl_, remoteDelimiter_, std::move(levels), remoteAuth_);
 
         // For remote volumes, use the staging dir itself as the disk store.
         if (!diskStore) {

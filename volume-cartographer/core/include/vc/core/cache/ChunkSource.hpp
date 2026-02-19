@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "ChunkKey.hpp"
+#include "HttpMetadataFetcher.hpp"  // HttpAuth
 
 namespace vc::cache {
 
@@ -83,7 +84,8 @@ public:
     HttpChunkSource(
         const std::string& baseUrl,
         const std::string& delimiter,
-        std::vector<LevelMeta> levels);
+        std::vector<LevelMeta> levels,
+        HttpAuth auth = {});
 
     ~HttpChunkSource() override;
 
@@ -99,6 +101,7 @@ private:
     std::string baseUrl_;
     std::string delimiter_;
     std::vector<LevelMeta> levels_;
+    HttpAuth auth_;
 };
 
 }  // namespace vc::cache

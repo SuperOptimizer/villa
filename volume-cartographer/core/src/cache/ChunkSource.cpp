@@ -186,8 +186,9 @@ static size_t curlWriteCallback(
 HttpChunkSource::HttpChunkSource(
     const std::string& baseUrl,
     const std::string& delimiter,
-    std::vector<LevelMeta> levels)
-    : baseUrl_(baseUrl), delimiter_(delimiter), levels_(std::move(levels))
+    std::vector<LevelMeta> levels,
+    HttpAuth auth)
+    : baseUrl_(baseUrl), delimiter_(delimiter), levels_(std::move(levels)), auth_(std::move(auth))
 {
     // Remove trailing slash from base URL
     while (!baseUrl_.empty() && baseUrl_.back() == '/') {
@@ -230,6 +231,11 @@ std::vector<uint8_t> HttpChunkSource::fetch(const ChunkKey& key)
     curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);  // thread-safe
     curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1L);
 
+    if (auth_.awsSigv4) {
+        std::string sigv4 = "aws:amz:" + auth_.region + ":s3";
+        curl_easy_setopt(curl, CURLOPT_AWS_SIGV4, sigv4.c_str());
+    }
+
     CURLcode res = curl_easy_perform(curl);
     curl_easy_cleanup(curl);
 
@@ -255,6 +261,11 @@ bool HttpChunkSource::exists(const ChunkKey& key) const
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10L);
     curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
     curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1L);
+
+    if (auth_.awsSigv4) {
+        std::string sigv4 = "aws:amz:" + auth_.region + ":s3";
+        curl_easy_setopt(curl, CURLOPT_AWS_SIGV4, sigv4.c_str());
+    }
 
     CURLcode res = curl_easy_perform(curl);
     curl_easy_cleanup(curl);

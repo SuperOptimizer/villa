@@ -23,7 +23,7 @@ static size_t stringWriteCallback(
 }
 #endif
 
-std::string httpGetString(const std::string& url)
+std::string httpGetString(const std::string& url, const HttpAuth& auth)
 {
 #ifdef VC_USE_CURL
     std::string response;
@@ -39,6 +39,11 @@ std::string httpGetString(const std::string& url)
     curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
     curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1L);
 
+    if (auth.awsSigv4) {
+        std::string sigv4 = "aws:amz:" + auth.region + ":s3";
+        curl_easy_setopt(curl, CURLOPT_AWS_SIGV4, sigv4.c_str());
+    }
+
     CURLcode res = curl_easy_perform(curl);
     curl_easy_cleanup(curl);
 
@@ -46,6 +51,7 @@ std::string httpGetString(const std::string& url)
     return response;
 #else
     (void)url;
+    (void)auth;
     return {};
 #endif
 }
@@ -129,7 +135,8 @@ static std::optional<RemoteZarrInfo> tryLoadCachedMetadata(
 
 RemoteZarrInfo fetchRemoteZarrMetadata(
     const std::string& url,
-    const std::filesystem::path& stagingRoot)
+    const std::filesystem::path& stagingRoot,
+    const HttpAuth& auth)
 {
     // Normalize URL: strip trailing slashes
     std::string baseUrl = url;
@@ -158,7 +165,7 @@ RemoteZarrInfo fetchRemoteZarrMetadata(
                  baseUrl.c_str(), stagingDir.c_str());
 
     // Fetch .zgroup
-    auto zgroup = httpGetString(baseUrl + "/.zgroup");
+    auto zgroup = httpGetString(baseUrl + "/.zgroup", auth);
     if (!zgroup.empty()) {
         writeFile(stagingDir / ".zgroup", zgroup);
     } else {
@@ -167,7 +174,7 @@ RemoteZarrInfo fetchRemoteZarrMetadata(
     }
 
     // Fetch .zattrs (optional, may 404)
-    auto zattrs = httpGetString(baseUrl + "/.zattrs");
+    auto zattrs = httpGetString(baseUrl + "/.zattrs", auth);
     if (!zattrs.empty()) {
         writeFile(stagingDir / ".zattrs", zattrs);
     }
@@ -179,7 +186,7 @@ RemoteZarrInfo fetchRemoteZarrMetadata(
 
     for (int lvl = 0; lvl < 20; lvl++) {
         std::string levelStr = std::to_string(lvl);
-        auto zarray = httpGetString(baseUrl + "/" + levelStr + "/.zarray");
+        auto zarray = httpGetString(baseUrl + "/" + levelStr + "/.zarray", auth);
         if (zarray.empty()) {
             std::fprintf(stderr, "[REMOTE] Level %d: no .zarray, stopping\n", lvl);
             break;
