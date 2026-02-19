@@ -110,6 +110,9 @@ namespace viewer {
     // Remote volume chunk cache directory
     constexpr auto REMOTE_CACHE_DIR = "viewer/remote_cache_dir";
 
+    // Local cache directory for network-mounted volpkgs
+    constexpr auto NETWORK_CACHE_DIR = "viewer/network_cache_dir";
+
     // Audio/UX
     constexpr auto PLAY_SOUND_AFTER_SEG_RUN = "viewer/play_sound_after_seg_run";
     constexpr auto USERNAME = "viewer/username";

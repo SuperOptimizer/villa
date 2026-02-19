@@ -102,6 +102,8 @@
 #include "vc/core/util/PlaneSurface.hpp"
 #include "vc/core/util/Slicing.hpp"
 #include "vc/core/util/Render.hpp"
+#include "vc/core/util/NetworkFilesystem.hpp"
+#include "vc/core/cache/DiskStore.hpp"
 
 
 
@@ -3274,6 +3276,51 @@ void CWindow::OpenVolume(const QString& path)
     // Open volume package
     if (!InitializeVolumePkg(aVpkgPath.toStdString() + "/")) {
         return;
+    }
+
+    // Detect network-mounted volpkg and offer local SSD caching
+    {
+        namespace fs = std::filesystem;
+        auto fsType = vc::detectFilesystemType(fs::path(aVpkgPath.toStdString()));
+        if (fsType == vc::FilesystemType::NetworkMount) {
+            auto label = vc::filesystemTypeLabel(fs::path(aVpkgPath.toStdString()));
+            auto reply = QMessageBox::question(
+                this, tr("Network Volume Detected"),
+                tr("This volume package appears to be on a network filesystem (%1).\n\n"
+                   "Would you like to enable local disk caching for faster access?")
+                    .arg(QString::fromStdString(label)),
+                QMessageBox::Yes | QMessageBox::No, QMessageBox::Yes);
+
+            if (reply == QMessageBox::Yes) {
+                using namespace vc3d::settings;
+                QSettings settings(vc3d::settingsFilePath(), QSettings::IniFormat);
+                QString lastDir = settings.value(viewer::NETWORK_CACHE_DIR).toString();
+                if (lastDir.isEmpty()) {
+                    lastDir = QDir::homePath() + "/.VC3D/network_cache";
+                }
+
+                QString cacheDir = QFileDialog::getExistingDirectory(
+                    this, tr("Select Local Cache Directory"), lastDir);
+
+                if (!cacheDir.isEmpty()) {
+                    settings.setValue(viewer::NETWORK_CACHE_DIR, cacheDir);
+
+                    vc::cache::DiskStore::Config dsCfg;
+                    dsCfg.root = fs::path(cacheDir.toStdString());
+                    dsCfg.directMode = false;
+                    dsCfg.persistent = true;
+                    auto diskStore = std::make_shared<vc::cache::DiskStore>(std::move(dsCfg));
+
+                    for (const auto& volId : fVpkg->volumeIDs()) {
+                        auto vol = fVpkg->volume(volId);
+                        vol->setDiskStore(diskStore);
+                    }
+
+                    Logger()->info("Network cache enabled: {} (fs: {})",
+                                   cacheDir.toStdString(), label);
+                }
+            }
+        }
     }
 
     // Check version number

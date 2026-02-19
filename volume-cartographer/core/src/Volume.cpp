@@ -270,7 +270,8 @@ std::unique_ptr<vc::cache::TieredChunkCache> Volume::createTieredCache(
 void Volume::ensureTieredCache() const
 {
     if (!tieredCache_) {
-        tieredCache_ = const_cast<Volume*>(this)->createTieredCache();
+        auto* self = const_cast<Volume*>(this);
+        tieredCache_ = self->createTieredCache(self->pendingDiskStore_);
     }
 }
 
@@ -284,6 +285,16 @@ void Volume::setCacheBudget(size_t hotBytes, size_t warmBytes)
 {
     cacheBudgetHot_ = hotBytes;
     cacheBudgetWarm_ = warmBytes;
+}
+
+void Volume::setDiskStore(std::shared_ptr<vc::cache::DiskStore> store)
+{
+    if (tieredCache_) {
+        fprintf(stderr, "[Volume] WARNING: setDiskStore() called after cache "
+                        "already created — ignoring\n");
+        return;
+    }
+    pendingDiskStore_ = std::move(store);
 }
 
 // ============================================================================

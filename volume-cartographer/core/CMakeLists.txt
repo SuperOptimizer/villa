@@ -17,6 +17,7 @@ add_library(vc_core
         src/Render.cpp
         src/Tiff.cpp
         src/Zarr.cpp
+        src/NetworkFilesystem.cpp
         src/cache/ChunkSource.cpp
         src/cache/DiskStore.cpp
         src/cache/IOPool.cpp

@@ -76,6 +76,10 @@ public:
     // Set cache budget (must be called before first tieredCache() access).
     void setCacheBudget(size_t hotBytes, size_t warmBytes = 0);
 
+    // Inject a shared DiskStore for the cold cache tier.
+    // Must be called before first tieredCache() access.
+    void setDiskStore(std::shared_ptr<vc::cache::DiskStore> store);
+
     // --- Blocking sampling (CLI / batch) ---
 
     void sample(cv::Mat_<uint8_t>& out,
@@ -188,6 +192,7 @@ protected:
     mutable std::unique_ptr<vc::cache::TieredChunkCache> tieredCache_;
     size_t cacheBudgetHot_ = 8ULL << 30;   // 8 GB default
     size_t cacheBudgetWarm_ = 2ULL << 30;   // 2 GB default
+    std::shared_ptr<vc::cache::DiskStore> pendingDiskStore_;
 
     void ensureTieredCache() const;
 
