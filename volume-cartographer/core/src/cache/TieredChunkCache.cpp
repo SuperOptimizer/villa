@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <fstream>
 
 namespace vc::cache {
 
@@ -72,8 +73,13 @@ TieredChunkCache::TieredChunkCache(
     ioPool_.setCompletionCallback(
         [this](const ChunkKey& key, std::vector<uint8_t>&& compressed) {
             if (compressed.empty()) {
+                // Remember that this chunk doesn't exist so we never refetch
+                {
+                    std::unique_lock lock(negativeMutex_);
+                    negativeCache_.insert(key);
+                }
                 if (auto* log = debugLog())
-                    std::fprintf(log, "COMPLETE empty lvl=%d (%d,%d,%d)\n",
+                    std::fprintf(log, "COMPLETE empty lvl=%d (%d,%d,%d) [negative cached]\n",
                                  key.level, key.iz, key.iy, key.ix);
                 return;
             }
@@ -117,11 +123,14 @@ TieredChunkCache::TieredChunkCache(
                 chunkReadyCb_(key);
             }
         });
+
+    loadNegativeCache();
 }
 
 TieredChunkCache::~TieredChunkCache()
 {
     ioPool_.stop();
+    saveNegativeCache();
 }
 
 // =============================================================================
@@ -172,6 +181,12 @@ std::pair<ChunkDataPtr, int> TieredChunkCache::getBestAvailable(
 
 ChunkDataPtr TieredChunkCache::getBlocking(const ChunkKey& key)
 {
+    // Known non-existent? Return immediately.
+    {
+        std::shared_lock lock(negativeMutex_);
+        if (negativeCache_.count(key)) return nullptr;
+    }
+
     // Check hot
     auto hot = hotGet(key);
     if (hot) {
@@ -196,7 +211,13 @@ ChunkDataPtr TieredChunkCache::getBlocking(const ChunkKey& key)
     if (hot) return hot;
 
     // Full promotion chain: cold → warm → hot, or ice → cold → warm → hot
-    return loadFull(key);
+    auto data = loadFull(key);
+    if (!data) {
+        // Fetch failed — remember so we don't retry
+        std::unique_lock lock(negativeMutex_);
+        negativeCache_.insert(key);
+    }
+    return data;
 }
 
 // =============================================================================
@@ -208,6 +229,12 @@ void TieredChunkCache::prefetch(const ChunkKey& key)
     // Already in hot or warm? No-op.
     if (hotGet(key)) return;
     if (warmGet(key).has_value()) return;
+
+    // Known non-existent? Don't waste an IO round-trip.
+    {
+        std::shared_lock lock(negativeMutex_);
+        if (negativeCache_.count(key)) return;
+    }
 
     ioPool_.submit(key);
 }
@@ -223,6 +250,10 @@ void TieredChunkCache::prefetchRegion(
                 totalChecked++;
                 ChunkKey key{level, iz, iy, ix};
                 if (!hotGet(key) && !warmGet(key).has_value()) {
+                    // Skip chunks known not to exist
+                    std::shared_lock lock(negativeMutex_);
+                    if (negativeCache_.count(key)) continue;
+                    lock.unlock();
                     keys.push_back(key);
                 }
             }
@@ -318,8 +349,16 @@ void TieredChunkCache::clearAll()
 {
     ioPool_.cancelPending();
     clearMemory();
+    {
+        std::unique_lock lock(negativeMutex_);
+        negativeCache_.clear();
+    }
     if (diskStore_) {
         diskStore_->clearVolume(config_.volumeId);
+        // Remove persisted negative cache file
+        std::error_code ec;
+        std::filesystem::remove(
+            diskStore_->root() / (config_.volumeId + ".negative"), ec);
     }
 }
 
@@ -658,6 +697,52 @@ void TieredChunkCache::onIOComplete(
     if (chunkReadyCb_) {
         chunkReadyCb_(key);
     }
+}
+
+// =============================================================================
+// Negative cache persistence
+// =============================================================================
+
+void TieredChunkCache::loadNegativeCache()
+{
+    if (!diskStore_) return;
+
+    auto path = diskStore_->root() / (config_.volumeId + ".negative");
+    std::ifstream f(path, std::ios::binary);
+    if (!f.is_open()) return;
+
+    int32_t level, iz, iy, ix;
+    size_t count = 0;
+    while (f.read(reinterpret_cast<char*>(&level), 4) &&
+           f.read(reinterpret_cast<char*>(&iz), 4) &&
+           f.read(reinterpret_cast<char*>(&iy), 4) &&
+           f.read(reinterpret_cast<char*>(&ix), 4)) {
+        negativeCache_.insert(ChunkKey{level, iz, iy, ix});
+        count++;
+    }
+    if (count > 0) {
+        std::fprintf(stderr, "[TILED] Loaded %zu negative cache entries from disk\n", count);
+    }
+}
+
+void TieredChunkCache::saveNegativeCache() const
+{
+    if (!diskStore_ || negativeCache_.empty()) return;
+
+    auto path = diskStore_->root() / (config_.volumeId + ".negative");
+    std::ofstream f(path, std::ios::binary | std::ios::trunc);
+    if (!f.is_open()) return;
+
+    std::shared_lock lock(negativeMutex_);
+    for (const auto& key : negativeCache_) {
+        int32_t level = key.level, iz = key.iz, iy = key.iy, ix = key.ix;
+        f.write(reinterpret_cast<const char*>(&level), 4);
+        f.write(reinterpret_cast<const char*>(&iz), 4);
+        f.write(reinterpret_cast<const char*>(&iy), 4);
+        f.write(reinterpret_cast<const char*>(&ix), 4);
+    }
+    std::fprintf(stderr, "[TILED] Saved %zu negative cache entries to disk\n",
+                 negativeCache_.size());
 }
 
 }  // namespace vc::cache

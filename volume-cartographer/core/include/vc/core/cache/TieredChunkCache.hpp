@@ -193,6 +193,14 @@ private:
     // --- I/O pool ---
     IOPool ioPool_;
 
+    // --- Negative cache: chunks confirmed not to exist at the source ---
+    // Prevents repeated S3 round-trips for out-of-bounds / sparse chunks.
+    // Persisted to disk alongside the cold tier so it survives restarts.
+    mutable std::shared_mutex negativeMutex_;
+    std::unordered_set<ChunkKey, ChunkKeyHash> negativeCache_;
+    void loadNegativeCache();
+    void saveNegativeCache() const;
+
     // --- Keys that should be pinned when they arrive in hot tier ---
     std::mutex pinnedKeysMutex_;
     std::unordered_set<ChunkKey, ChunkKeyHash> pendingPinKeys_;
