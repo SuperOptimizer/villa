@@ -231,12 +231,22 @@ std::vector<uint8_t> HttpChunkSource::fetch(const ChunkKey& key)
     curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);  // thread-safe
     curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1L);
 
+    struct curl_slist* headers = nullptr;
+    std::string userpwd;
     if (auth_.awsSigv4) {
         std::string sigv4 = "aws:amz:" + auth_.region + ":s3";
         curl_easy_setopt(curl, CURLOPT_AWS_SIGV4, sigv4.c_str());
+        userpwd = auth_.accessKey + ":" + auth_.secretKey;
+        curl_easy_setopt(curl, CURLOPT_USERPWD, userpwd.c_str());
+        if (!auth_.sessionToken.empty()) {
+            std::string hdr = "x-amz-security-token: " + auth_.sessionToken;
+            headers = curl_slist_append(headers, hdr.c_str());
+            curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+        }
     }
 
     CURLcode res = curl_easy_perform(curl);
+    if (headers) curl_slist_free_all(headers);
     curl_easy_cleanup(curl);
 
     if (res != CURLE_OK) return {};
@@ -262,12 +272,22 @@ bool HttpChunkSource::exists(const ChunkKey& key) const
     curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
     curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1L);
 
+    struct curl_slist* existsHeaders = nullptr;
+    std::string existsUserpwd;
     if (auth_.awsSigv4) {
         std::string sigv4 = "aws:amz:" + auth_.region + ":s3";
         curl_easy_setopt(curl, CURLOPT_AWS_SIGV4, sigv4.c_str());
+        existsUserpwd = auth_.accessKey + ":" + auth_.secretKey;
+        curl_easy_setopt(curl, CURLOPT_USERPWD, existsUserpwd.c_str());
+        if (!auth_.sessionToken.empty()) {
+            std::string hdr = "x-amz-security-token: " + auth_.sessionToken;
+            existsHeaders = curl_slist_append(existsHeaders, hdr.c_str());
+            curl_easy_setopt(curl, CURLOPT_HTTPHEADER, existsHeaders);
+        }
     }
 
     CURLcode res = curl_easy_perform(curl);
+    if (existsHeaders) curl_slist_free_all(existsHeaders);
     curl_easy_cleanup(curl);
 
     return res == CURLE_OK;

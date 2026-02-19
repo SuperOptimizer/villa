@@ -1154,8 +1154,15 @@ void CTiledVolumeViewer::updateStatusLabel()
         }
     }
 
-    // Remote volume pin progress
-    if (_pinTotal > 0 && _pinReceived < _pinTotal) {
+    // Remote download stats
+    if (_volume && _volume->tieredCache()) {
+        auto s = _volume->tieredCache()->stats();
+        if (s.iceFetches > 0 || s.ioPending > 0) {
+            status += QString(" | dl %1").arg(s.iceFetches);
+            if (s.ioPending > 0)
+                status += QString(" q%1").arg(s.ioPending);
+        }
+    } else if (_pinTotal > 0 && _pinReceived < _pinTotal) {
         status += QString(" | downloading %1/%2").arg(_pinReceived).arg(_pinTotal);
     }
 

@@ -39,12 +39,22 @@ std::string httpGetString(const std::string& url, const HttpAuth& auth)
     curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
     curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1L);
 
+    struct curl_slist* headers = nullptr;
+    std::string userpwd;
     if (auth.awsSigv4) {
         std::string sigv4 = "aws:amz:" + auth.region + ":s3";
         curl_easy_setopt(curl, CURLOPT_AWS_SIGV4, sigv4.c_str());
+        userpwd = auth.accessKey + ":" + auth.secretKey;
+        curl_easy_setopt(curl, CURLOPT_USERPWD, userpwd.c_str());
+        if (!auth.sessionToken.empty()) {
+            std::string hdr = "x-amz-security-token: " + auth.sessionToken;
+            headers = curl_slist_append(headers, hdr.c_str());
+            curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+        }
     }
 
     CURLcode res = curl_easy_perform(curl);
+    if (headers) curl_slist_free_all(headers);
     curl_easy_cleanup(curl);
 
     if (res != CURLE_OK) return {};

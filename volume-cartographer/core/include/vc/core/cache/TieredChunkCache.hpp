@@ -137,6 +137,7 @@ public:
         uint64_t warmEvictions = 0;
         size_t hotBytes = 0;
         size_t warmBytes = 0;
+        size_t ioPending = 0;   // pending + in-flight IO tasks
     };
 
     Stats stats() const;

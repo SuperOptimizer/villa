@@ -8,7 +8,10 @@ namespace vc::cache {
 // Optional auth config for HTTP requests (e.g. AWS SigV4 signing).
 struct HttpAuth {
     bool awsSigv4 = false;
-    std::string region;  // e.g. "us-east-1"
+    std::string region;        // e.g. "us-east-1"
+    std::string accessKey;     // AWS_ACCESS_KEY_ID
+    std::string secretKey;     // AWS_SECRET_ACCESS_KEY
+    std::string sessionToken;  // AWS_SESSION_TOKEN (optional, for STS)
 };
 
 struct RemoteZarrInfo {

@@ -19,6 +19,8 @@
 #include "vc/core/Version.hpp"
 #include "vc/core/util/Logging.hpp"
 #include "vc/core/util/LoadJson.hpp"
+#include "vc/core/util/RemoteUrl.hpp"
+#include "vc/core/cache/HttpMetadataFetcher.hpp"
 
 #include <QAction>
 #include <QApplication>
@@ -380,6 +382,55 @@ void MenuActionController::openRemoteVolume()
 
     if (!ok || url.trimmed().isEmpty()) return;
 
+    // Resolve the URL (s3:// → https://) and build auth config
+    auto urlStr = url.trimmed().toStdString();
+    auto resolved = vc::resolveRemoteUrl(urlStr);
+    vc::cache::HttpAuth auth;
+
+    if (resolved.useAwsSigv4) {
+        // S3 URL — need AWS credentials
+        auth.awsSigv4 = true;
+        auth.region = resolved.awsRegion;
+
+        // Try env vars first
+        auto getEnv = [](const char* name) -> std::string {
+            const char* v = std::getenv(name);
+            return v ? v : "";
+        };
+        auth.accessKey = getEnv("AWS_ACCESS_KEY_ID");
+        auth.secretKey = getEnv("AWS_SECRET_ACCESS_KEY");
+        auth.sessionToken = getEnv("AWS_SESSION_TOKEN");
+
+        // If env vars are missing, prompt the user
+        if (auth.accessKey.empty() || auth.secretKey.empty()) {
+            bool credOk = false;
+            QString accessKey = QInputDialog::getText(
+                _window,
+                QObject::tr("AWS Credentials"),
+                QObject::tr("AWS_ACCESS_KEY_ID:"),
+                QLineEdit::Normal, QString(), &credOk);
+            if (!credOk || accessKey.trimmed().isEmpty()) return;
+
+            QString secretKey = QInputDialog::getText(
+                _window,
+                QObject::tr("AWS Credentials"),
+                QObject::tr("AWS_SECRET_ACCESS_KEY:"),
+                QLineEdit::Password, QString(), &credOk);
+            if (!credOk || secretKey.trimmed().isEmpty()) return;
+
+            QString sessionToken = QInputDialog::getText(
+                _window,
+                QObject::tr("AWS Credentials"),
+                QObject::tr("AWS_SESSION_TOKEN (optional, leave blank if not using STS):"),
+                QLineEdit::Normal, QString(), &credOk);
+            if (!credOk) return;
+
+            auth.accessKey = accessKey.trimmed().toStdString();
+            auth.secretKey = secretKey.trimmed().toStdString();
+            auth.sessionToken = sessionToken.trimmed().toStdString();
+        }
+    }
+
     // Determine cache directory — use saved setting or ask user
     QSettings settings(vc3d::settingsFilePath(), QSettings::IniFormat);
     QString defaultCache = QDir::homePath() + "/.VC3D/remote_cache";
@@ -404,7 +455,6 @@ void MenuActionController::openRemoteVolume()
     }
 
     // Run Volume::NewFromUrl on a background thread so the UI doesn't freeze
-    auto urlStr = url.trimmed().toStdString();
     auto cachePath = selectedDir.toStdString();
     auto* watcher = new QFutureWatcher<std::shared_ptr<Volume>>(this);
 
@@ -437,8 +487,8 @@ void MenuActionController::openRemoteVolume()
         });
 
     auto future = QtConcurrent::run(
-        [urlStr, cachePath]() -> std::shared_ptr<Volume> {
-            return Volume::NewFromUrl(urlStr, cachePath);
+        [urlStr, cachePath, auth]() -> std::shared_ptr<Volume> {
+            return Volume::NewFromUrl(urlStr, cachePath, auth);
         });
     watcher->setFuture(future);
 }

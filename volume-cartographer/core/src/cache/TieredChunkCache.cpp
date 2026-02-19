@@ -362,6 +362,7 @@ auto TieredChunkCache::stats() const -> Stats
         std::lock_guard lock(warmMutex_);
         s.warmBytes = warmBytes_;
     }
+    s.ioPending = ioPool_.pendingCount();
     return s;
 }
 

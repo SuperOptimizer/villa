@@ -43,9 +43,12 @@ public:
     // Create a Volume backed by a remote zarr store over HTTP.
     // Downloads metadata (.zarray files) to a local staging dir, then
     // fetches chunk data on demand via HttpChunkSource.
+    // If auth is provided, it is used as-is; otherwise credentials are
+    // read from environment variables.
     static std::shared_ptr<Volume> NewFromUrl(
         const std::string& url,
-        const std::filesystem::path& cacheRoot = {});
+        const std::filesystem::path& cacheRoot = {},
+        const vc::cache::HttpAuth& auth = {});
 
     [[nodiscard]] bool isRemote() const { return isRemote_; }
     [[nodiscard]] std::string id() const;

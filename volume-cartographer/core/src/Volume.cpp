@@ -151,15 +151,28 @@ std::shared_ptr<Volume> Volume::New(std::filesystem::path path, std::string uuid
 
 std::shared_ptr<Volume> Volume::NewFromUrl(
     const std::string& url,
-    const std::filesystem::path& cacheRoot)
+    const std::filesystem::path& cacheRoot,
+    const vc::cache::HttpAuth& authIn)
 {
     namespace fs = std::filesystem;
 
     // Resolve s3:// URLs to https:// and detect AWS credentials
     auto resolved = vc::resolveRemoteUrl(url);
-    vc::cache::HttpAuth auth;
-    auth.awsSigv4 = resolved.useAwsSigv4;
-    auth.region = resolved.awsRegion;
+    vc::cache::HttpAuth auth = authIn;
+    if (resolved.useAwsSigv4 && !auth.awsSigv4) {
+        // Caller didn't provide auth — populate from env vars
+        auth.awsSigv4 = true;
+        auth.region = resolved.awsRegion;
+        auto getEnv = [](const char* name) -> std::string {
+            const char* v = std::getenv(name);
+            return v ? v : "";
+        };
+        auth.accessKey = getEnv("AWS_ACCESS_KEY_ID");
+        auth.secretKey = getEnv("AWS_SECRET_ACCESS_KEY");
+        auth.sessionToken = getEnv("AWS_SESSION_TOKEN");
+    } else if (resolved.useAwsSigv4 && auth.awsSigv4 && auth.region.empty()) {
+        auth.region = resolved.awsRegion;
+    }
 
     // Determine cache root
     fs::path root = cacheRoot;
