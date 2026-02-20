@@ -208,6 +208,8 @@ CTiledVolumeViewer* ViewerManager::createTiledViewer(const std::string& surfaceN
     viewer->setSegmentationEditActive(_segmentationEditActive);
     viewer->setSegmentationCursorMirroring(_mirrorCursorToSegmentation);
 
+    _tiledViewers.push_back(viewer);
+
     if (_segmentationOverlay) {
         _segmentationOverlay->attachViewer(viewer);
     }
@@ -886,6 +888,11 @@ void ViewerManager::setSegmentationCursorMirroring(bool enabled)
 {
     _mirrorCursorToSegmentation = enabled;
     for (auto* viewer : _viewers) {
+        if (viewer) {
+            viewer->setSegmentationCursorMirroring(enabled);
+        }
+    }
+    for (auto* viewer : _tiledViewers) {
         if (viewer) {
             viewer->setSegmentationCursorMirroring(enabled);
         }

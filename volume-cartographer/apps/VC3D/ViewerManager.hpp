@@ -135,6 +135,7 @@ private:
     bool _segmentationEditActive{false};
     SegmentationModule* _segmentationModule{nullptr};
     std::vector<CVolumeViewer*> _viewers;
+    std::vector<CTiledVolumeViewer*> _tiledViewers;
     std::unordered_map<CVolumeViewer*, bool> _resetDefaults;
     float _intersectionOpacity{1.0f};
     float _intersectionThickness{0.0f};
