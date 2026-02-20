@@ -29,7 +29,7 @@ class SurfacePanelController;
 class VolumePkg;
 class Volume;
 class QuadSurface;
-class CVolumeViewer;
+class CTiledVolumeViewer;
 
 class SegmentationGrower : public QObject
 {

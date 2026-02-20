@@ -16,7 +16,7 @@ class QLineEdit;
 class ViewerManager;
 class SurfaceTreeWidgetItem;
 class VolumePkg;
-class CVolumeViewer;
+class CTiledVolumeViewer;
 class VCCollection;
 class QTreeWidget;
 class QCheckBox;
@@ -76,7 +76,7 @@ public:
     SurfacePanelController(const UiRefs& ui,
                            CSurfaceCollection* surfaces,
                            ViewerManager* viewerManager,
-                           std::function<CVolumeViewer*()> segmentationViewerProvider,
+                           std::function<CTiledVolumeViewer*()> segmentationViewerProvider,
                            std::function<void()> filtersUpdated,
                            QObject* parent = nullptr);
 
@@ -174,7 +174,7 @@ private:
     CSurfaceCollection* _surfaces{nullptr};
     ViewerManager* _viewerManager{nullptr};
     std::shared_ptr<VolumePkg> _volumePkg;
-    std::function<CVolumeViewer*()> _segmentationViewerProvider;
+    std::function<CTiledVolumeViewer*()> _segmentationViewerProvider;
     std::function<void()> _filtersUpdated;
     FilterUiRefs _filters;
     TagUiRefs _tags;

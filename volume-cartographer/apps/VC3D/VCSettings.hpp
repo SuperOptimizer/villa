@@ -103,10 +103,6 @@ namespace viewer {
     constexpr bool USE_AXIS_ALIGNED_SLICES_DEFAULT = true;
     constexpr int SLICE_STEP_SIZE_DEFAULT = 1;
 
-    // Experimental tiled renderer
-    constexpr auto USE_TILED_RENDERER = "viewer/use_tiled_renderer";
-    constexpr bool USE_TILED_RENDERER_DEFAULT = true;
-
     // Remote volume chunk cache directory
     constexpr auto REMOTE_CACHE_DIR = "viewer/remote_cache_dir";
 

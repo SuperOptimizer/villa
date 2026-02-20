@@ -1,6 +1,6 @@
 #include "SegmentationModule.hpp"
 
-#include "CVolumeViewer.hpp"
+#include "tiled/CTiledVolumeViewer.hpp"
 #include "CVolumeViewerView.hpp"
 #include "CSurfaceCollection.hpp"
 #include "tools/SegmentationEditManager.hpp"
@@ -69,7 +69,7 @@ void SegmentationModule::DragState::reset()
     moved = false;
 }
 
-void SegmentationModule::HoverState::set(int r, int c, const cv::Vec3f& w, CVolumeViewer* v)
+void SegmentationModule::HoverState::set(int r, int c, const cv::Vec3f& w, CTiledVolumeViewer* v)
 {
     valid = true;
     row = r;
@@ -220,7 +220,7 @@ SegmentationModule::SegmentationModule(SegmentationWidget* widget,
     updateAutosaveState();
 }
 
-void SegmentationModule::setRotationHandleHitTester(std::function<bool(CVolumeViewer*, const cv::Vec3f&)> tester)
+void SegmentationModule::setRotationHandleHitTester(std::function<bool(CTiledVolumeViewer*, const cv::Vec3f&)> tester)
 {
     _rotationHandleHitTester = std::move(tester);
 }
@@ -265,7 +265,7 @@ bool SegmentationModule::ensureHoverTarget()
     if (!_hoverPointer.valid) {
         return false;
     }
-    CVolumeViewer* viewer = _hoverPointer.viewer.data();
+    CTiledVolumeViewer* viewer = _hoverPointer.viewer.data();
     if (!viewer) {
         _hoverPointer.valid = false;
         return false;
@@ -388,32 +388,32 @@ void SegmentationModule::bindWidgetSignals()
             });
 }
 
-void SegmentationModule::bindViewerSignals(CVolumeViewer* viewer)
+void SegmentationModule::bindViewerSignals(CTiledVolumeViewer* viewer)
 {
     if (!viewer || viewer->property("vc_segmentation_bound").toBool()) {
         return;
     }
 
-    connect(viewer, &CVolumeViewer::sendMousePressVolume,
+    connect(viewer, &CTiledVolumeViewer::sendMousePressVolume,
             this, [this, viewer](const cv::Vec3f& worldPos,
                                  const cv::Vec3f& normal,
                                  Qt::MouseButton button,
                                  Qt::KeyboardModifiers modifiers) {
                 handleMousePress(viewer, worldPos, normal, button, modifiers);
             });
-    connect(viewer, &CVolumeViewer::sendMouseMoveVolume,
+    connect(viewer, &CTiledVolumeViewer::sendMouseMoveVolume,
             this, [this, viewer](const cv::Vec3f& worldPos,
                                  Qt::MouseButtons buttons,
                                  Qt::KeyboardModifiers modifiers) {
                 handleMouseMove(viewer, worldPos, buttons, modifiers);
             });
-    connect(viewer, &CVolumeViewer::sendMouseReleaseVolume,
+    connect(viewer, &CTiledVolumeViewer::sendMouseReleaseVolume,
             this, [this, viewer](const cv::Vec3f& worldPos,
                                  Qt::MouseButton button,
                                  Qt::KeyboardModifiers modifiers) {
                 handleMouseRelease(viewer, worldPos, button, modifiers);
             });
-    connect(viewer, &CVolumeViewer::sendSegmentationRadiusWheel,
+    connect(viewer, &CTiledVolumeViewer::sendSegmentationRadiusWheel,
             this, [this, viewer](int steps, const QPointF& scenePoint, const cv::Vec3f& worldPos) {
                 handleWheel(viewer, steps, scenePoint, worldPos);
             });
@@ -423,7 +423,7 @@ void SegmentationModule::bindViewerSignals(CVolumeViewer* viewer)
     _attachedViewers.insert(viewer);
 }
 
-void SegmentationModule::attachViewer(CVolumeViewer* viewer)
+void SegmentationModule::attachViewer(CTiledVolumeViewer* viewer)
 {
     bindViewerSignals(viewer);
     updateViewerCursors();
@@ -1239,7 +1239,7 @@ void SegmentationModule::pruneMissingCorrections()
     }
 }
 
-void SegmentationModule::beginCorrectionDrag(int row, int col, CVolumeViewer* viewer, const cv::Vec3f& worldPos)
+void SegmentationModule::beginCorrectionDrag(int row, int col, CTiledVolumeViewer* viewer, const cv::Vec3f& worldPos)
 {
     _correctionDrag.active = true;
     _correctionDrag.anchorRow = row;
@@ -1443,7 +1443,7 @@ void SegmentationModule::clearLineDragStroke()
     }
 }
 
-bool SegmentationModule::isSegmentationViewer(const CVolumeViewer* viewer) const
+bool SegmentationModule::isSegmentationViewer(const CTiledVolumeViewer* viewer) const
 {
     if (!viewer) {
         return false;
@@ -1476,7 +1476,7 @@ float SegmentationModule::gridStepWorld() const
     return result;
 }
 
-void SegmentationModule::beginDrag(int row, int col, CVolumeViewer* viewer, const cv::Vec3f& worldPos)
+void SegmentationModule::beginDrag(int row, int col, CTiledVolumeViewer* viewer, const cv::Vec3f& worldPos)
 {
     _drag.active = true;
     _drag.row = row;
@@ -1561,7 +1561,7 @@ void SegmentationModule::cancelDrag()
     emitPendingChanges();
 }
 
-bool SegmentationModule::isNearRotationHandle(CVolumeViewer* viewer, const cv::Vec3f& worldPos) const
+bool SegmentationModule::isNearRotationHandle(CTiledVolumeViewer* viewer, const cv::Vec3f& worldPos) const
 {
     if (!_rotationHandleHitTester || !viewer) {
         return false;
@@ -1628,7 +1628,7 @@ void SegmentationModule::resetHoverLookupDetail()
     _hoverLookup.lastWorld = cv::Vec3f(0.0f, 0.0f, 0.0f);
 }
 
-void SegmentationModule::recordPointerSample(CVolumeViewer* viewer, const cv::Vec3f& worldPos)
+void SegmentationModule::recordPointerSample(CTiledVolumeViewer* viewer, const cv::Vec3f& worldPos)
 {
     if (!_editingEnabled || !_editManager || !_editManager->hasSession()) {
         _hoverPointer.valid = false;
@@ -1653,7 +1653,7 @@ void SegmentationModule::recordPointerSample(CVolumeViewer* viewer, const cv::Ve
     _hoverPointer.world = worldPos;
 }
 
-void SegmentationModule::updateHover(CVolumeViewer* viewer, const cv::Vec3f& worldPos)
+void SegmentationModule::updateHover(CTiledVolumeViewer* viewer, const cv::Vec3f& worldPos)
 {
     bool hoverChanged = false;
 

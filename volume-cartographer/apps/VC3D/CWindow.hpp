@@ -25,7 +25,6 @@
 
 #include "CPointCollectionWidget.hpp"
 #include "CSurfaceCollection.hpp"
-#include "CVolumeViewer.hpp"
 #include "tiled/CTiledVolumeViewer.hpp"
 #include "DrawingWidget.hpp"
 #include "segmentation/tools/SegmentationEditManager.hpp"
@@ -138,9 +137,7 @@ private:
     // Helper method for command line tools
     bool initializeCommandLineRunner(void);
 
-    CVolumeViewer *newConnectedCVolumeViewer(std::string surfaceName, QString title, QMdiArea *mdiArea);
-    CTiledVolumeViewer *newConnectedTiledViewer(std::string surfaceName, QString title, QMdiArea *mdiArea);
-    QWidget* newConnectedViewer(std::string surfaceName, QString title, QMdiArea *mdiArea);
+    CTiledVolumeViewer *newConnectedViewer(std::string surfaceName, QString title, QMdiArea *mdiArea);
     void closeEvent(QCloseEvent* event);
 
     void setWidgetsEnabled(bool state);
@@ -178,16 +175,15 @@ private slots:
     void onAxisOverlayOpacityChanged(int value);
     void onSegmentationEditingModeChanged(bool enabled);
     void onSegmentationStopToolsRequested();
-    void configureViewerConnections(CVolumeViewer* viewer);
     void configureViewerConnections(CTiledVolumeViewer* viewer);
 
-    CVolumeViewer* segmentationViewer() const;
+    CTiledVolumeViewer* segmentationViewer() const;
     void clearSurfaceSelection();
     void onSurfaceActivated(const QString& surfaceId, QuadSurface* surface);
     void onSurfaceActivatedPreserveEditing(const QString& surfaceId, QuadSurface* surface);
-    void onAxisAlignedSliceMousePress(CVolumeViewer* viewer, const cv::Vec3f& volLoc, Qt::MouseButton button, Qt::KeyboardModifiers modifiers);
-    void onAxisAlignedSliceMouseMove(CVolumeViewer* viewer, const cv::Vec3f& volLoc, Qt::MouseButtons buttons, Qt::KeyboardModifiers modifiers);
-    void onAxisAlignedSliceMouseRelease(CVolumeViewer* viewer, Qt::MouseButton button, Qt::KeyboardModifiers modifiers);
+    void onAxisAlignedSliceMousePress(CTiledVolumeViewer* viewer, const cv::Vec3f& volLoc, Qt::MouseButton button, Qt::KeyboardModifiers modifiers);
+    void onAxisAlignedSliceMouseMove(CTiledVolumeViewer* viewer, const cv::Vec3f& volLoc, Qt::MouseButtons buttons, Qt::KeyboardModifiers modifiers);
+    void onAxisAlignedSliceMouseRelease(CTiledVolumeViewer* viewer, Qt::MouseButton button, Qt::KeyboardModifiers modifiers);
     void onSegmentationGrowthStatusChanged(bool running);
     void processPendingInotifyEvents();
     void onSliceStepSizeChanged(int newSize);
@@ -326,7 +322,7 @@ private:
         QPointF startScenePos;
         float startRotationDegrees = 0.0f;
     };
-    std::unordered_map<const CVolumeViewer*, AxisAlignedSliceDragState> _axisAlignedSliceDrags;
+    std::unordered_map<const CTiledVolumeViewer*, AxisAlignedSliceDragState> _axisAlignedSliceDrags;
     float _axisAlignedSegXZRotationDeg = 0.0f;
     float _axisAlignedSegYZRotationDeg = 0.0f;
 

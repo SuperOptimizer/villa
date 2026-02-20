@@ -2,7 +2,7 @@
 
 #include "../SegmentationModule.hpp"
 #include "../../ViewerManager.hpp"
-#include "../../CVolumeViewer.hpp"
+#include "../../tiled/CTiledVolumeViewer.hpp"
 #include "SegmentationEditManager.hpp"
 #include "../SegmentationWidget.hpp"
 #include "../../overlays/SegmentationOverlayController.hpp"
@@ -817,7 +817,7 @@ std::optional<cv::Vec3f> SegmentationPushPullTool::computeAlphaTarget(const cv::
                                                 const cv::Vec3f& normal,
                                                 int direction,
                                                 QuadSurface* surface,
-                                                CVolumeViewer* viewer,
+                                                CTiledVolumeViewer* viewer,
                                                 bool* outUnavailable) const
 {
     if (outUnavailable) {

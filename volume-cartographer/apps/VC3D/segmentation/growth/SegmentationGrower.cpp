@@ -5,7 +5,7 @@
 #include "../SegmentationModule.hpp"
 #include "../SegmentationWidget.hpp"
 
-#include "../../CVolumeViewer.hpp"
+#include "../../tiled/CTiledVolumeViewer.hpp"
 #include "../../CSurfaceCollection.hpp"
 #include "../../ViewerManager.hpp"
 #include "../../SurfacePanelController.hpp"
@@ -595,7 +595,7 @@ void refreshSegmentationViewers(ViewerManager* manager)
         return;
     }
 
-    manager->forEachViewer([](CVolumeViewer* viewer) {
+    manager->forEachViewer([](CTiledVolumeViewer* viewer) {
         if (!viewer) {
             return;
         }
@@ -1475,10 +1475,10 @@ void SegmentationGrower::onFutureFinished()
         _context.module->requestAutosaveFromGrowth();
     }
 
-    std::vector<std::pair<CVolumeViewer*, bool>> resetDefaults;
+    std::vector<std::pair<CTiledVolumeViewer*, bool>> resetDefaults;
     if (_context.viewerManager) {
         ViewerManager* manager = _context.viewerManager;
-        manager->forEachViewer([manager, &resetDefaults](CVolumeViewer* viewer) {
+        manager->forEachViewer([manager, &resetDefaults](CTiledVolumeViewer* viewer) {
             if (!viewer || viewer->surfName() != "segmentation") {
                 return;
             }

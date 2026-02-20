@@ -1,7 +1,7 @@
 #include "SegmentationOverlayController.hpp"
 
 #include "../CSurfaceCollection.hpp"
-#include "../CVolumeViewer.hpp"
+#include "../tiled/CTiledVolumeViewer.hpp"
 #include "../VolumeViewerBase.hpp"
 #include "../ViewerManager.hpp"
 #include "../segmentation/tools/SegmentationEditManager.hpp"
@@ -1051,7 +1051,7 @@ void SegmentationOverlayController::invalidatePlaneIntersections()
         return;
     }
 
-    _viewerManager->forEachViewer([](CVolumeViewer* viewer) {
+    _viewerManager->forEachViewer([](CTiledVolumeViewer* viewer) {
         if (!viewer) {
             return;
         }
@@ -1087,7 +1087,7 @@ void SegmentationOverlayController::buildApprovalMaskOverlay(const State& state,
 
     // Check if this viewer is displaying a PlaneSurface (XY/XZ/YZ orthogonal view)
     // For plane viewers, the approval mask is rendered via modified intersection lines
-    // in CVolumeViewerIntersections.cpp, not here
+    // in CTiledVolumeViewerIntersections.cpp, not here
     Surface* viewerSurf = viewer->currentSurface();
     const bool isPlaneViewer = dynamic_cast<PlaneSurface*>(viewerSurf) != nullptr;
 

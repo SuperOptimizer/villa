@@ -9,10 +9,6 @@ set(srcs
     Keybinds.hpp
     CWindow.cpp
     CWindowContextMenu.cpp
-    CVolumeViewer.cpp
-    CVolumeViewerIntersections.cpp
-    CVolumeViewerRender.cpp
-    CVolumeViewerOverlay.cpp
     CVolumeViewerView.cpp
     VolumeViewerCmaps.cpp
     VolumeViewerCmaps.hpp

@@ -13,7 +13,7 @@ class SegmentationWidget;
 class SegmentationOverlayController;
 class CSurfaceCollection;
 class SegmentationModule;
-class CVolumeViewer;
+class CTiledVolumeViewer;
 class QuadSurface;
 class QTimer;
 
@@ -55,7 +55,7 @@ private:
                                                 const cv::Vec3f& normal,
                                                 int direction,
                                                 QuadSurface* surface,
-                                                CVolumeViewer* viewer,
+                                                CTiledVolumeViewer* viewer,
                                                 bool* outUnavailable) const;
 
     SegmentationModule& _module;

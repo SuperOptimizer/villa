@@ -1,6 +1,6 @@
 #include "VectorOverlayController.hpp"
 
-#include "../CVolumeViewer.hpp"
+#include "../tiled/CTiledVolumeViewer.hpp"
 #include "../VolumeViewerBase.hpp"
 #include "../CSurfaceCollection.hpp"
 #include "../VCSettings.hpp"

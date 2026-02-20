@@ -1,7 +1,7 @@
 #include "VolumeOverlayController.hpp"
 
 #include "../ViewerManager.hpp"
-#include "../CVolumeViewer.hpp"
+#include "../VolumeViewerCmaps.hpp"
 #include "../VolumeViewerBase.hpp"
 #include "../VCSettings.hpp"
 
@@ -370,7 +370,7 @@ void VolumeOverlayController::populateColormapOptions()
         return;
     }
 
-    const auto& entries = CVolumeViewer::overlayColormapEntries();
+    const auto& entries = volume_viewer_cmaps::entries();
     const QSignalBlocker blocker(_ui.colormapSelect);
     _ui.colormapSelect->clear();
 
@@ -564,7 +564,7 @@ void VolumeOverlayController::setColormap(const std::string& id)
         }
 
         if (newId.empty()) {
-            const auto& entries = CVolumeViewer::overlayColormapEntries();
+            const auto& entries = volume_viewer_cmaps::entries();
             if (!entries.empty()) {
                 newId = entries.front().id;
             }

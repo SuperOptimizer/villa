@@ -1,7 +1,7 @@
 #include "ViewerOverlayControllerBase.hpp"
 
 #include "../VolumeViewerBase.hpp"
-#include "../CVolumeViewer.hpp"
+#include "../tiled/CTiledVolumeViewer.hpp"
 #include "../ViewerManager.hpp"
 #include "../elements/COutlinedTextItem.hpp"
 
@@ -278,7 +278,7 @@ void ViewerOverlayControllerBase::bindToViewerManager(ViewerManager* manager)
     }
 
     _managerCreatedConn = QObject::connect(_manager, &ViewerManager::viewerCreated,
-                                           this, [this](CVolumeViewer* viewer) {
+                                           this, [this](CTiledVolumeViewer* viewer) {
                                                attachViewer(viewer);
                                            });
 
@@ -288,7 +288,7 @@ void ViewerOverlayControllerBase::bindToViewerManager(ViewerManager* manager)
                                                  _manager = nullptr;
                                              });
 
-    _manager->forEachViewer([this](CVolumeViewer* viewer) {
+    _manager->forEachViewer([this](CTiledVolumeViewer* viewer) {
         attachViewer(viewer);
     });
 }

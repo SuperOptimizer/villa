@@ -1,6 +1,6 @@
 #include "PointsOverlayController.hpp"
 
-#include "../CVolumeViewer.hpp"
+#include "../tiled/CTiledVolumeViewer.hpp"
 #include "../VolumeViewerBase.hpp"
 #include "../ViewerManager.hpp"
 

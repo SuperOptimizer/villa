@@ -74,8 +74,8 @@
 #include <opencv2/imgcodecs.hpp>
 #include <QStringList>
 
-#include "CVolumeViewer.hpp"
 #include "CVolumeViewerView.hpp"
+#include "VolumeViewerCmaps.hpp"
 #include "vc/ui/UDataManipulateUtils.hpp"
 #include "SettingsDialog.hpp"
 #include "elements/VolumeSelector.hpp"
@@ -635,7 +635,7 @@ CWindow::CWindow(size_t cacheSizeGB) :
 
     _viewerManager = std::make_unique<ViewerManager>(_surf_col, _point_collection, this);
     _viewerManager->setSegmentationCursorMirroring(_mirrorCursorToSegmentation);
-    connect(_viewerManager.get(), &ViewerManager::viewerCreated, this, [this](CVolumeViewer* viewer) {
+    connect(_viewerManager.get(), &ViewerManager::viewerCreated, this, [this](CTiledVolumeViewer* viewer) {
         configureViewerConnections(viewer);
     });
 
@@ -858,7 +858,7 @@ CWindow::CWindow(size_t cacheSizeGB) :
         if (!_viewerManager) {
             return;
         }
-        _viewerManager->forEachViewer([](CVolumeViewer* viewer) {
+        _viewerManager->forEachViewer([](CTiledVolumeViewer* viewer) {
             if (viewer && viewer->surfName() == "segmentation") {
                 auto s = viewer->compositeRenderSettings();
                 s.enabled = !s.enabled;
@@ -877,7 +877,7 @@ CWindow::CWindow(size_t cacheSizeGB) :
         bool next = !current;
         settings.setValue(viewer::SHOW_DIRECTION_HINTS, next ? "1" : "0");
         if (_viewerManager) {
-            _viewerManager->forEachViewer([next](CVolumeViewer* viewer) {
+            _viewerManager->forEachViewer([next](CTiledVolumeViewer* viewer) {
                 if (viewer) {
                     viewer->setShowDirectionHints(next);
                 }
@@ -895,7 +895,7 @@ CWindow::CWindow(size_t cacheSizeGB) :
         bool next = !current;
         settings.setValue(viewer::SHOW_SURFACE_NORMALS, next ? "1" : "0");
         if (_viewerManager) {
-            _viewerManager->forEachViewer([next](CVolumeViewer* viewer) {
+            _viewerManager->forEachViewer([next](CTiledVolumeViewer* viewer) {
                 if (viewer) {
                     viewer->setShowSurfaceNormals(next);
                 }
@@ -933,10 +933,8 @@ CWindow::CWindow(size_t cacheSizeGB) :
     connect(fZoomInShortcut, &QShortcut::activated, [this]() {
         if (!mdiArea) return;
         if (auto* subWindow = mdiArea->activeSubWindow()) {
-            if (auto* viewer = qobject_cast<CVolumeViewer*>(subWindow->widget())) {
+            if (auto* viewer = qobject_cast<CTiledVolumeViewer*>(subWindow->widget())) {
                 viewer->adjustZoomByFactor(ZOOM_FACTOR);
-            } else if (auto* tiled = qobject_cast<CTiledVolumeViewer*>(subWindow->widget())) {
-                tiled->adjustZoomByFactor(ZOOM_FACTOR);
             }
         }
     });
@@ -946,10 +944,8 @@ CWindow::CWindow(size_t cacheSizeGB) :
     connect(fZoomOutShortcut, &QShortcut::activated, [this]() {
         if (!mdiArea) return;
         if (auto* subWindow = mdiArea->activeSubWindow()) {
-            if (auto* viewer = qobject_cast<CVolumeViewer*>(subWindow->widget())) {
+            if (auto* viewer = qobject_cast<CTiledVolumeViewer*>(subWindow->widget())) {
                 viewer->adjustZoomByFactor(1.0f / ZOOM_FACTOR);
-            } else if (auto* tiled = qobject_cast<CTiledVolumeViewer*>(subWindow->widget())) {
-                tiled->adjustZoomByFactor(1.0f / ZOOM_FACTOR);
             }
         }
     });
@@ -960,14 +956,10 @@ CWindow::CWindow(size_t cacheSizeGB) :
     connect(fResetViewShortcut, &QShortcut::activated, [this]() {
         if (!mdiArea) return;
         if (auto* subWindow = mdiArea->activeSubWindow()) {
-            if (auto* viewer = qobject_cast<CVolumeViewer*>(subWindow->widget())) {
+            if (auto* viewer = qobject_cast<CTiledVolumeViewer*>(subWindow->widget())) {
                 viewer->resetSurfaceOffsets();
                 viewer->fitSurfaceInView();
                 viewer->renderVisible(true);
-            } else if (auto* tiled = qobject_cast<CTiledVolumeViewer*>(subWindow->widget())) {
-                tiled->resetSurfaceOffsets();
-                tiled->fitSurfaceInView();
-                tiled->renderVisible(true);
             }
         }
     });
@@ -978,10 +970,8 @@ CWindow::CWindow(size_t cacheSizeGB) :
     connect(fWorldOffsetZPosShortcut, &QShortcut::activated, [this]() {
         if (!mdiArea) return;
         if (auto* subWindow = mdiArea->activeSubWindow()) {
-            if (auto* viewer = qobject_cast<CVolumeViewer*>(subWindow->widget())) {
+            if (auto* viewer = qobject_cast<CTiledVolumeViewer*>(subWindow->widget())) {
                 viewer->adjustSurfaceOffset(1.0f);
-            } else if (auto* tiled = qobject_cast<CTiledVolumeViewer*>(subWindow->widget())) {
-                tiled->adjustSurfaceOffset(1.0f);
             }
         }
     });
@@ -991,10 +981,8 @@ CWindow::CWindow(size_t cacheSizeGB) :
     connect(fWorldOffsetZNegShortcut, &QShortcut::activated, [this]() {
         if (!mdiArea) return;
         if (auto* subWindow = mdiArea->activeSubWindow()) {
-            if (auto* viewer = qobject_cast<CVolumeViewer*>(subWindow->widget())) {
+            if (auto* viewer = qobject_cast<CTiledVolumeViewer*>(subWindow->widget())) {
                 viewer->adjustSurfaceOffset(-1.0f);
-            } else if (auto* tiled = qobject_cast<CTiledVolumeViewer*>(subWindow->widget())) {
-                tiled->adjustSurfaceOffset(-1.0f);
             }
         }
     });
@@ -1069,150 +1057,19 @@ CWindow::~CWindow()
     delete _point_collection;
 }
 
-CVolumeViewer *CWindow::newConnectedCVolumeViewer(std::string surfaceName, QString title, QMdiArea *mdiArea)
+CTiledVolumeViewer *CWindow::newConnectedViewer(std::string surfaceName, QString title, QMdiArea *mdiArea)
 {
     if (!_viewerManager) {
         return nullptr;
     }
 
-    CVolumeViewer* viewer = _viewerManager->createViewer(surfaceName, title, mdiArea);
-    if (!viewer) {
-        return nullptr;
-    }
-
-    return viewer;
-}
-
-CTiledVolumeViewer *CWindow::newConnectedTiledViewer(std::string surfaceName, QString title, QMdiArea *mdiArea)
-{
-    if (!_viewerManager) {
-        return nullptr;
-    }
-
-    CTiledVolumeViewer* viewer = _viewerManager->createTiledViewer(surfaceName, title, mdiArea);
+    CTiledVolumeViewer* viewer = _viewerManager->createViewer(surfaceName, title, mdiArea);
     if (!viewer) {
         return nullptr;
     }
 
     configureViewerConnections(viewer);
     return viewer;
-}
-
-QWidget* CWindow::newConnectedViewer(std::string surfaceName, QString title, QMdiArea *mdiArea)
-{
-    using namespace vc3d::settings;
-    QSettings settings(vc3d::settingsFilePath(), QSettings::IniFormat);
-    bool useTiled = settings.value(viewer::USE_TILED_RENDERER, viewer::USE_TILED_RENDERER_DEFAULT).toBool();
-
-    if (useTiled) {
-        auto* viewer = newConnectedTiledViewer(surfaceName, title, mdiArea);
-        if (viewer) {
-            configureViewerConnections(viewer);
-        }
-        return viewer;
-    } else {
-        auto* viewer = newConnectedCVolumeViewer(surfaceName, title, mdiArea);
-        if (viewer) {
-            configureViewerConnections(viewer);
-        }
-        return viewer;
-    }
-}
-
-void CWindow::configureViewerConnections(CVolumeViewer* viewer)
-{
-    if (!viewer) {
-        return;
-    }
-
-    connect(this, &CWindow::sendVolumeChanged, viewer, &CVolumeViewer::OnVolumeChanged, Qt::UniqueConnection);
-    connect(this, &CWindow::sendVolumeClosing, viewer, &CVolumeViewer::onVolumeClosing, Qt::UniqueConnection);
-    connect(viewer, &CVolumeViewer::sendVolumeClicked, this, &CWindow::onVolumeClicked, Qt::UniqueConnection);
-
-    if (viewer->fGraphicsView) {
-        connect(viewer->fGraphicsView, &CVolumeViewerView::sendMousePress,
-                viewer, &CVolumeViewer::onMousePress, Qt::UniqueConnection);
-        connect(viewer->fGraphicsView, &CVolumeViewerView::sendMouseMove,
-                viewer, &CVolumeViewer::onMouseMove, Qt::UniqueConnection);
-        connect(viewer->fGraphicsView, &CVolumeViewerView::sendMouseRelease,
-                viewer, &CVolumeViewer::onMouseRelease, Qt::UniqueConnection);
-    }
-
-    if (_drawingWidget && !viewer->property("vc_drawing_bound").toBool()) {
-        connect(_drawingWidget, &DrawingWidget::sendPathsChanged,
-                viewer, &CVolumeViewer::onPathsChanged, Qt::UniqueConnection);
-        connect(viewer, &CVolumeViewer::sendMousePressVolume,
-                _drawingWidget, &DrawingWidget::onMousePress, Qt::UniqueConnection);
-        connect(viewer, &CVolumeViewer::sendMouseMoveVolume,
-                _drawingWidget, &DrawingWidget::onMouseMove, Qt::UniqueConnection);
-        connect(viewer, &CVolumeViewer::sendMouseReleaseVolume,
-                _drawingWidget, &DrawingWidget::onMouseRelease, Qt::UniqueConnection);
-        connect(viewer, &CVolumeViewer::sendZSliceChanged,
-                _drawingWidget, &DrawingWidget::updateCurrentZSlice, Qt::UniqueConnection);
-    connect(_drawingWidget, &DrawingWidget::sendDrawingModeActive,
-            this, [this, viewer](bool active) {
-                viewer->onDrawingModeActive(active,
-                    _drawingWidget->getBrushSize(),
-                    _drawingWidget->getBrushShape() == PathBrushShape::Square);
-            });
-        viewer->setProperty("vc_drawing_bound", true);
-    }
-
-    if (_seedingWidget && !viewer->property("vc_seeding_bound").toBool()) {
-        connect(_seedingWidget, &SeedingWidget::sendPathsChanged,
-                viewer, &CVolumeViewer::onPathsChanged, Qt::UniqueConnection);
-        connect(viewer, &CVolumeViewer::sendMousePressVolume,
-                _seedingWidget, &SeedingWidget::onMousePress, Qt::UniqueConnection);
-        connect(viewer, &CVolumeViewer::sendMouseMoveVolume,
-                _seedingWidget, &SeedingWidget::onMouseMove, Qt::UniqueConnection);
-        connect(viewer, &CVolumeViewer::sendMouseReleaseVolume,
-                _seedingWidget, &SeedingWidget::onMouseRelease, Qt::UniqueConnection);
-        connect(viewer, &CVolumeViewer::sendZSliceChanged,
-                _seedingWidget, &SeedingWidget::updateCurrentZSlice, Qt::UniqueConnection);
-        viewer->setProperty("vc_seeding_bound", true);
-    }
-
-    if (_segmentationModule) {
-        _segmentationModule->attachViewer(viewer);
-    }
-
-    if (_point_collection_widget && !viewer->property("vc_points_bound").toBool()) {
-        connect(_point_collection_widget, &CPointCollectionWidget::collectionSelected,
-                viewer, &CVolumeViewer::onCollectionSelected, Qt::UniqueConnection);
-        connect(viewer, &CVolumeViewer::sendCollectionSelected,
-                _point_collection_widget, &CPointCollectionWidget::selectCollection, Qt::UniqueConnection);
-        connect(_point_collection_widget, &CPointCollectionWidget::pointSelected,
-                viewer, &CVolumeViewer::onPointSelected, Qt::UniqueConnection);
-        connect(viewer, &CVolumeViewer::pointSelected,
-                _point_collection_widget, &CPointCollectionWidget::selectPoint, Qt::UniqueConnection);
-        connect(viewer, &CVolumeViewer::pointClicked,
-                _point_collection_widget, &CPointCollectionWidget::selectPoint, Qt::UniqueConnection);
-        viewer->setProperty("vc_points_bound", true);
-    }
-
-    const std::string& surfName = viewer->surfName();
-    if ((surfName == "seg xz" || surfName == "seg yz") && !viewer->property("vc_axisaligned_bound").toBool()) {
-        if (viewer->fGraphicsView) {
-            viewer->fGraphicsView->setMiddleButtonPanEnabled(!_useAxisAlignedSlices);
-        }
-
-        connect(viewer, &CVolumeViewer::sendMousePressVolume,
-                this, [this, viewer](cv::Vec3f volLoc, cv::Vec3f /*normal*/, Qt::MouseButton button, Qt::KeyboardModifiers modifiers) {
-                    onAxisAlignedSliceMousePress(viewer, volLoc, button, modifiers);
-                });
-
-        connect(viewer, &CVolumeViewer::sendMouseMoveVolume,
-                this, [this, viewer](cv::Vec3f volLoc, Qt::MouseButtons buttons, Qt::KeyboardModifiers modifiers) {
-                    onAxisAlignedSliceMouseMove(viewer, volLoc, buttons, modifiers);
-                });
-
-        connect(viewer, &CVolumeViewer::sendMouseReleaseVolume,
-                this, [this, viewer](cv::Vec3f /*volLoc*/, Qt::MouseButton button, Qt::KeyboardModifiers modifiers) {
-                    onAxisAlignedSliceMouseRelease(viewer, button, modifiers);
-                });
-
-        viewer->setProperty("vc_axisaligned_bound", true);
-    }
 }
 
 void CWindow::configureViewerConnections(CTiledVolumeViewer* viewer)
@@ -1287,11 +1144,27 @@ void CWindow::configureViewerConnections(CTiledVolumeViewer* viewer)
         if (viewer->fGraphicsView) {
             viewer->fGraphicsView->setMiddleButtonPanEnabled(!_useAxisAlignedSlices);
         }
+
+        connect(viewer, &CTiledVolumeViewer::sendMousePressVolume,
+                this, [this, viewer](cv::Vec3f volLoc, cv::Vec3f /*normal*/, Qt::MouseButton button, Qt::KeyboardModifiers modifiers) {
+                    onAxisAlignedSliceMousePress(viewer, volLoc, button, modifiers);
+                });
+
+        connect(viewer, &CTiledVolumeViewer::sendMouseMoveVolume,
+                this, [this, viewer](cv::Vec3f volLoc, Qt::MouseButtons buttons, Qt::KeyboardModifiers modifiers) {
+                    onAxisAlignedSliceMouseMove(viewer, volLoc, buttons, modifiers);
+                });
+
+        connect(viewer, &CTiledVolumeViewer::sendMouseReleaseVolume,
+                this, [this, viewer](cv::Vec3f /*volLoc*/, Qt::MouseButton button, Qt::KeyboardModifiers modifiers) {
+                    onAxisAlignedSliceMouseRelease(viewer, button, modifiers);
+                });
+
         viewer->setProperty("vc_axisaligned_bound", true);
     }
 }
 
-CVolumeViewer* CWindow::segmentationViewer() const
+CTiledVolumeViewer* CWindow::segmentationViewer() const
 {
     if (!_viewerManager) {
         return nullptr;
@@ -1639,35 +1512,17 @@ void CWindow::CreateWidgets(void)
     // Ensure the viewer's graphics view gets focus when subwindow is activated
     connect(mdiArea, &QMdiArea::subWindowActivated, [](QMdiSubWindow* subWindow) {
         if (subWindow) {
-            if (auto* viewer = qobject_cast<CVolumeViewer*>(subWindow->widget())) {
+            if (auto* viewer = qobject_cast<CTiledVolumeViewer*>(subWindow->widget())) {
                 viewer->fGraphicsView->setFocus();
-            } else if (auto* tiled = qobject_cast<CTiledVolumeViewer*>(subWindow->widget())) {
-                tiled->fGraphicsView->setFocus();
             }
         }
     });
 
     {
-        using namespace vc3d::settings;
-        QSettings settings(vc3d::settingsFilePath(), QSettings::IniFormat);
-        bool useTiled = settings.value(viewer::USE_TILED_RENDERER, viewer::USE_TILED_RENDERER_DEFAULT).toBool();
-
-        auto setIntersects = [](QWidget* w, const std::set<std::string>& targets) {
-            if (auto* cv = qobject_cast<CVolumeViewer*>(w)) cv->setIntersects(targets);
-            else if (auto* tv = qobject_cast<CTiledVolumeViewer*>(w)) tv->setIntersects(targets);
-        };
-
-        if (useTiled) {
-            setIntersects(newConnectedTiledViewer("seg xz", tr("Segmentation XZ"), mdiArea), {"segmentation"});
-            setIntersects(newConnectedTiledViewer("seg yz", tr("Segmentation YZ"), mdiArea), {"segmentation"});
-            setIntersects(newConnectedTiledViewer("xy plane", tr("XY / Slices"), mdiArea), {"segmentation"});
-            setIntersects(newConnectedTiledViewer("segmentation", tr("Surface"), mdiArea), {"seg xz","seg yz"});
-        } else {
-            newConnectedCVolumeViewer("seg xz", tr("Segmentation XZ"), mdiArea)->setIntersects({"segmentation"});
-            newConnectedCVolumeViewer("seg yz", tr("Segmentation YZ"), mdiArea)->setIntersects({"segmentation"});
-            newConnectedCVolumeViewer("xy plane", tr("XY / Slices"), mdiArea)->setIntersects({"segmentation"});
-            newConnectedCVolumeViewer("segmentation", tr("Surface"), mdiArea)->setIntersects({"seg xz","seg yz"});
-        }
+        newConnectedViewer("seg xz", tr("Segmentation XZ"), mdiArea)->setIntersects({"segmentation"});
+        newConnectedViewer("seg yz", tr("Segmentation YZ"), mdiArea)->setIntersects({"segmentation"});
+        newConnectedViewer("xy plane", tr("XY / Slices"), mdiArea)->setIntersects({"segmentation"});
+        newConnectedViewer("segmentation", tr("Surface"), mdiArea)->setIntersects({"seg xz","seg yz"});
     }
     mdiArea->tileSubWindows();
 
@@ -1861,7 +1716,7 @@ void CWindow::CreateWidgets(void)
     if (_segmentationModule && _planeSlicingOverlay) {
         QPointer<PlaneSlicingOverlayController> overlayPtr(_planeSlicingOverlay.get());
         _segmentationModule->setRotationHandleHitTester(
-            [overlayPtr](CVolumeViewer* viewer, const cv::Vec3f& worldPos) {
+            [overlayPtr](CTiledVolumeViewer* viewer, const cv::Vec3f& worldPos) {
                 if (!overlayPtr) {
                     return false;
                 }
@@ -1971,7 +1826,7 @@ void CWindow::CreateWidgets(void)
 
     // Selection dock (removed per request; selection actions remain in the menu)
     if (_viewerManager) {
-        _viewerManager->forEachViewer([this](CVolumeViewer* viewer) {
+        _viewerManager->forEachViewer([this](CTiledVolumeViewer* viewer) {
             configureViewerConnections(viewer);
         });
     }
@@ -2157,7 +2012,7 @@ void CWindow::CreateWidgets(void)
 
         // Setup base colormap selector
     {
-        const auto& entries = CVolumeViewer::overlayColormapEntries();
+        const auto& entries = volume_viewer_cmaps::entries();
         ui.baseColormapSelect->clear();
         ui.baseColormapSelect->addItem(tr("None (Grayscale)"), QString());
         for (const auto& entry : entries) {
@@ -2169,7 +2024,7 @@ void CWindow::CreateWidgets(void)
     connect(ui.baseColormapSelect, qOverload<int>(&QComboBox::currentIndexChanged), [this](int index) {
         if (index < 0 || !_viewerManager) return;
         const QString id = ui.baseColormapSelect->currentData().toString();
-        _viewerManager->forEachViewer([&id](CVolumeViewer* viewer) {
+        _viewerManager->forEachViewer([&id](CTiledVolumeViewer* viewer) {
             viewer->setBaseColormap(id.toStdString());
         });
     });
@@ -2177,7 +2032,7 @@ void CWindow::CreateWidgets(void)
     // Setup surface overlay controls
     connect(ui.chkSurfaceOverlay, &QCheckBox::toggled, [this](bool checked) {
         if (!_viewerManager) return;
-        _viewerManager->forEachViewer([checked](CVolumeViewer* viewer) {
+        _viewerManager->forEachViewer([checked](CTiledVolumeViewer* viewer) {
             viewer->setSurfaceOverlayEnabled(checked);
         });
         ui.surfaceOverlaySelect->setEnabled(checked);
@@ -2186,7 +2041,7 @@ void CWindow::CreateWidgets(void)
 
     connect(ui.spinOverlapThreshold, qOverload<double>(&QDoubleSpinBox::valueChanged), [this](double value) {
         if (!_viewerManager) return;
-        _viewerManager->forEachViewer([value](CVolumeViewer* viewer) {
+        _viewerManager->forEachViewer([value](CTiledVolumeViewer* viewer) {
             viewer->setSurfaceOverlapThreshold(static_cast<float>(value));
         });
     });
@@ -2359,7 +2214,7 @@ void CWindow::CreateWidgets(void)
             QSettings s(vc3d::settingsFilePath(), QSettings::IniFormat);
             s.setValue(viewer::SHOW_SURFACE_NORMALS, checked ? "1" : "0");
             if (_viewerManager) {
-                _viewerManager->forEachViewer([checked](CVolumeViewer* viewer) {
+                _viewerManager->forEachViewer([checked](CTiledVolumeViewer* viewer) {
                     if (viewer) {
                         viewer->setShowSurfaceNormals(checked);
                     }
@@ -2401,7 +2256,7 @@ void CWindow::CreateWidgets(void)
 
         float scaleFloat = static_cast<float>(savedScale) / 100.0f;
         if (_viewerManager) {
-            _viewerManager->forEachViewer([scaleFloat](CVolumeViewer* viewer) {
+            _viewerManager->forEachViewer([scaleFloat](CTiledVolumeViewer* viewer) {
                 if (viewer) {
                     viewer->setNormalArrowLengthScale(scaleFloat);
                 }
@@ -2419,7 +2274,7 @@ void CWindow::CreateWidgets(void)
 
             float scaleFloat = static_cast<float>(value) / 100.0f;
             if (_viewerManager) {
-                _viewerManager->forEachViewer([scaleFloat](CVolumeViewer* viewer) {
+                _viewerManager->forEachViewer([scaleFloat](CTiledVolumeViewer* viewer) {
                     if (viewer) {
                         viewer->setNormalArrowLengthScale(scaleFloat);
                     }
@@ -2440,7 +2295,7 @@ void CWindow::CreateWidgets(void)
         }
 
         if (_viewerManager) {
-            _viewerManager->forEachViewer([savedMaxArrows](CVolumeViewer* viewer) {
+            _viewerManager->forEachViewer([savedMaxArrows](CTiledVolumeViewer* viewer) {
                 if (viewer) {
                     viewer->setNormalMaxArrows(savedMaxArrows);
                 }
@@ -2457,7 +2312,7 @@ void CWindow::CreateWidgets(void)
             }
 
             if (_viewerManager) {
-                _viewerManager->forEachViewer([value](CVolumeViewer* viewer) {
+                _viewerManager->forEachViewer([value](CTiledVolumeViewer* viewer) {
                     if (viewer) {
                         viewer->setNormalMaxArrows(value);
                     }
@@ -2871,7 +2726,7 @@ void CWindow::CreateWidgets(void)
         if (!_viewerManager) {
             return;
         }
-        _viewerManager->forEachViewer([value](CVolumeViewer* viewer) {
+        _viewerManager->forEachViewer([value](CTiledVolumeViewer* viewer) {
             auto s = viewer->compositeRenderSettings();
             s.params.isoCutoff = static_cast<uint8_t>(std::clamp(value, 0, 255));
             viewer->setCompositeRenderSettings(s);
@@ -3696,7 +3551,7 @@ void CWindow::onSurfaceActivatedPreserveEditing(const QString& surfaceId, QuadSu
                 if (targetSurface) {
                     _segmentationModule->endEditingSession();
                     if (_segmentationModule->beginEditingSession(targetSurface) && _viewerManager) {
-                        _viewerManager->forEachViewer([](CVolumeViewer* viewer) {
+                        _viewerManager->forEachViewer([](CTiledVolumeViewer* viewer) {
                             if (viewer) {
                                 viewer->clearOverlayGroup("segmentation_radius_indicator");
                             }
@@ -3781,9 +3636,6 @@ void CWindow::onAppendMaskPressed(void)
 
     try {
         // Find the segmentation viewer and check if composite is enabled
-        CVolumeViewer* segViewer = segmentationViewer();
-        bool useComposite = segViewer && segViewer->isCompositeEnabled();
-
         // Check if mask.tif exists
         if (std::filesystem::exists(path)) {
             // Load existing mask
@@ -3798,11 +3650,8 @@ void CWindow::onAppendMaskPressed(void)
             mask = existing_layers[0];
             cv::Size maskSize = mask.size();
 
-            if (useComposite) {
-                // Use composite rendering from the segmentation viewer
-                img = segViewer->renderCompositeForSurface(surf, maskSize);
-            } else {
-                // Original single-layer rendering - use same approach as render_binary_mask
+            {
+                // Single-layer rendering - use same approach as render_binary_mask
                 cv::Size rawSize = surf->rawPointsPtr()->size();
                 cv::Vec3f ptr(0, 0, 0);
                 cv::Vec3f offset(-rawSize.width/2.0f, -rawSize.height/2.0f, 0);
@@ -3812,25 +3661,9 @@ void CWindow::onAppendMaskPressed(void)
                 cv::Mat_<cv::Vec3f> coords;
                 surf->gen(&coords, nullptr, maskSize, ptr, surfScale, offset);
 
-                std::cout << "[AppendMask non-composite] rawSize: " << rawSize.width << "x" << rawSize.height
-                          << ", maskSize: " << maskSize.width << "x" << maskSize.height
-                          << ", coords size: " << coords.cols << "x" << coords.rows
-                          << ", surface._scale: " << surf->scale()[0] << std::endl;
-
-                // Sample a few coords to verify they're in native voxel space
-                if (coords.rows > 4 && coords.cols > 4) {
-                    std::cout << "[AppendMask non-composite] coords[0,0]: " << coords(4,4)
-                              << ", coords[center]: " << coords(coords.rows/2, coords.cols/2)
-                              << ", coords[end]: " << coords(coords.rows-5, coords.cols-5) << std::endl;
-                }
-
                 render_image_from_coords(coords, img, currentVolume->tieredCache(), 0);
             }
             cv::normalize(img, img, 0, 255, cv::NORM_MINMAX, CV_8U);
-
-            std::cout << "[AppendMask] maskSize: " << maskSize.width << "x" << maskSize.height
-                      << ", img size: " << img.cols << "x" << img.rows
-                      << ", useComposite: " << useComposite << std::endl;
 
             // Append the new image layer to existing layers
             existing_layers.push_back(img);
@@ -3838,10 +3671,8 @@ void CWindow::onAppendMaskPressed(void)
             // Save all layers
             imwritemulti(path.string(), existing_layers);
 
-            QString message = useComposite ?
-                tr("Appended composite surface image to existing mask (now %1 layers)").arg(existing_layers.size()) :
-                tr("Appended surface image to existing mask (now %1 layers)").arg(existing_layers.size());
-            statusBar()->showMessage(message, 3000);
+            statusBar()->showMessage(
+                tr("Appended surface image to existing mask (now %1 layers)").arg(existing_layers.size()), 3000);
 
         } else {
             // No existing mask, generate both mask and image at raw points resolution
@@ -3849,23 +3680,14 @@ void CWindow::onAppendMaskPressed(void)
             render_binary_mask(surf.get(), mask, coords, 1.0f);
             cv::Size maskSize = mask.size();
 
-            if (useComposite) {
-                // Use composite rendering for image
-                img = segViewer->renderCompositeForSurface(surf, maskSize);
-            } else {
-                // Original rendering
-                render_surface_image(surf.get(), mask, img, currentVolume->tieredCache(), 0, 1.0f);
-            }
+            render_surface_image(surf.get(), mask, img, currentVolume->tieredCache(), 0, 1.0f);
             cv::normalize(img, img, 0, 255, cv::NORM_MINMAX, CV_8U);
 
             // Save as new multi-layer TIFF
             std::vector<cv::Mat> layers = {mask, img};
             imwritemulti(path.string(), layers);
 
-            QString message = useComposite ?
-                tr("Created new surface mask with composite image data") :
-                tr("Created new surface mask with image data");
-            statusBar()->showMessage(message, 3000);
+            statusBar()->showMessage(tr("Created new surface mask with image data"), 3000);
         }
 
         // Update metadata
@@ -4003,7 +3825,7 @@ void CWindow::onZoomIn()
     if (!activeWindow) return;
 
     // Get the viewer from the active window
-    CVolumeViewer* viewer = qobject_cast<CVolumeViewer*>(activeWindow->widget());
+    CTiledVolumeViewer* viewer = qobject_cast<CTiledVolumeViewer*>(activeWindow->widget());
     if (!viewer) return;
 
     // Get the center of the current view as the zoom point
@@ -4101,7 +3923,7 @@ void CWindow::onZoomOut()
     if (!activeWindow) return;
 
     // Get the viewer from the active window
-    CVolumeViewer* viewer = qobject_cast<CVolumeViewer*>(activeWindow->widget());
+    CTiledVolumeViewer* viewer = qobject_cast<CTiledVolumeViewer*>(activeWindow->widget());
     if (!viewer) return;
 
     // Get the center of the current view as the zoom point
@@ -4323,7 +4145,7 @@ void CWindow::onSegmentationEditingModeChanged(bool enabled)
 
     // Set flag BEFORE beginEditingSession so the surface change doesn't reset view
     if (_viewerManager) {
-        _viewerManager->forEachViewer([this, enabled](CVolumeViewer* viewer) {
+        _viewerManager->forEachViewer([this, enabled](CTiledVolumeViewer* viewer) {
             if (!viewer) {
                 return;
             }
@@ -4352,7 +4174,7 @@ void CWindow::onSegmentationEditingModeChanged(bool enabled)
         }
 
         if (_viewerManager) {
-            _viewerManager->forEachViewer([](CVolumeViewer* viewer) {
+            _viewerManager->forEachViewer([](CTiledVolumeViewer* viewer) {
                 if (viewer) {
                     viewer->clearOverlayGroup("segmentation_radius_indicator");
                 }
@@ -4495,7 +4317,7 @@ void CWindow::updateAxisAlignedSliceInteraction()
         return;
     }
 
-    _viewerManager->forEachViewer([this](CVolumeViewer* viewer) {
+    _viewerManager->forEachViewer([this](CTiledVolumeViewer* viewer) {
         if (!viewer || !viewer->fGraphicsView) {
             return;
         }
@@ -4508,7 +4330,7 @@ void CWindow::updateAxisAlignedSliceInteraction()
     });
 }
 
-void CWindow::onAxisAlignedSliceMousePress(CVolumeViewer* viewer, const cv::Vec3f& volLoc, Qt::MouseButton button, Qt::KeyboardModifiers)
+void CWindow::onAxisAlignedSliceMousePress(CTiledVolumeViewer* viewer, const cv::Vec3f& volLoc, Qt::MouseButton button, Qt::KeyboardModifiers)
 {
     if (!_useAxisAlignedSlices || button != Qt::MiddleButton || !viewer) {
         return;
@@ -4526,7 +4348,7 @@ void CWindow::onAxisAlignedSliceMousePress(CVolumeViewer* viewer, const cv::Vec3
 
 }
 
-void CWindow::onAxisAlignedSliceMouseMove(CVolumeViewer* viewer, const cv::Vec3f& volLoc, Qt::MouseButtons buttons, Qt::KeyboardModifiers)
+void CWindow::onAxisAlignedSliceMouseMove(CTiledVolumeViewer* viewer, const cv::Vec3f& volLoc, Qt::MouseButtons buttons, Qt::KeyboardModifiers)
 {
     if (!_useAxisAlignedSlices || !viewer || !(buttons & Qt::MiddleButton)) {
         return;
@@ -4557,7 +4379,7 @@ void CWindow::onAxisAlignedSliceMouseMove(CVolumeViewer* viewer, const cv::Vec3f
 
 }
 
-void CWindow::onAxisAlignedSliceMouseRelease(CVolumeViewer* viewer, Qt::MouseButton button, Qt::KeyboardModifiers)
+void CWindow::onAxisAlignedSliceMouseRelease(CTiledVolumeViewer* viewer, Qt::MouseButton button, Qt::KeyboardModifiers)
 {
     if (button != Qt::MiddleButton) {
         return;
@@ -5956,7 +5778,7 @@ void CWindow::onSurfaceOverlaySelectionChanged(const QModelIndex& topLeft,
     }
 
     // Propagate to all viewers
-    _viewerManager->forEachViewer([&selectedSurfaces](CVolumeViewer* viewer) {
+    _viewerManager->forEachViewer([&selectedSurfaces](CTiledVolumeViewer* viewer) {
         viewer->setSurfaceOverlays(selectedSurfaces);
     });
 }

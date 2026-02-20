@@ -1,7 +1,6 @@
 #include "ViewerManager.hpp"
 
 #include "VCSettings.hpp"
-#include "CVolumeViewer.hpp"
 #include "tiled/CTiledVolumeViewer.hpp"
 #include "overlays/SegmentationOverlayController.hpp"
 #include "overlays/PointsOverlayController.hpp"
@@ -84,90 +83,9 @@ ViewerManager::ViewerManager(CSurfaceCollection* surfaces,
     }
 }
 
-CVolumeViewer* ViewerManager::createViewer(const std::string& surfaceName,
-                                           const QString& title,
-                                           QMdiArea* mdiArea)
-{
-    if (!mdiArea || !_surfaces) {
-        return nullptr;
-    }
-
-    auto* viewer = new CVolumeViewer(_surfaces, this, mdiArea);
-    auto* win = mdiArea->addSubWindow(viewer);
-    win->setWindowTitle(title);
-    win->setWindowFlags(Qt::WindowTitleHint | Qt::WindowMinMaxButtonsHint);
-    win->installEventFilter(viewer);
-
-    viewer->setPointCollection(_points);
-
-    if (_surfaces) {
-        connect(_surfaces, &CSurfaceCollection::sendSurfaceChanged, viewer, &CVolumeViewer::onSurfaceChanged);
-        connect(_surfaces, &CSurfaceCollection::sendSurfaceWillBeDeleted, viewer, &CVolumeViewer::onSurfaceWillBeDeleted);
-        connect(_surfaces, &CSurfaceCollection::sendPOIChanged, viewer, &CVolumeViewer::onPOIChanged);
-    }
-
-    // Restore persisted viewer preferences
-    {
-        using namespace vc3d::settings;
-        QSettings settings(vc3d::settingsFilePath(), QSettings::IniFormat);
-        bool showHints = settings.value(viewer::SHOW_DIRECTION_HINTS, viewer::SHOW_DIRECTION_HINTS_DEFAULT).toBool();
-        viewer->setShowDirectionHints(showHints);
-        bool showNormals = settings.value(viewer::SHOW_SURFACE_NORMALS, viewer::SHOW_SURFACE_NORMALS_DEFAULT).toBool();
-        viewer->setShowSurfaceNormals(showNormals);
-    }
-
-    {
-        using namespace vc3d::settings;
-        QSettings settings(vc3d::settingsFilePath(), QSettings::IniFormat);
-        bool resetView = settings.value(viewer::RESET_VIEW_ON_SURFACE_CHANGE, viewer::RESET_VIEW_ON_SURFACE_CHANGE_DEFAULT).toBool();
-        viewer->setResetViewOnSurfaceChange(resetView);
-        _resetDefaults[viewer] = resetView;
-    }
-
-    viewer->setSurface(surfaceName);
-    viewer->setSegmentationEditActive(_segmentationEditActive);
-    viewer->setSegmentationCursorMirroring(_mirrorCursorToSegmentation);
-
-    if (_segmentationOverlay) {
-        _segmentationOverlay->attachViewer(viewer);
-    }
-
-    if (_pointsOverlay) {
-        _pointsOverlay->attachViewer(viewer);
-    }
-
-    if (_pathsOverlay) {
-        _pathsOverlay->attachViewer(viewer);
-    }
-
-    if (_bboxOverlay) {
-        _bboxOverlay->attachViewer(viewer);
-    }
-
-    if (_vectorOverlay) {
-        _vectorOverlay->attachViewer(viewer);
-    }
-
-    viewer->setIntersectionOpacity(_intersectionOpacity);
-    viewer->setIntersectionThickness(_intersectionThickness);
-    viewer->setSurfacePatchSamplingStride(_surfacePatchSamplingStride);
-    viewer->setVolumeWindow(_volumeWindowLow, _volumeWindowHigh);
-    viewer->setOverlayVolume(_overlayVolume);
-    viewer->setOverlayOpacity(_overlayOpacity);
-    viewer->setOverlayColormap(_overlayColormapId);
-    viewer->setOverlayWindow(_overlayWindowLow, _overlayWindowHigh);
-
-    _viewers.push_back(viewer);
-    if (_segmentationModule) {
-        _segmentationModule->attachViewer(viewer);
-    }
-    emit viewerCreated(viewer);
-    return viewer;
-}
-
-CTiledVolumeViewer* ViewerManager::createTiledViewer(const std::string& surfaceName,
-                                                     const QString& title,
-                                                     QMdiArea* mdiArea)
+CTiledVolumeViewer* ViewerManager::createViewer(const std::string& surfaceName,
+                                                const QString& title,
+                                                QMdiArea* mdiArea)
 {
     if (!mdiArea || !_surfaces) {
         return nullptr;
@@ -202,13 +120,14 @@ CTiledVolumeViewer* ViewerManager::createTiledViewer(const std::string& surfaceN
         QSettings settings(vc3d::settingsFilePath(), QSettings::IniFormat);
         bool resetView = settings.value(viewer::RESET_VIEW_ON_SURFACE_CHANGE, viewer::RESET_VIEW_ON_SURFACE_CHANGE_DEFAULT).toBool();
         viewer->setResetViewOnSurfaceChange(resetView);
+        _resetDefaults[viewer] = resetView;
     }
 
     viewer->setSurface(surfaceName);
     viewer->setSegmentationEditActive(_segmentationEditActive);
     viewer->setSegmentationCursorMirroring(_mirrorCursorToSegmentation);
 
-    _tiledViewers.push_back(viewer);
+    _viewers.push_back(viewer);
 
     if (_segmentationOverlay) {
         _segmentationOverlay->attachViewer(viewer);
@@ -239,6 +158,10 @@ CTiledVolumeViewer* ViewerManager::createTiledViewer(const std::string& surfaceN
     viewer->setOverlayColormap(_overlayColormapId);
     viewer->setOverlayWindow(_overlayWindowLow, _overlayWindowHigh);
 
+    if (_segmentationModule) {
+        _segmentationModule->attachViewer(viewer);
+    }
+    emit viewerCreated(viewer);
     return viewer;
 }
 
@@ -735,7 +658,7 @@ void ViewerManager::handleSurfacePatchIndexPrimeFinished()
     qCInfo(lcViewerManager) << "Asynchronously rebuilt SurfacePatchIndex for"
                             << _indexedSurfaceIds.size() << "surfaces"
                             << "at stride" << _surfacePatchSamplingStride;
-    forEachViewer([](CVolumeViewer* v) { v->renderIntersections(); });
+    forEachViewer([](CTiledVolumeViewer* v) { v->renderIntersections(); });
 
     // Check if progressive refinement is needed
     if (_targetRefinedStride > 0 && _surfacePatchSamplingStride > _targetRefinedStride) {
@@ -870,13 +793,13 @@ void ViewerManager::handleSurfaceWillBeDeleted(std::string name, std::shared_ptr
     }
 }
 
-bool ViewerManager::resetDefaultFor(CVolumeViewer* viewer) const
+bool ViewerManager::resetDefaultFor(CTiledVolumeViewer* viewer) const
 {
     auto it = _resetDefaults.find(viewer);
     return it != _resetDefaults.end() ? it->second : true;
 }
 
-void ViewerManager::setResetDefaultFor(CVolumeViewer* viewer, bool value)
+void ViewerManager::setResetDefaultFor(CTiledVolumeViewer* viewer, bool value)
 {
     if (!viewer) {
         return;
@@ -892,11 +815,6 @@ void ViewerManager::setSegmentationCursorMirroring(bool enabled)
             viewer->setSegmentationCursorMirroring(enabled);
         }
     }
-    for (auto* viewer : _tiledViewers) {
-        if (viewer) {
-            viewer->setSegmentationCursorMirroring(enabled);
-        }
-    }
 }
 
 void ViewerManager::setSliceStepSize(int size)
@@ -904,7 +822,7 @@ void ViewerManager::setSliceStepSize(int size)
     _sliceStepSize = std::max(1, size);
 }
 
-void ViewerManager::forEachViewer(const std::function<void(CVolumeViewer*)>& fn) const
+void ViewerManager::forEachViewer(const std::function<void(CTiledVolumeViewer*)>& fn) const
 {
     if (!fn) {
         return;

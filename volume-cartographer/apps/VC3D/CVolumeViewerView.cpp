@@ -1,5 +1,4 @@
 #include "CVolumeViewerView.hpp"
-#include "CVolumeViewer.hpp"
 
 #include <QGraphicsView>
 #include <QMouseEvent>

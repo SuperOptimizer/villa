@@ -3,7 +3,7 @@
 #include "SurfaceTreeWidget.hpp"
 #include "ViewerManager.hpp"
 #include "CSurfaceCollection.hpp"
-#include "CVolumeViewer.hpp"
+#include "tiled/CTiledVolumeViewer.hpp"
 #include "elements/DropdownChecklistButton.hpp"
 #include "VCSettings.hpp"
 
@@ -69,7 +69,7 @@ void sync_tag(nlohmann::json& dict, bool checked, const std::string& name, const
 SurfacePanelController::SurfacePanelController(const UiRefs& ui,
                                                CSurfaceCollection* surfaces,
                                                ViewerManager* viewerManager,
-                                               std::function<CVolumeViewer*()> segmentationViewerProvider,
+                                               std::function<CTiledVolumeViewer*()> segmentationViewerProvider,
                                                std::function<void()> filtersUpdated,
                                                QObject* parent)
     : QObject(parent)
@@ -1548,7 +1548,7 @@ void SurfacePanelController::applyFiltersInternal()
         collectVisibleSurfaces(intersects);
 
         if (_viewerManager) {
-            _viewerManager->forEachViewer([&intersects](CVolumeViewer* viewer) {
+            _viewerManager->forEachViewer([&intersects](CTiledVolumeViewer* viewer) {
                 if (viewer && viewer->surfName() != "segmentation") {
                     viewer->setIntersects(intersects);
                 }
@@ -1698,7 +1698,7 @@ void SurfacePanelController::applyFiltersInternal()
     }
 
     if (_viewerManager) {
-        _viewerManager->forEachViewer([&intersects](CVolumeViewer* viewer) {
+        _viewerManager->forEachViewer([&intersects](CTiledVolumeViewer* viewer) {
             if (viewer && viewer->surfName() != "segmentation") {
                 viewer->setIntersects(intersects);
             }

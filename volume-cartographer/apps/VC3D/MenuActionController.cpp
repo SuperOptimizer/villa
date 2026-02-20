@@ -5,7 +5,7 @@
 #include "SurfacePanelController.hpp"
 #include "ViewerManager.hpp"
 #include "segmentation/SegmentationModule.hpp"
-#include "CVolumeViewer.hpp"
+#include "tiled/CTiledVolumeViewer.hpp"
 #include "CVolumeViewerView.hpp"
 #include "CSurfaceCollection.hpp"
 #include "CommandLineToolRunner.hpp"
@@ -953,7 +953,7 @@ void MenuActionController::showSettingsDialog()
     bool showDirHints = settings.value(vc3d::settings::viewer::SHOW_DIRECTION_HINTS,
                                        vc3d::settings::viewer::SHOW_DIRECTION_HINTS_DEFAULT).toBool();
     if (_window->_viewerManager) {
-        _window->_viewerManager->forEachViewer([showDirHints](CVolumeViewer* viewer) {
+        _window->_viewerManager->forEachViewer([showDirHints](CTiledVolumeViewer* viewer) {
             if (viewer) {
                 viewer->setShowDirectionHints(showDirHints);
             }
@@ -1166,7 +1166,7 @@ void MenuActionController::toggleDrawBBox(bool enabled)
         return;
     }
 
-    _window->_viewerManager->forEachViewer([this, enabled](CVolumeViewer* viewer) {
+    _window->_viewerManager->forEachViewer([this, enabled](CTiledVolumeViewer* viewer) {
         if (viewer && viewer->surfName() == "segmentation") {
             viewer->setBBoxMode(enabled);
             if (_window->statusBar()) {
@@ -1192,8 +1192,8 @@ void MenuActionController::surfaceFromSelection()
         return;
     }
 
-    CVolumeViewer* segViewer = nullptr;
-    _window->_viewerManager->forEachViewer([&segViewer](CVolumeViewer* viewer) {
+    CTiledVolumeViewer* segViewer = nullptr;
+    _window->_viewerManager->forEachViewer([&segViewer](CTiledVolumeViewer* viewer) {
         if (viewer && viewer->surfName() == "segmentation") {
             segViewer = viewer;
         }
@@ -1258,7 +1258,7 @@ void MenuActionController::clearSelection()
         return;
     }
 
-    CVolumeViewer* segViewer = _window->segmentationViewer();
+    CTiledVolumeViewer* segViewer = _window->segmentationViewer();
     if (!segViewer) {
         _window->statusBar()->showMessage(QObject::tr("No Surface viewer found"), 3000);
         return;

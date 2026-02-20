@@ -1,6 +1,6 @@
 #include "PlaneSlicingOverlayController.hpp"
 
-#include "../CVolumeViewer.hpp"
+#include "../tiled/CTiledVolumeViewer.hpp"
 #include "../VolumeViewerBase.hpp"
 #include "../CSurfaceCollection.hpp"
 #include "vc/core/util/Surface.hpp"
@@ -102,20 +102,20 @@ void PlaneSlicingOverlayController::installInteractions(VolumeViewerBase* viewer
         return;
     }
 
-    auto* cviewer = dynamic_cast<CVolumeViewer*>(viewer->asQObject());
+    auto* cviewer = dynamic_cast<CTiledVolumeViewer*>(viewer->asQObject());
     if (!cviewer) {
         return;
     }
 
-    state.pressConn = QObject::connect(cviewer, &CVolumeViewer::sendMousePressVolume,
+    state.pressConn = QObject::connect(cviewer, &CTiledVolumeViewer::sendMousePressVolume,
                                        this, [this, viewer](cv::Vec3f volLoc, cv::Vec3f /*normal*/, Qt::MouseButton button, Qt::KeyboardModifiers modifiers) {
                                            handleMousePress(viewer, volLoc, button, modifiers);
                                        });
-    state.moveConn = QObject::connect(cviewer, &CVolumeViewer::sendMouseMoveVolume,
+    state.moveConn = QObject::connect(cviewer, &CTiledVolumeViewer::sendMouseMoveVolume,
                                       this, [this, viewer](cv::Vec3f volLoc, Qt::MouseButtons buttons, Qt::KeyboardModifiers modifiers) {
                                           handleMouseMove(viewer, volLoc, buttons, modifiers);
                                       });
-    state.releaseConn = QObject::connect(cviewer, &CVolumeViewer::sendMouseReleaseVolume,
+    state.releaseConn = QObject::connect(cviewer, &CTiledVolumeViewer::sendMouseReleaseVolume,
                                          this, [this, viewer](cv::Vec3f /*volLoc*/, Qt::MouseButton button, Qt::KeyboardModifiers modifiers) {
                                              handleMouseRelease(viewer, button, modifiers);
                                          });
