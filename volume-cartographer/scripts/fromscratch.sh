@@ -166,7 +166,7 @@ build_zlib() {
     is_done zlib && { log "zlib already built, skipping"; return; }
     log "Building zlib $ZLIB_VERSION..."
 
-    download "https://zlib.net/zlib-$ZLIB_VERSION.tar.gz" "$SRCDIR/zlib.tar.gz"
+    download "https://github.com/madler/zlib/releases/download/v$ZLIB_VERSION/zlib-$ZLIB_VERSION.tar.gz" "$SRCDIR/zlib.tar.gz"
     extract "$SRCDIR/zlib.tar.gz" "$BUILDDIR/zlib"
 
     mkdir -p "$BUILDDIR/zlib/build"
