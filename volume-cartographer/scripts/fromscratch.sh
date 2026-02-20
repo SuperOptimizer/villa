@@ -1204,7 +1204,6 @@ build_qt6() {
         -skip qttools \
         -skip qttranslations \
         -skip qtvirtualkeyboard \
-        -skip qtwayland \
         -skip qtwebchannel \
         -skip qtwebengine \
         -skip qtwebsockets \

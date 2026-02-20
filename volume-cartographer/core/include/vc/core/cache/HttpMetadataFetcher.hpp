@@ -26,6 +26,8 @@ struct RemoteZarrInfo {
 struct S3ListResult {
     std::vector<std::string> prefixes;  // subdirectory prefixes (CommonPrefixes)
     std::vector<std::string> objects;   // object keys (Contents)
+    bool authError = false;             // true if request failed due to auth (expired token, access denied)
+    std::string errorMessage;           // S3 error message if any
 };
 
 // Fetch zarr metadata from a remote URL, write to local staging dir.

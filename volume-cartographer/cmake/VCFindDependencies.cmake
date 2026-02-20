@@ -1,6 +1,21 @@
 # --- VC dependencies ----------------------------------------------------------
 include(FetchContent)
 
+# Recursively suppress all warnings for vendored subproject targets.
+function(vc_suppress_warnings dir)
+    get_property(targets DIRECTORY "${dir}" PROPERTY BUILDSYSTEM_TARGETS)
+    foreach(t IN LISTS targets)
+        get_property(type TARGET "${t}" PROPERTY TYPE)
+        if(type MATCHES "STATIC_LIBRARY|SHARED_LIBRARY|MODULE_LIBRARY|OBJECT_LIBRARY|EXECUTABLE")
+            target_compile_options("${t}" PRIVATE -w)
+        endif()
+    endforeach()
+    get_property(subdirs DIRECTORY "${dir}" PROPERTY SUBDIRECTORIES)
+    foreach(sd IN LISTS subdirs)
+        vc_suppress_warnings("${sd}")
+    endforeach()
+endfunction()
+
 # ---- SuperOptimizer/utils (zarr I/O) ----------------------------------------
 # c-blosc vendored by utils has cmake_minimum_required < 3.5; newer CMake rejects it.
 if(NOT DEFINED CMAKE_POLICY_VERSION_MINIMUM)
@@ -27,6 +42,7 @@ FetchContent_Declare(
     GIT_TAG        5127793c32813d176cbb16c9308dc21390c30814
 )
 FetchContent_MakeAvailable(utils)
+vc_suppress_warnings("${utils_SOURCE_DIR}")
 
 # Mark utils headers as SYSTEM to suppress warnings
 foreach(_target utils_zarr utils_tensor utils_json)
@@ -58,6 +74,9 @@ FetchContent_Declare(
     GIT_TAG        0.27.1
 )
 FetchContent_MakeAvailable(xtl xsimd xtensor)
+foreach(_dep xtl xsimd xtensor)
+    vc_suppress_warnings("${${_dep}_SOURCE_DIR}")
+endforeach()
 
 # xtensor sets cxx_std_20 INTERFACE which can downgrade our C++23; upgrade it
 set_property(TARGET xtensor PROPERTY INTERFACE_COMPILE_FEATURES cxx_std_23)
@@ -161,6 +180,7 @@ if (NOT json_POPULATED)
     set(JSON_Install   ON  CACHE INTERNAL "")
     FetchContent_Populate(json)
     add_subdirectory(${json_SOURCE_DIR} ${json_BINARY_DIR} EXCLUDE_FROM_ALL)
+    vc_suppress_warnings("${json_SOURCE_DIR}")
 endif()
 
 # ---- CURL (for HTTP chunk source / remote volumes) ---------------------------

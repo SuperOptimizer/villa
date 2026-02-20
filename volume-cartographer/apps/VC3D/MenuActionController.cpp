@@ -665,6 +665,63 @@ void MenuActionController::openRemoteScroll(
                 return;
             }
 
+            // Auth error — prompt for fresh credentials and retry
+            if (scrollInfo.authError) {
+                QString msg = QObject::tr("AWS credentials error: %1\n\n"
+                    "Please enter fresh credentials.")
+                    .arg(QString::fromStdString(scrollInfo.authErrorMessage));
+                QMessageBox::warning(_window, QObject::tr("Credentials Expired"), msg);
+
+                vc::cache::HttpAuth freshAuth = auth;
+                bool credOk = false;
+                QString accessKey = QInputDialog::getText(
+                    _window, QObject::tr("AWS Credentials"),
+                    QObject::tr("AWS_ACCESS_KEY_ID:"),
+                    QLineEdit::Normal, QString(), &credOk);
+                if (!credOk || accessKey.trimmed().isEmpty()) {
+                    _openRemoteAct->setEnabled(true);
+                    if (_window->statusBar()) _window->statusBar()->clearMessage();
+                    return;
+                }
+
+                QString secretKey = QInputDialog::getText(
+                    _window, QObject::tr("AWS Credentials"),
+                    QObject::tr("AWS_SECRET_ACCESS_KEY:"),
+                    QLineEdit::Password, QString(), &credOk);
+                if (!credOk || secretKey.trimmed().isEmpty()) {
+                    _openRemoteAct->setEnabled(true);
+                    if (_window->statusBar()) _window->statusBar()->clearMessage();
+                    return;
+                }
+
+                QString sessionToken = QInputDialog::getText(
+                    _window, QObject::tr("AWS Credentials"),
+                    QObject::tr("AWS_SESSION_TOKEN (optional):"),
+                    QLineEdit::Normal, QString(), &credOk);
+                if (!credOk) {
+                    _openRemoteAct->setEnabled(true);
+                    if (_window->statusBar()) _window->statusBar()->clearMessage();
+                    return;
+                }
+
+                freshAuth.accessKey = accessKey.trimmed().toStdString();
+                freshAuth.secretKey = secretKey.trimmed().toStdString();
+                freshAuth.sessionToken = sessionToken.trimmed().toStdString();
+
+                // Save the fresh credentials
+                QSettings settings(vc3d::settingsFilePath(), QSettings::IniFormat);
+                settings.setValue(vc3d::settings::aws::ACCESS_KEY,
+                                  QString::fromStdString(freshAuth.accessKey));
+                settings.setValue(vc3d::settings::aws::SECRET_KEY,
+                                  QString::fromStdString(freshAuth.secretKey));
+                settings.setValue(vc3d::settings::aws::SESSION_TOKEN,
+                                  QString::fromStdString(freshAuth.sessionToken));
+
+                // Retry discovery with fresh credentials
+                openRemoteScroll(httpsUrl, freshAuth, cachePath);
+                return;
+            }
+
             if (scrollInfo.volumeNames.empty()) {
                 // No volumes found — fall back to direct zarr open
                 std::fprintf(stderr, "[RemoteScroll] No volumes found, falling back to zarr\n");
@@ -693,6 +750,51 @@ void MenuActionController::openRemoteScroll(
                     return;
                 }
                 volumeName = picked.toStdString();
+            }
+
+            // If no segments found, ask user for an external segments URL
+            if (scrollInfo.segmentIds.empty()) {
+                bool segOk = false;
+                QString segUrl = QInputDialog::getText(
+                    _window,
+                    QObject::tr("Segments Location"),
+                    QObject::tr("No segments found in the volpkg.\n"
+                                "Enter S3/HTTPS URL of directory containing segments\n"
+                                "(leave empty to skip):"),
+                    QLineEdit::Normal, QString(), &segOk);
+
+                if (segOk && !segUrl.trimmed().isEmpty()) {
+                    auto segResolved = vc::resolveRemoteUrl(segUrl.trimmed().toStdString());
+                    vc::cache::HttpAuth segAuth = auth;
+                    if (segResolved.useAwsSigv4 && !segAuth.awsSigv4) {
+                        segAuth.awsSigv4 = true;
+                        segAuth.region = segResolved.awsRegion;
+                    }
+
+                    // Normalize trailing slash
+                    std::string segBaseUrl = segResolved.httpsUrl;
+                    while (!segBaseUrl.empty() && segBaseUrl.back() == '/')
+                        segBaseUrl.pop_back();
+
+                    std::fprintf(stderr, "[RemoteScroll] Probing external segments URL: %s\n",
+                                 segBaseUrl.c_str());
+
+                    auto extList = vc::cache::s3ListObjects(segBaseUrl + "/", segAuth);
+                    if (!extList.prefixes.empty()) {
+                        scrollInfo.segmentSource = vc::RemoteSegmentSource::Direct;
+                        scrollInfo.segmentsBaseUrl = segBaseUrl;
+                        scrollInfo.auth = segAuth;  // may have updated auth
+                        for (const auto& name : extList.prefixes) {
+                            std::fprintf(stderr, "[RemoteScroll]   external segment: %s\n",
+                                         name.c_str());
+                            scrollInfo.segmentIds.push_back(name);
+                        }
+                        std::fprintf(stderr, "[RemoteScroll] Found %zu external segments\n",
+                                     scrollInfo.segmentIds.size());
+                    } else {
+                        std::fprintf(stderr, "[RemoteScroll] No segments found at external URL\n");
+                    }
+                }
             }
 
             // Phase 2: Open volume + download segments on background thread
@@ -778,20 +880,26 @@ void MenuActionController::openRemoteScroll(
             auto segIds = scrollInfo.segmentIds;
             auto scrollAuth = scrollInfo.auth;
             auto baseUrl = scrollInfo.baseUrl;
+            auto segSource = scrollInfo.segmentSource;
+            auto segBaseUrl = scrollInfo.segmentsBaseUrl;
 
             auto loadFuture = QtConcurrent::run(
-                [baseUrl, volumeName, segIds, cachePath, scrollAuth]() -> ScrollOpenResult {
+                [baseUrl, volumeName, segIds, cachePath, scrollAuth, segSource, segBaseUrl]() -> ScrollOpenResult {
                     ScrollOpenResult result;
                     try {
                         // Open the volume
                         std::string volumeUrl = baseUrl + "/volumes/" + volumeName;
                         result.volume = Volume::NewFromUrl(volumeUrl, cachePath, scrollAuth);
 
+                        // Pick the right base URL for segment downloads
+                        const std::string& dlBase = (segSource == vc::RemoteSegmentSource::Direct)
+                            ? segBaseUrl : baseUrl;
+
                         // Download and load segments
                         for (const auto& segId : segIds) {
                             try {
                                 auto localDir = vc::downloadRemoteSegment(
-                                    baseUrl, segId, cachePath, scrollAuth);
+                                    dlBase, segId, cachePath, scrollAuth, segSource);
 
                                 // Check that meta.json exists (download succeeded)
                                 if (!std::filesystem::exists(localDir / "meta.json")) {

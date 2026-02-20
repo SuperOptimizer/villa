@@ -126,7 +126,82 @@ S3ListResult s3ListObjects(const std::string& httpsBaseUrl, const HttpAuth& auth
 
     std::fprintf(stderr, "[S3] ListObjects: %s\n", listUrl.c_str());
 
-    std::string xml = httpGetString(listUrl, auth);
+    // Use our own curl handle without FAILONERROR so we can log the status
+    std::string xml;
+    {
+        CURL* curl = curl_easy_init();
+        if (!curl) {
+            std::fprintf(stderr, "[S3] Failed to init curl\n");
+            return result;
+        }
+
+        curl_easy_setopt(curl, CURLOPT_URL, listUrl.c_str());
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, stringWriteCallback);
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, &xml);
+        curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+        curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
+        curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+
+        struct curl_slist* headers = nullptr;
+        std::string userpwd;
+        if (auth.awsSigv4) {
+            std::string sigv4 = "aws:amz:" + auth.region + ":s3";
+            curl_easy_setopt(curl, CURLOPT_AWS_SIGV4, sigv4.c_str());
+            userpwd = auth.accessKey + ":" + auth.secretKey;
+            curl_easy_setopt(curl, CURLOPT_USERPWD, userpwd.c_str());
+            if (!auth.sessionToken.empty()) {
+                std::string hdr = "x-amz-security-token: " + auth.sessionToken;
+                headers = curl_slist_append(headers, hdr.c_str());
+                curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+            }
+        }
+
+        CURLcode res = curl_easy_perform(curl);
+
+        long httpCode = 0;
+        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
+
+        if (headers) curl_slist_free_all(headers);
+        curl_easy_cleanup(curl);
+
+        if (res != CURLE_OK) {
+            std::fprintf(stderr, "[S3] ListObjects curl error: %s\n",
+                         curl_easy_strerror(res));
+            return result;
+        }
+
+        if (httpCode != 200) {
+            std::fprintf(stderr, "[S3] ListObjects HTTP %ld\n", httpCode);
+            // Log first 500 chars of error body for debugging
+            if (!xml.empty()) {
+                std::fprintf(stderr, "[S3] Response: %.500s\n", xml.c_str());
+            }
+
+            // Detect auth errors so callers can prompt for fresh credentials
+            if (httpCode == 400 || httpCode == 401 || httpCode == 403) {
+                // Check for known S3 auth error codes in the XML body
+                auto codes = extractXmlTags(xml, "Code");
+                for (const auto& code : codes) {
+                    if (code == "ExpiredToken" || code == "AccessDenied" ||
+                        code == "InvalidAccessKeyId" || code == "SignatureDoesNotMatch" ||
+                        code == "TokenRefreshRequired") {
+                        result.authError = true;
+                        auto msgs = extractXmlTags(xml, "Message");
+                        if (!msgs.empty()) result.errorMessage = msgs.front();
+                        break;
+                    }
+                }
+                // If no specific code found but it's a 401/403, still flag as auth
+                if (!result.authError && (httpCode == 401 || httpCode == 403)) {
+                    result.authError = true;
+                    result.errorMessage = "HTTP " + std::to_string(httpCode);
+                }
+            }
+
+            return result;
+        }
+    }
+
     if (xml.empty()) {
         std::fprintf(stderr, "[S3] ListObjects returned empty response\n");
         return result;
