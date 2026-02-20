@@ -523,11 +523,21 @@ build_openblas() {
     extract "$SRCDIR/openblas.tar.gz" "$BUILDDIR/openblas"
 
     cd "$BUILDDIR/openblas"
-    # OpenBLAS's native make build with explicit ZEN target for AMD Ryzen
-    # ZEN target optimizes for AMD Zen architecture (all Ryzen CPUs)
     # Use gfortran for Fortran (flang runtime not easily linkable with GCC)
     # Build serial (no thread pool). The pthreads build creates N spinning
     # threads at init that burn CPU even when idle. USE_THREAD=0 avoids this.
+    # Auto-detect TARGET based on architecture
+    local openblas_target
+    case "$(uname -m)" in
+        x86_64)  openblas_target="ZEN" ;;    # AMD Zen (works on Intel too)
+        aarch64) openblas_target="ARMV8" ;;   # ARM64 (Graviton, Apple Silicon, etc.)
+        *)       openblas_target="" ;;         # Let OpenBLAS auto-detect
+    esac
+    local target_args=()
+    if [[ -n "$openblas_target" ]]; then
+        target_args=(TARGET="$openblas_target")
+        log "OpenBLAS target: $openblas_target (arch: $(uname -m))"
+    fi
     make -j"$JOBS" \
         CC="ccache clang" \
         FC="ccache gfortran" \
@@ -539,7 +549,7 @@ build_openblas() {
         NO_STATIC=1 \
         NO_LAPACK=0 \
         NOFORTRAN=0 \
-        TARGET=ZEN \
+        "${target_args[@]}" \
         libs netlib shared
     make PREFIX="$PREFIX" NO_SHARED=0 NO_STATIC=1 install
 
