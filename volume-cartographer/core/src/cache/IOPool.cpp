@@ -108,7 +108,10 @@ void IOPool::workerLoop()
             try {
                 data = fetchFn(task.key);
             } catch (...) {
-                // Fetch failed — empty data signals failure
+                // Transient error — skip completion callback so key
+                // is NOT negative-cached and can be retried.
+                inFlight_.fetch_sub(1, std::memory_order_relaxed);
+                continue;
             }
         }
 

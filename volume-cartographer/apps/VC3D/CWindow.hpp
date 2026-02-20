@@ -45,6 +45,7 @@
 #include "vc/core/types/VolumePkg.hpp"
 #include "vc/core/util/Surface.hpp"
 #include "vc/core/util/QuadSurface.hpp"
+#include "vc/core/util/RemoteScroll.hpp"
 
 #include <sys/inotify.h>
 #include <QSocketNotifier>
@@ -151,6 +152,7 @@ private:
 
 
     void setVolume(std::shared_ptr<Volume> newvol);
+    void setRemoteSurfaces(const std::vector<std::pair<std::string, std::shared_ptr<Surface>>>& surfaces);
     void updateNormalGridAvailability();
     void toggleVolumeOverlayVisibility();
     bool centerFocusAt(const cv::Vec3f& position, const cv::Vec3f& normal, const std::string& sourceId, bool addToHistory = false);
@@ -196,6 +198,10 @@ private:
     void recalcAreaForSegments(const std::vector<std::string>& ids);
     std::shared_ptr<VolumePkg> fVpkg;
     QString fVpkgPath;
+
+    // Remote scroll state (no fVpkg)
+    std::optional<vc::RemoteScrollInfo> _remoteScrollInfo;
+    std::string _remoteCachePath;
 
     std::shared_ptr<Volume> currentVolume;
     std::string currentVolumeId;

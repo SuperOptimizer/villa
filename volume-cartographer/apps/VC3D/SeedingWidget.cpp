@@ -64,11 +64,6 @@ SeedingWidget::SeedingWidget(VCCollection* point_collection, CSurfaceCollection*
     
     // Automatically find the executable path
     executablePath = findExecutablePath();
-    if (executablePath.isEmpty()) {
-        QMessageBox::warning(this, "Warning",
-            "Could not find vc_grow_seg_from_seed executable. "
-            "Please ensure it is built and in your PATH or in the build directory.");
-    }
 }
 
 SeedingWidget::~SeedingWidget()

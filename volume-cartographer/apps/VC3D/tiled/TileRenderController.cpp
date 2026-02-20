@@ -123,6 +123,10 @@ void TileRenderController::drainResults()
 
     for (auto& result : results) {
         if (result.image.isNull()) {
+            // Still mark the tile's epoch so progressive refinement knows
+            // it belongs to the current generation and is stale (level=-1).
+            _tileScene->setTileWorld(result.worldKey, QPixmap(),
+                                     result.epoch, -1);
             continue;
         }
 
@@ -176,15 +180,21 @@ void TileRenderController::tick()
     // 3. Progressive refinement: re-submit stale tiles only when new chunks
     //    have arrived (meaning finer data may now be available).
     //    Without the chunksJustArrived guard, idle pool + stale tiles = infinite loop.
-    if (_progressiveEnabled && chunksJustArrived
-        && _lastSurface && _lastVolume && _lastBuildParams) {
-        auto stale = _tileScene->staleTilesInRect(_desiredLevel, _currentEpoch, _lastViewportRect, 1);
-        if (!stale.empty()) {
-            for (const auto& wk : stale) {
-                TileRenderParams params = _lastBuildParams(wk);
-                _renderPool.submit(params, _lastSurface, _lastVolume);
+    if (_progressiveEnabled && chunksJustArrived) {
+        if (_lastSurface && _lastVolume && _lastBuildParams) {
+            auto stale = _tileScene->staleTilesInRect(_desiredLevel, _currentEpoch, _lastViewportRect, 1);
+            fprintf(stderr, "[TICK] chunk arrived, stale=%zu desiredLvl=%d epoch=%lu\n",
+                    stale.size(), _desiredLevel, (unsigned long)_currentEpoch);
+            if (!stale.empty()) {
+                for (const auto& wk : stale) {
+                    TileRenderParams params = _lastBuildParams(wk);
+                    _renderPool.submit(params, _lastSurface, _lastVolume);
+                }
+                moreWork = true;
             }
-            moreWork = true;
+        } else {
+            fprintf(stderr, "[TICK] chunk arrived but missing state: surface=%d vol=%d params=%d\n",
+                    (bool)_lastSurface, (bool)_lastVolume, (bool)_lastBuildParams);
         }
     }
 

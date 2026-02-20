@@ -213,6 +213,22 @@ void CTiledVolumeViewer::OnVolumeChanged(std::shared_ptr<Volume> vol)
         _volume->pinCoarsestLevel(!isRemote);
     }
 
+    // For remote volumes with no surface, create a default PlaneSurface
+    // centered in the volume so the axis-aligned viewers can render.
+    // The segmentation viewer should stay blank until a segment is loaded.
+    bool isAxisAligned = (_surfName == "xy plane" || _surfName == "xz plane" || _surfName == "yz plane");
+    if (!_surfWeak.lock() && _volume && isAxisAligned) {
+        auto shape = _volume->shape();  // (z, y, x) at scale 0
+        cv::Vec3f center(shape[2] * 0.5f, shape[1] * 0.5f, shape[0] * 0.5f);
+        cv::Vec3f normal;
+        if (_surfName == "xy plane") normal = cv::Vec3f(0, 0, 1);
+        else if (_surfName == "xz plane") normal = cv::Vec3f(0, 1, 0);
+        else normal = cv::Vec3f(1, 0, 0);  // yz plane
+        auto defaultSurf = std::make_shared<PlaneSurface>(center, normal);
+        _defaultSurface = defaultSurf;
+        _surfWeak = defaultSurf;
+    }
+
     _camera.recalcPyramidLevel(_volume->numScales());
     updateContentMinScale();
 
@@ -437,6 +453,7 @@ void CTiledVolumeViewer::panBy(int dx, int dy)
     _camera.surfacePtr[1] -= dy * invScale;
     centerViewport();
     submitRender();
+    updateStatusLabel();
 }
 
 void CTiledVolumeViewer::zoomAt(float factor, const QPointF& scenePos)
@@ -1171,11 +1188,24 @@ void CTiledVolumeViewer::updateStatusLabel()
 
 void CTiledVolumeViewer::fitSurfaceInView()
 {
+    if (!fGraphicsView) return;
+
     auto surf = _surfWeak.lock();
-    if (!surf || !fGraphicsView) return;
+    if (!surf || !dynamic_cast<QuadSurface*>(surf.get())) {
+        // No surface (e.g. remote volume only) — reset to volume center at scale 1
+        _camera.scale = 1.0f;
+        _camera.surfacePtr = cv::Vec3f(0, 0, 0);
+        _camera.zOff = 0;
+        if (_volume) _camera.recalcPyramidLevel(_volume->numScales());
+        _camera.invalidate();
+        updateStatusLabel();
+        rebuildContentGrid();
+        centerViewport();
+        submitRender();
+        return;
+    }
 
     auto* quadSurf = dynamic_cast<QuadSurface*>(surf.get());
-    if (!quadSurf) return;
 
     // Auto-crop: find bounding box of valid (non-sentinel) points
     const cv::Mat_<cv::Vec3f>& pts = quadSurf->rawPoints();

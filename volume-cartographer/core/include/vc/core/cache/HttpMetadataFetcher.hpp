@@ -2,6 +2,7 @@
 
 #include <filesystem>
 #include <string>
+#include <vector>
 
 namespace vc::cache {
 
@@ -21,6 +22,12 @@ struct RemoteZarrInfo {
     int numLevels = 0;
 };
 
+// Result of S3 ListObjectsV2 with delimiter.
+struct S3ListResult {
+    std::vector<std::string> prefixes;  // subdirectory prefixes (CommonPrefixes)
+    std::vector<std::string> objects;   // object keys (Contents)
+};
+
 // Fetch zarr metadata from a remote URL, write to local staging dir.
 // Probes 0/.zarray, 1/.zarray, ... until 404.
 // Creates: <stagingRoot>/<volumeId>/.zgroup, <volumeId>/0/.zarray, etc.
@@ -32,5 +39,14 @@ RemoteZarrInfo fetchRemoteZarrMetadata(
 
 // Fetch URL body as string. Empty on failure.
 std::string httpGetString(const std::string& url, const HttpAuth& auth = {});
+
+// List objects under an S3 prefix using ListObjectsV2.
+// httpsBaseUrl should be the bucket URL (https://bucket.s3.region.amazonaws.com/prefix/).
+// Returns prefixes (subdirectories) and object keys.
+S3ListResult s3ListObjects(const std::string& httpsBaseUrl, const HttpAuth& auth = {});
+
+// Download a URL to a local file. Returns true on success.
+// Uses atomic write (temp file + rename).
+bool httpDownloadFile(const std::string& url, const std::filesystem::path& dest, const HttpAuth& auth = {});
 
 }  // namespace vc::cache

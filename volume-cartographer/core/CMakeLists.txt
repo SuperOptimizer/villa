@@ -27,6 +27,7 @@ add_library(vc_core
         src/VcDataset.cpp
         src/cache/HttpMetadataFetcher.cpp
         src/RemoteUrl.cpp
+        src/RemoteScroll.cpp
         src/Geometry.cpp
         src/Thinning.cpp
         src/Umbilicus.cpp

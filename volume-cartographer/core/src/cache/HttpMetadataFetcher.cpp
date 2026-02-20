@@ -66,6 +66,184 @@ std::string httpGetString(const std::string& url, const HttpAuth& auth)
 #endif
 }
 
+// ---- S3 listing -------------------------------------------------------------
+
+// Simple XML tag extraction — finds all occurrences of <tag>...</tag> in xml
+static std::vector<std::string> extractXmlTags(const std::string& xml, const std::string& tag)
+{
+    std::vector<std::string> results;
+    const std::string openTag = "<" + tag + ">";
+    const std::string closeTag = "</" + tag + ">";
+    size_t pos = 0;
+    while (true) {
+        pos = xml.find(openTag, pos);
+        if (pos == std::string::npos) break;
+        pos += openTag.size();
+        auto end = xml.find(closeTag, pos);
+        if (end == std::string::npos) break;
+        results.push_back(xml.substr(pos, end - pos));
+        pos = end + closeTag.size();
+    }
+    return results;
+}
+
+// Parse S3 HTTPS URL into bucket host and prefix.
+// Input: "https://bucket.s3.region.amazonaws.com/some/prefix/"
+// Output: bucketHost = "https://bucket.s3.region.amazonaws.com"
+//         prefix = "some/prefix/"
+static bool parseS3Url(const std::string& url, std::string& bucketHost, std::string& prefix)
+{
+    // Find scheme
+    auto schemeEnd = url.find("://");
+    if (schemeEnd == std::string::npos) return false;
+    auto pathStart = url.find('/', schemeEnd + 3);
+    if (pathStart == std::string::npos) {
+        bucketHost = url;
+        prefix = "";
+    } else {
+        bucketHost = url.substr(0, pathStart);
+        prefix = url.substr(pathStart + 1);
+    }
+    return true;
+}
+
+S3ListResult s3ListObjects(const std::string& httpsBaseUrl, const HttpAuth& auth)
+{
+    S3ListResult result;
+
+#ifdef VC_USE_CURL
+    std::string bucketHost, prefix;
+    if (!parseS3Url(httpsBaseUrl, bucketHost, prefix)) {
+        return result;
+    }
+
+    // Build ListObjectsV2 URL
+    std::string listUrl = bucketHost + "/?list-type=2&delimiter=/";
+    if (!prefix.empty()) {
+        // URL-encode is not needed for simple path prefixes
+        listUrl += "&prefix=" + prefix;
+    }
+
+    std::fprintf(stderr, "[S3] ListObjects: %s\n", listUrl.c_str());
+
+    std::string xml = httpGetString(listUrl, auth);
+    if (xml.empty()) {
+        std::fprintf(stderr, "[S3] ListObjects returned empty response\n");
+        return result;
+    }
+
+    // Parse <CommonPrefixes><Prefix>...</Prefix></CommonPrefixes>
+    // The S3 response nests Prefix inside CommonPrefixes, but our simple
+    // extractor just gets all <Prefix> tags directly. Filter for the ones
+    // that start with our prefix.
+    for (const auto& p : extractXmlTags(xml, "Prefix")) {
+        if (prefix.empty() || p.rfind(prefix, 0) == 0) {
+            // Strip the parent prefix to get just the subdirectory name
+            std::string relative = p.substr(prefix.size());
+            // Remove trailing slash
+            while (!relative.empty() && relative.back() == '/') {
+                relative.pop_back();
+            }
+            if (!relative.empty()) {
+                result.prefixes.push_back(relative);
+            }
+        }
+    }
+
+    // Parse <Contents><Key>...</Key></Contents>
+    for (const auto& k : extractXmlTags(xml, "Key")) {
+        if (prefix.empty() || k.rfind(prefix, 0) == 0) {
+            std::string relative = k.substr(prefix.size());
+            if (!relative.empty()) {
+                result.objects.push_back(relative);
+            }
+        }
+    }
+
+    std::fprintf(stderr, "[S3] Found %zu prefixes, %zu objects\n",
+                 result.prefixes.size(), result.objects.size());
+#else
+    (void)httpsBaseUrl;
+    (void)auth;
+#endif
+
+    return result;
+}
+
+// ---- HTTP file download -----------------------------------------------------
+
+#ifdef VC_USE_CURL
+static size_t fileWriteCallback(char* ptr, size_t size, size_t nmemb, void* userdata)
+{
+    auto* fp = static_cast<std::FILE*>(userdata);
+    return std::fwrite(ptr, size, nmemb, fp);
+}
+#endif
+
+bool httpDownloadFile(const std::string& url, const std::filesystem::path& dest, const HttpAuth& auth)
+{
+#ifdef VC_USE_CURL
+    namespace fs = std::filesystem;
+
+    // Write to temp file, then atomic rename
+    auto tempPath = dest;
+    tempPath += ".tmp";
+    fs::create_directories(dest.parent_path());
+
+    std::FILE* fp = std::fopen(tempPath.c_str(), "wb");
+    if (!fp) return false;
+
+    CURL* curl = curl_easy_init();
+    if (!curl) {
+        std::fclose(fp);
+        return false;
+    }
+
+    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, fileWriteCallback);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, fp);
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 120L);
+    curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+    curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1L);
+
+    struct curl_slist* headers = nullptr;
+    std::string userpwd;
+    if (auth.awsSigv4) {
+        std::string sigv4 = "aws:amz:" + auth.region + ":s3";
+        curl_easy_setopt(curl, CURLOPT_AWS_SIGV4, sigv4.c_str());
+        userpwd = auth.accessKey + ":" + auth.secretKey;
+        curl_easy_setopt(curl, CURLOPT_USERPWD, userpwd.c_str());
+        if (!auth.sessionToken.empty()) {
+            std::string hdr = "x-amz-security-token: " + auth.sessionToken;
+            headers = curl_slist_append(headers, hdr.c_str());
+            curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+        }
+    }
+
+    CURLcode res = curl_easy_perform(curl);
+    if (headers) curl_slist_free_all(headers);
+    curl_easy_cleanup(curl);
+    std::fclose(fp);
+
+    if (res != CURLE_OK) {
+        std::error_code ec;
+        fs::remove(tempPath, ec);
+        return false;
+    }
+
+    // Atomic rename
+    std::error_code ec;
+    fs::rename(tempPath, dest, ec);
+    return !ec;
+#else
+    (void)url;
+    (void)dest;
+    (void)auth;
+    return false;
+#endif
+}
+
 // ---- metadata fetcher -------------------------------------------------------
 
 static std::string deriveVolumeId(const std::string& url)

@@ -275,6 +275,7 @@ private:
     // --- Data ---
     std::shared_ptr<Volume> _volume;
     std::weak_ptr<Surface> _surfWeak;
+    std::shared_ptr<Surface> _defaultSurface;  // keeps alive for surfaceless remote volumes
     std::string _surfName;
     CSurfaceCollection* _surfCol = nullptr;
     ViewerManager* _viewerManager = nullptr;

@@ -721,9 +721,15 @@ bool Volume::allChunksCached(const cv::Mat_<cv::Vec3f>& coords, int level) const
 
     for (int iz = bb.minIz; iz <= bb.maxIz; iz++)
         for (int iy = bb.minIy; iy <= bb.maxIy; iy++)
-            for (int ix = bb.minIx; ix <= bb.maxIx; ix++)
-                if (!tieredCache_->get(vc::cache::ChunkKey{level, iz, iy, ix}))
+            for (int ix = bb.minIx; ix <= bb.maxIx; ix++) {
+                vc::cache::ChunkKey key{level, iz, iy, ix};
+                // In zarr, missing chunks (404) contain fill value (zeros).
+                // The rendering handles nullptr as zero, so treat
+                // negative-cached chunks as available.
+                if (!tieredCache_->get(key) &&
+                    !tieredCache_->isNegativeCached(key))
                     return false;
+            }
     return true;
 }
 

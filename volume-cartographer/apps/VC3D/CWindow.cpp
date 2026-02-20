@@ -1404,6 +1404,25 @@ void CWindow::setVolume(std::shared_ptr<Volume> newvol)
     applySlicePlaneOrientation(_surf_col ? _surf_col->surface("segmentation").get() : nullptr);
 }
 
+void CWindow::setRemoteSurfaces(const std::vector<std::pair<std::string, std::shared_ptr<Surface>>>& surfaces)
+{
+    if (surfaces.empty()) return;
+
+    if (_surfacePanel) {
+        _surfacePanel->loadRemoteSurfaces(surfaces);
+    }
+
+    // Set the first surface as the active segmentation
+    if (_surf_col) {
+        const auto& [firstId, firstSurf] = surfaces.front();
+        _surf_col->setSurface("segmentation", firstSurf);
+        _surfID = firstId;
+        _surf_col->emitSurfacesChanged();
+    }
+
+    emit sendSurfacesLoaded();
+}
+
 void CWindow::updateNormalGridAvailability()
 {
     QString checkedPath;
@@ -2183,14 +2202,50 @@ void CWindow::CreateWidgets(void)
 
     connect(
         volSelect, &QComboBox::currentIndexChanged, [this](const int& index) {
-            std::shared_ptr<Volume> newVolume;
-            try {
-                newVolume = fVpkg->volume(volSelect->currentData().toString().toStdString());
-            } catch (const std::out_of_range& e) {
-                QMessageBox::warning(this, "Error", "Could not load volume.");
-                return;
+            if (fVpkg) {
+                // Local volpkg mode
+                std::shared_ptr<Volume> newVolume;
+                try {
+                    newVolume = fVpkg->volume(volSelect->currentData().toString().toStdString());
+                } catch (const std::out_of_range& e) {
+                    QMessageBox::warning(this, "Error", "Could not load volume.");
+                    return;
+                }
+                setVolume(newVolume);
+            } else if (_remoteScrollInfo && index >= 0) {
+                // Remote scroll mode — open selected volume on background thread
+                const std::string volumeName = volSelect->currentData().toString().toStdString();
+                const std::string volumeUrl = _remoteScrollInfo->baseUrl + "/volumes/" + volumeName;
+                const auto auth = _remoteScrollInfo->auth;
+                const auto cachePath = _remoteCachePath;
+
+                statusBar()->showMessage(tr("Switching to remote volume %1...")
+                    .arg(QString::fromStdString(volumeName)));
+                volSelect->setEnabled(false);
+
+                auto* watcher = new QFutureWatcher<std::shared_ptr<Volume>>(this);
+                connect(watcher, &QFutureWatcher<std::shared_ptr<Volume>>::finished, this,
+                    [this, watcher]() {
+                        watcher->deleteLater();
+                        volSelect->setEnabled(can_change_volume_());
+                        try {
+                            auto vol = watcher->result();
+                            setVolume(vol);
+                            statusBar()->showMessage(
+                                tr("Switched to volume: %1").arg(QString::fromStdString(vol->id())),
+                                3000);
+                        } catch (const std::exception& e) {
+                            QMessageBox::warning(this, "Error",
+                                tr("Could not load remote volume:\n%1").arg(e.what()));
+                            statusBar()->clearMessage();
+                        }
+                    });
+                auto future = QtConcurrent::run(
+                    [volumeUrl, cachePath, auth]() -> std::shared_ptr<Volume> {
+                        return Volume::NewFromUrl(volumeUrl, cachePath, auth);
+                    });
+                watcher->setFuture(future);
             }
-            setVolume(newVolume);
         });
 
     auto* filterDropdown = ui.btnFilterDropdown;
@@ -3144,7 +3199,7 @@ auto CWindow::InitializeVolumePkg(const std::string& nVpkgPath) -> bool
 // Update the widgets
 void CWindow::UpdateView(void)
 {
-    if (fVpkg == nullptr) {
+    if (fVpkg == nullptr && currentVolume == nullptr) {
         setWidgetsEnabled(false);  // Disable Widgets for User
         ui.lblVpkgName->setText("[ No Volume Package Loaded ]");
         return;
@@ -3162,11 +3217,13 @@ void CWindow::UpdateView(void)
 
 void CWindow::UpdateVolpkgLabel(int filterCounter)
 {
-    if (!fVpkg) {
-        return;
+    if (fVpkg) {
+        QString label = tr("%1").arg(QString::fromStdString(fVpkg->name()));
+        ui.lblVpkgName->setText(label);
+    } else if (currentVolume) {
+        QString label = tr("Remote: %1").arg(QString::fromStdString(currentVolumeId));
+        ui.lblVpkgName->setText(label);
     }
-    QString label = tr("%1").arg(QString::fromStdString(fVpkg->name()));
-    ui.lblVpkgName->setText(label);
 }
 
 void CWindow::onShowStatusMessage(QString text, int timeout)
@@ -3471,11 +3528,21 @@ void CWindow::CloseVolume(void)
         }
         // Tell VolumePkg to unload all surfaces
         fVpkg->unloadAllSurfaces();
+    } else {
+        // Remote mode: clear all named surfaces from collection
+        auto names = _surf_col->surfaceNames();
+        for (const auto& name : names) {
+            if (name != "segmentation") {
+                _surf_col->setSurface(name, nullptr, true);
+            }
+        }
     }
 
     // Clear the volume package
     fVpkg = nullptr;
     currentVolume = nullptr;
+    _remoteScrollInfo.reset();
+    _remoteCachePath.clear();
     _focusHistory.clear();
     _focusHistoryIndex = -1;
     _navigatingFocusHistory = false;
@@ -3509,8 +3576,14 @@ void CWindow::CloseVolume(void)
 // Handle open request
 auto CWindow::can_change_volume_() -> bool
 {
-    bool canChange = fVpkg != nullptr && fVpkg->numberOfVolumes() > 1;
-    return canChange;
+    if (fVpkg != nullptr && fVpkg->numberOfVolumes() > 1) {
+        return true;
+    }
+    // Also allow switching when volSelect has multiple remote volumes
+    if (volSelect && volSelect->count() > 1) {
+        return true;
+    }
+    return false;
 }
 
 // Handle request to step impact range down

@@ -118,6 +118,11 @@ public:
     // Full dataset shape at a given level, in {z, y, x} order.
     std::array<int, 3> levelShape(int level) const;
 
+    // Check if a chunk is negative-cached (known to not exist on source).
+    // In zarr format, missing chunks contain the fill value (zeros),
+    // so callers should treat negative-cached chunks as available.
+    bool isNegativeCached(const ChunkKey& key) const;
+
     // --- Notifications ---
 
     // Called from IOPool worker thread when a chunk becomes available.

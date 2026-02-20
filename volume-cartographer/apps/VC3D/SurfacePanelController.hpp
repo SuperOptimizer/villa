@@ -85,6 +85,7 @@ public:
 
     void loadSurfaces(bool reload);
     void loadSurfacesIncremental();
+    void loadRemoteSurfaces(const std::vector<std::pair<std::string, std::shared_ptr<Surface>>>& surfaces);
     void updateTreeItemIcon(SurfaceTreeWidgetItem* item);
     void refreshSurfaceMetrics(const std::string& surfaceId);
 
@@ -167,6 +168,7 @@ private:
     void logSurfaceLoadSummary() const;
     void applyHighlightSelection(const std::string& id, bool enabled);
     bool cycleVisibleSegment(int direction);
+    std::shared_ptr<QuadSurface> getSurfaceById(const std::string& id) const;
 
     UiRefs _ui;
     CSurfaceCollection* _surfaces{nullptr};

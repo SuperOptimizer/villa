@@ -110,6 +110,9 @@ namespace viewer {
     // Remote volume chunk cache directory
     constexpr auto REMOTE_CACHE_DIR = "viewer/remote_cache_dir";
 
+    // Recent remote volume URLs
+    constexpr auto REMOTE_RECENT_URLS = "viewer/remote_recent_urls";
+
     // Local cache directory for network-mounted volpkgs
     constexpr auto NETWORK_CACHE_DIR = "viewer/network_cache_dir";
 
@@ -204,6 +207,9 @@ namespace neighbor_copy {
 // -----------------------------------------------------------------------------
 namespace aws {
     constexpr auto DEFAULT_PROFILE = "aws/default_profile";
+    constexpr auto ACCESS_KEY = "aws/access_key";
+    constexpr auto SECRET_KEY = "aws/secret_key";
+    constexpr auto SESSION_TOKEN = "aws/session_token";
 
     constexpr auto DEFAULT_PROFILE_DEFAULT = "";
 }

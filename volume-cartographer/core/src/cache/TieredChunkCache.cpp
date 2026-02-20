@@ -1,6 +1,7 @@
 #include "vc/core/cache/TieredChunkCache.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
@@ -30,17 +31,18 @@ TieredChunkCache::TieredChunkCache(
 {
     // Wire up the IO pool: fetch = check cold first, then ice
     ioPool_.setFetchFunc([this](const ChunkKey& key) -> std::vector<uint8_t> {
-        if (auto* log = debugLog())
-            std::fprintf(log, "FETCH start lvl=%d (%d,%d,%d)\n", key.level, key.iz, key.iy, key.ix);
+        using Clock = std::chrono::steady_clock;
+        auto t0 = Clock::now();
 
         // Try cold (disk cache) first
         if (diskStore_) {
             auto diskData = diskStore_->get(config_.volumeId, key);
             if (diskData && !diskData->empty()) {
                 statColdHits_.fetch_add(1, std::memory_order_relaxed);
+                auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - t0).count();
                 if (auto* log = debugLog())
-                    std::fprintf(log, "FETCH cold-hit lvl=%d (%d,%d,%d) bytes=%zu\n",
-                                 key.level, key.iz, key.iy, key.ix, diskData->size());
+                    std::fprintf(log, "FETCH cold-hit lvl=%d (%d,%d,%d) bytes=%zu %ldms\n",
+                                 key.level, key.iz, key.iy, key.ix, diskData->size(), ms);
                 return std::move(*diskData);
             }
         }
@@ -48,23 +50,36 @@ TieredChunkCache::TieredChunkCache(
         // Fetch from ice (remote/filesystem source)
         if (!source_) return {};
 
-        auto data = source_->fetch(key);
+        auto t1 = Clock::now();
+        std::vector<uint8_t> data;
+        try {
+            data = source_->fetch(key);
+        } catch (const std::exception& e) {
+            if (auto* log = debugLog())
+                std::fprintf(log, "FETCH ice-error lvl=%d (%d,%d,%d) %s\n",
+                             key.level, key.iz, key.iy, key.ix, e.what());
+            throw;
+        }
+        auto t2 = Clock::now();
+        auto fetchMs = std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count();
+
         if (data.empty()) {
             if (auto* log = debugLog())
-                std::fprintf(log, "FETCH ice-empty lvl=%d (%d,%d,%d)\n",
-                             key.level, key.iz, key.iy, key.ix);
+                std::fprintf(log, "FETCH ice-empty lvl=%d (%d,%d,%d) %ldms\n",
+                             key.level, key.iz, key.iy, key.ix, fetchMs);
             return {};
         }
 
         statIceFetches_.fetch_add(1, std::memory_order_relaxed);
-        if (auto* log = debugLog())
-            std::fprintf(log, "FETCH ice-ok lvl=%d (%d,%d,%d) bytes=%zu\n",
-                         key.level, key.iz, key.iy, key.ix, data.size());
 
         // Store to cold (disk cache) for persistence
         if (diskStore_) {
             diskStore_->put(config_.volumeId, key, data);
         }
+        auto totalMs = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - t0).count();
+        if (auto* log = debugLog())
+            std::fprintf(log, "FETCH ice-ok lvl=%d (%d,%d,%d) bytes=%zu fetch=%ldms total=%ldms\n",
+                         key.level, key.iz, key.iy, key.ix, data.size(), fetchMs, totalMs);
 
         return data;
     });
@@ -84,6 +99,9 @@ TieredChunkCache::TieredChunkCache(
                 return;
             }
 
+            using Clock = std::chrono::steady_clock;
+            auto t0 = Clock::now();
+
             // Estimate decompressed size from chunk shape metadata
             size_t decompSize = 0;
             if (source_) {
@@ -98,7 +116,9 @@ TieredChunkCache::TieredChunkCache(
             // Decompress and store in hot tier
             auto warmEntry = warmGet(key);
             if (warmEntry && decompress_) {
+                auto td0 = Clock::now();
                 auto data = decompress_(warmEntry->data, key);
+                auto decompMs = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - td0).count();
                 if (data) {
                     // Check if this key should be pinned
                     bool shouldPin = false;
@@ -108,9 +128,10 @@ TieredChunkCache::TieredChunkCache(
                     }
                     size_t decompBytes = data->totalBytes();
                     hotPut(key, std::move(data), shouldPin);
+                    auto totalMs = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - t0).count();
                     if (auto* log = debugLog())
-                        std::fprintf(log, "COMPLETE hot-put lvl=%d (%d,%d,%d) decompBytes=%zu\n",
-                                     key.level, key.iz, key.iy, key.ix, decompBytes);
+                        std::fprintf(log, "COMPLETE hot-put lvl=%d (%d,%d,%d) decompBytes=%zu decomp=%ldms total=%ldms\n",
+                                     key.level, key.iz, key.iy, key.ix, decompBytes, decompMs, totalMs);
                 } else {
                     if (auto* log = debugLog())
                         std::fprintf(log, "COMPLETE decompress-fail lvl=%d (%d,%d,%d)\n",
@@ -375,6 +396,12 @@ std::array<int, 3> TieredChunkCache::chunkShape(int level) const
 std::array<int, 3> TieredChunkCache::levelShape(int level) const
 {
     return source_ ? source_->levelShape(level) : std::array<int, 3>{0, 0, 0};
+}
+
+bool TieredChunkCache::isNegativeCached(const ChunkKey& key) const
+{
+    std::shared_lock lock(negativeMutex_);
+    return negativeCache_.count(key) > 0;
 }
 
 void TieredChunkCache::setChunkReadyCallback(ChunkReadyCallback cb)

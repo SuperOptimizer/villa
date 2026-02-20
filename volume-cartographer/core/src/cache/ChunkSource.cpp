@@ -3,7 +3,9 @@
 #include <algorithm>
 #include <atomic>
 #include <cstdio>
+#include <cstring>
 #include <fcntl.h>
+#include <stdexcept>
 #include <fstream>
 #include <mutex>
 #include <nlohmann/json.hpp>
@@ -257,7 +259,24 @@ std::vector<uint8_t> HttpChunkSource::fetch(const ChunkKey& key)
     CURLcode res = curl_easy_perform(curl);
     if (headers) curl_slist_free_all(headers);
 
-    if (res != CURLE_OK) return {};
+    if (res != CURLE_OK) {
+        long httpCode = 0;
+        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
+
+        if (res == CURLE_HTTP_RETURNED_ERROR &&
+            (httpCode == 404 || httpCode == 403)) {
+            return {};  // chunk doesn't exist at source
+        }
+
+        // Transient error — throw so IOPool skips negative caching.
+        // Include URL and HTTP code for diagnostics.
+        char msg[512];
+        std::snprintf(msg, sizeof(msg),
+                      "HTTP fetch failed: %s (curl=%d http=%ld) url=%s",
+                      curl_easy_strerror(res), static_cast<int>(res),
+                      httpCode, url.c_str());
+        throw std::runtime_error(msg);
+    }
     return response;
 #else
     (void)key;

@@ -21,6 +21,8 @@
 #include "vc/core/util/LoadJson.hpp"
 #include "vc/core/util/RemoteUrl.hpp"
 #include "vc/core/cache/HttpMetadataFetcher.hpp"
+#include "vc/core/util/RemoteScroll.hpp"
+#include "vc/core/types/Segmentation.hpp"
 
 #include <QAction>
 #include <QApplication>
@@ -110,6 +112,7 @@ MenuActionController::MenuActionController(CWindow* window)
     , _window(window)
 {
     _recentActs.fill(nullptr);
+    _recentRemoteActs.fill(nullptr);
 }
 
 void MenuActionController::populateMenus(QMenuBar* menuBar)
@@ -185,7 +188,12 @@ void MenuActionController::populateMenus(QMenuBar* menuBar)
     _recentMenu->setEnabled(false);
     _fileMenu->addMenu(_recentMenu);
 
+    _recentRemoteMenu = new QMenu(QObject::tr("Open recent re&mote volume"), _fileMenu);
+    _recentRemoteMenu->setEnabled(false);
+    _fileMenu->addMenu(_recentRemoteMenu);
+
     ensureRecentActions();
+    ensureRecentRemoteActions();
 
     _fileMenu->addSeparator();
     _fileMenu->addAction(_reportingAct);
@@ -238,6 +246,7 @@ void MenuActionController::populateMenus(QMenuBar* menuBar)
     menuBar->addMenu(_helpMenu);
 
     refreshRecentMenu();
+    refreshRecentRemoteMenu();
 }
 
 void MenuActionController::ensureRecentActions()
@@ -367,9 +376,95 @@ void MenuActionController::openVolpkgAt(const QString& path)
     _window->UpdateView();
 }
 
+// --- Remote recents management ---
+
+QStringList MenuActionController::loadRecentRemoteUrls() const
+{
+    QSettings settings(vc3d::settingsFilePath(), QSettings::IniFormat);
+    return settings.value(vc3d::settings::viewer::REMOTE_RECENT_URLS).toStringList();
+}
+
+void MenuActionController::saveRecentRemoteUrls(const QStringList& urls)
+{
+    QSettings settings(vc3d::settingsFilePath(), QSettings::IniFormat);
+    settings.setValue(vc3d::settings::viewer::REMOTE_RECENT_URLS, urls);
+}
+
+void MenuActionController::updateRecentRemoteList(const QString& url)
+{
+    QStringList urls = loadRecentRemoteUrls();
+    urls.removeAll(url);
+    urls.prepend(url);
+    while (urls.size() > kMaxRecentRemote) {
+        urls.removeLast();
+    }
+    saveRecentRemoteUrls(urls);
+    refreshRecentRemoteMenu();
+}
+
+void MenuActionController::ensureRecentRemoteActions()
+{
+    if (!_recentRemoteMenu) return;
+
+    for (auto& act : _recentRemoteActs) {
+        if (!act) {
+            act = new QAction(this);
+            act->setVisible(false);
+            connect(act, &QAction::triggered, this, &MenuActionController::openRecentRemoteVolume);
+            _recentRemoteMenu->addAction(act);
+        }
+    }
+}
+
+void MenuActionController::refreshRecentRemoteMenu()
+{
+    ensureRecentRemoteActions();
+
+    QStringList urls = loadRecentRemoteUrls();
+    if (!urls.isEmpty() && urls.last().isEmpty()) {
+        urls.removeLast();
+    }
+
+    const int count = std::min(static_cast<int>(urls.size()), kMaxRecentRemote);
+
+    for (int i = 0; i < count; ++i) {
+        QString text = QObject::tr("&%1 | %2").arg(i + 1).arg(urls[i]);
+        _recentRemoteActs[i]->setText(text);
+        _recentRemoteActs[i]->setData(urls[i]);
+        _recentRemoteActs[i]->setVisible(true);
+    }
+
+    for (int j = count; j < kMaxRecentRemote; ++j) {
+        if (_recentRemoteActs[j]) {
+            _recentRemoteActs[j]->setVisible(false);
+            _recentRemoteActs[j]->setData(QVariant());
+        }
+    }
+
+    if (_recentRemoteMenu) {
+        _recentRemoteMenu->setEnabled(count > 0);
+    }
+}
+
+void MenuActionController::openRecentRemoteVolume()
+{
+    if (!_window) return;
+
+    if (auto* action = qobject_cast<QAction*>(sender())) {
+        const QString url = action->data().toString();
+        if (!url.isEmpty()) {
+            openRemoteUrl(url);
+        }
+    }
+}
+
 void MenuActionController::openRemoteVolume()
 {
     if (!_window) return;
+
+    // Pre-fill with the most recent remote URL
+    QStringList recentUrls = loadRecentRemoteUrls();
+    QString lastUrl = recentUrls.isEmpty() ? QString() : recentUrls.first();
 
     bool ok = false;
     QString url = QInputDialog::getText(
@@ -377,18 +472,25 @@ void MenuActionController::openRemoteVolume()
         QObject::tr("Open Remote Volume"),
         QObject::tr("Enter volume URL (http://, https://, s3://):"),
         QLineEdit::Normal,
-        QString(),
+        lastUrl,
         &ok);
 
     if (!ok || url.trimmed().isEmpty()) return;
 
-    // Resolve the URL (s3:// → https://) and build auth config
-    auto urlStr = url.trimmed().toStdString();
+    openRemoteUrl(url.trimmed());
+}
+
+void MenuActionController::openRemoteUrl(const QString& url)
+{
+    if (!_window || url.isEmpty()) return;
+
+    auto urlStr = url.toStdString();
     auto resolved = vc::resolveRemoteUrl(urlStr);
     vc::cache::HttpAuth auth;
 
+    QSettings settings(vc3d::settingsFilePath(), QSettings::IniFormat);
+
     if (resolved.useAwsSigv4) {
-        // S3 URL — need AWS credentials
         auth.awsSigv4 = true;
         auth.region = resolved.awsRegion;
 
@@ -401,7 +503,20 @@ void MenuActionController::openRemoteVolume()
         auth.secretKey = getEnv("AWS_SECRET_ACCESS_KEY");
         auth.sessionToken = getEnv("AWS_SESSION_TOKEN");
 
-        // If env vars are missing, prompt the user
+        // If env vars are missing, try saved credentials
+        if (auth.accessKey.empty() || auth.secretKey.empty()) {
+            auto savedAccess = settings.value(vc3d::settings::aws::ACCESS_KEY).toString();
+            auto savedSecret = settings.value(vc3d::settings::aws::SECRET_KEY).toString();
+            auto savedToken = settings.value(vc3d::settings::aws::SESSION_TOKEN).toString();
+
+            if (!savedAccess.isEmpty() && !savedSecret.isEmpty()) {
+                auth.accessKey = savedAccess.toStdString();
+                auth.secretKey = savedSecret.toStdString();
+                auth.sessionToken = savedToken.toStdString();
+            }
+        }
+
+        // If still missing, prompt the user
         if (auth.accessKey.empty() || auth.secretKey.empty()) {
             bool credOk = false;
             QString accessKey = QInputDialog::getText(
@@ -428,25 +543,27 @@ void MenuActionController::openRemoteVolume()
             auth.accessKey = accessKey.trimmed().toStdString();
             auth.secretKey = secretKey.trimmed().toStdString();
             auth.sessionToken = sessionToken.trimmed().toStdString();
+
+            // Save credentials for next time
+            settings.setValue(vc3d::settings::aws::ACCESS_KEY,
+                              QString::fromStdString(auth.accessKey));
+            settings.setValue(vc3d::settings::aws::SECRET_KEY,
+                              QString::fromStdString(auth.secretKey));
+            settings.setValue(vc3d::settings::aws::SESSION_TOKEN,
+                              QString::fromStdString(auth.sessionToken));
         }
     }
 
-    // Determine cache directory — use saved setting or ask user
-    QSettings settings(vc3d::settingsFilePath(), QSettings::IniFormat);
+    // Determine cache directory — use saved setting or default
     QString defaultCache = QDir::homePath() + "/.VC3D/remote_cache";
     QString cacheDir = settings.value(
         vc3d::settings::viewer::REMOTE_CACHE_DIR, defaultCache).toString();
 
-    QString selectedDir = QFileDialog::getExistingDirectory(
-        _window,
-        QObject::tr("Select Chunk Cache Directory"),
-        cacheDir,
-        QFileDialog::ShowDirsOnly);
+    // Create the default cache dir if it doesn't exist yet
+    QDir().mkpath(cacheDir);
 
-    if (selectedDir.isEmpty()) return;
-
-    // Save the choice for next time
-    settings.setValue(vc3d::settings::viewer::REMOTE_CACHE_DIR, selectedDir);
+    // Save the URL to recents
+    updateRecentRemoteList(url);
 
     // Disable the action while loading to prevent double-open
     _openRemoteAct->setEnabled(false);
@@ -454,8 +571,34 @@ void MenuActionController::openRemoteVolume()
         _window->statusBar()->showMessage(QObject::tr("Opening remote volume..."));
     }
 
-    // Run Volume::NewFromUrl on a background thread so the UI doesn't freeze
-    auto cachePath = selectedDir.toStdString();
+    auto cachePath = cacheDir.toStdString();
+
+    // Check if this might be a scroll root URL (not ending with .zarr)
+    bool isLikelyZarr = resolved.httpsUrl.size() >= 5 &&
+        resolved.httpsUrl.substr(resolved.httpsUrl.size() - 5) == ".zarr";
+    // Also check without trailing slash
+    {
+        std::string trimmed = resolved.httpsUrl;
+        while (!trimmed.empty() && trimmed.back() == '/') trimmed.pop_back();
+        if (trimmed.size() >= 5 && trimmed.substr(trimmed.size() - 5) == ".zarr") {
+            isLikelyZarr = true;
+        }
+    }
+
+    if (!isLikelyZarr) {
+        // Try scroll discovery first
+        openRemoteScroll(resolved.httpsUrl, auth, cachePath);
+    } else {
+        // Direct zarr volume open (existing flow)
+        openRemoteZarr(resolved.httpsUrl, auth, cachePath);
+    }
+}
+
+void MenuActionController::openRemoteZarr(
+    const std::string& httpsUrl,
+    const vc::cache::HttpAuth& auth,
+    const std::string& cachePath)
+{
     auto* watcher = new QFutureWatcher<std::shared_ptr<Volume>>(this);
 
     connect(watcher, &QFutureWatcher<std::shared_ptr<Volume>>::finished, this,
@@ -487,10 +630,201 @@ void MenuActionController::openRemoteVolume()
         });
 
     auto future = QtConcurrent::run(
-        [urlStr, cachePath, auth]() -> std::shared_ptr<Volume> {
-            return Volume::NewFromUrl(urlStr, cachePath, auth);
+        [httpsUrl, cachePath, auth]() -> std::shared_ptr<Volume> {
+            return Volume::NewFromUrl(httpsUrl, cachePath, auth);
         });
     watcher->setFuture(future);
+}
+
+// Scroll discovery result that can be passed between threads
+struct ScrollOpenResult {
+    std::shared_ptr<Volume> volume;
+    std::vector<std::pair<std::string, std::shared_ptr<Surface>>> surfaces;
+    std::string errorMsg;
+};
+
+void MenuActionController::openRemoteScroll(
+    const std::string& httpsUrl,
+    const vc::cache::HttpAuth& auth,
+    const std::string& cachePath)
+{
+    // Phase 1: Discover scroll structure on background thread
+    auto* discoveryWatcher = new QFutureWatcher<vc::RemoteScrollInfo>(this);
+
+    connect(discoveryWatcher, &QFutureWatcher<vc::RemoteScrollInfo>::finished, this,
+        [this, discoveryWatcher, httpsUrl, auth, cachePath]() {
+            discoveryWatcher->deleteLater();
+
+            vc::RemoteScrollInfo scrollInfo;
+            try {
+                scrollInfo = discoveryWatcher->result();
+            } catch (const std::exception& e) {
+                // Discovery failed — fall back to direct zarr open
+                std::fprintf(stderr, "[RemoteScroll] Discovery failed: %s, falling back to zarr\n", e.what());
+                openRemoteZarr(httpsUrl, auth, cachePath);
+                return;
+            }
+
+            if (scrollInfo.volumeNames.empty()) {
+                // No volumes found — fall back to direct zarr open
+                std::fprintf(stderr, "[RemoteScroll] No volumes found, falling back to zarr\n");
+                openRemoteZarr(httpsUrl, auth, cachePath);
+                return;
+            }
+
+            // Pick volume: if multiple, ask user; if one, auto-select
+            std::string volumeName;
+            if (scrollInfo.volumeNames.size() == 1) {
+                volumeName = scrollInfo.volumeNames.front();
+            } else {
+                QStringList items;
+                for (const auto& v : scrollInfo.volumeNames) {
+                    items << QString::fromStdString(v);
+                }
+                bool ok = false;
+                QString picked = QInputDialog::getItem(
+                    _window,
+                    QObject::tr("Select Volume"),
+                    QObject::tr("Multiple volumes found. Select one:"),
+                    items, 0, false, &ok);
+                if (!ok || picked.isEmpty()) {
+                    _openRemoteAct->setEnabled(true);
+                    if (_window->statusBar()) _window->statusBar()->clearMessage();
+                    return;
+                }
+                volumeName = picked.toStdString();
+            }
+
+            // Phase 2: Open volume + download segments on background thread
+            if (_window->statusBar()) {
+                _window->statusBar()->showMessage(
+                    QObject::tr("Opening remote scroll (volume: %1, %2 segments)...")
+                        .arg(QString::fromStdString(volumeName))
+                        .arg(scrollInfo.segmentIds.size()));
+            }
+
+            auto* loadWatcher = new QFutureWatcher<ScrollOpenResult>(this);
+
+            connect(loadWatcher, &QFutureWatcher<ScrollOpenResult>::finished, this,
+                [this, loadWatcher, scrollInfo, cachePath]() {
+                    loadWatcher->deleteLater();
+                    _openRemoteAct->setEnabled(true);
+
+                    ScrollOpenResult result;
+                    try {
+                        result = loadWatcher->result();
+                    } catch (const std::exception& e) {
+                        QMessageBox::critical(_window,
+                            QObject::tr("Remote Scroll Error"),
+                            QObject::tr("Failed to open remote scroll:\n%1").arg(e.what()));
+                        if (_window->statusBar()) _window->statusBar()->clearMessage();
+                        return;
+                    }
+
+                    if (!result.errorMsg.empty()) {
+                        QMessageBox::critical(_window,
+                            QObject::tr("Remote Scroll Error"),
+                            QObject::tr("Failed to open remote scroll:\n%1")
+                                .arg(QString::fromStdString(result.errorMsg)));
+                        if (_window->statusBar()) _window->statusBar()->clearMessage();
+                        return;
+                    }
+
+                    _window->CloseVolume();
+
+                    // Store remote scroll info for volume switching
+                    _window->_remoteScrollInfo = scrollInfo;
+                    _window->_remoteCachePath = cachePath;
+
+                    _window->setVolume(result.volume);
+
+                    if (!result.surfaces.empty()) {
+                        _window->setRemoteSurfaces(result.surfaces);
+                    }
+
+                    // Populate volume combo with all discovered volumes
+                    if (_window->volSelect && scrollInfo.volumeNames.size() > 1) {
+                        const QSignalBlocker blocker{_window->volSelect};
+                        _window->volSelect->clear();
+                        for (const auto& vname : scrollInfo.volumeNames) {
+                            QString label = QString::fromStdString(vname);
+                            // Strip .zarr suffix for display
+                            if (label.endsWith(QStringLiteral(".zarr"))) {
+                                label.chop(5);
+                            }
+                            _window->volSelect->addItem(label, QString::fromStdString(vname));
+                        }
+                        // Select the currently loaded volume
+                        const QString currentId = QString::fromStdString(result.volume->id());
+                        for (int i = 0; i < _window->volSelect->count(); ++i) {
+                            if (_window->volSelect->itemData(i).toString().contains(currentId)) {
+                                _window->volSelect->setCurrentIndex(i);
+                                break;
+                            }
+                        }
+                    }
+
+                    _window->UpdateView();
+
+                    if (_window->statusBar()) {
+                        _window->statusBar()->showMessage(
+                            QObject::tr("Opened remote scroll: %1 (%2 segments)")
+                                .arg(QString::fromStdString(result.volume->id()))
+                                .arg(result.surfaces.size()),
+                            5000);
+                    }
+                });
+
+            auto segIds = scrollInfo.segmentIds;
+            auto scrollAuth = scrollInfo.auth;
+            auto baseUrl = scrollInfo.baseUrl;
+
+            auto loadFuture = QtConcurrent::run(
+                [baseUrl, volumeName, segIds, cachePath, scrollAuth]() -> ScrollOpenResult {
+                    ScrollOpenResult result;
+                    try {
+                        // Open the volume
+                        std::string volumeUrl = baseUrl + "/volumes/" + volumeName;
+                        result.volume = Volume::NewFromUrl(volumeUrl, cachePath, scrollAuth);
+
+                        // Download and load segments
+                        for (const auto& segId : segIds) {
+                            try {
+                                auto localDir = vc::downloadRemoteSegment(
+                                    baseUrl, segId, cachePath, scrollAuth);
+
+                                // Check that meta.json exists (download succeeded)
+                                if (!std::filesystem::exists(localDir / "meta.json")) {
+                                    std::fprintf(stderr, "[RemoteScroll] Skipping segment %s: no meta.json\n",
+                                                 segId.c_str());
+                                    continue;
+                                }
+
+                                auto seg = Segmentation::New(localDir);
+                                if (seg && seg->canLoadSurface()) {
+                                    auto surf = seg->loadSurface();
+                                    if (surf) {
+                                        result.surfaces.emplace_back(segId, surf);
+                                    }
+                                }
+                            } catch (const std::exception& e) {
+                                std::fprintf(stderr, "[RemoteScroll] Failed to load segment %s: %s\n",
+                                             segId.c_str(), e.what());
+                            }
+                        }
+                    } catch (const std::exception& e) {
+                        result.errorMsg = e.what();
+                    }
+                    return result;
+                });
+            loadWatcher->setFuture(loadFuture);
+        });
+
+    auto discoveryFuture = QtConcurrent::run(
+        [httpsUrl, auth]() -> vc::RemoteScrollInfo {
+            return vc::discoverRemoteScroll(httpsUrl, auth);
+        });
+    discoveryWatcher->setFuture(discoveryFuture);
 }
 
 void MenuActionController::triggerTeleaInpaint()

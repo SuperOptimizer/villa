@@ -101,19 +101,29 @@ void DiskStore::put(
     // Create parent directories
     std::error_code ec;
     std::filesystem::create_directories(path.parent_path(), ec);
-    if (ec) return;
+    if (ec) {
+        std::fprintf(stderr, "[DISK] put: create_directories FAILED for %s: %s\n",
+                     path.parent_path().c_str(), ec.message().c_str());
+        return;
+    }
 
     // Write to temp file, then rename (atomic on same filesystem)
     auto tmpPath = path;
     tmpPath += ".tmp";
 
     int fd = ::open(tmpPath.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
-    if (fd < 0) return;
+    if (fd < 0) {
+        std::fprintf(stderr, "[DISK] put: open FAILED for %s errno=%d\n",
+                     tmpPath.c_str(), errno);
+        return;
+    }
 
     size_t written = 0;
     while (written < size) {
         ssize_t n = ::write(fd, data + written, size - written);
         if (n <= 0) {
+            std::fprintf(stderr, "[DISK] put: write FAILED for %s errno=%d\n",
+                         tmpPath.c_str(), errno);
             ::close(fd);
             ::unlink(tmpPath.c_str());
             return;
@@ -125,6 +135,8 @@ void DiskStore::put(
     // Atomic rename
     std::filesystem::rename(tmpPath, path, ec);
     if (ec) {
+        std::fprintf(stderr, "[DISK] put: rename FAILED %s -> %s: %s\n",
+                     tmpPath.c_str(), path.c_str(), ec.message().c_str());
         ::unlink(tmpPath.c_str());
     }
 }
