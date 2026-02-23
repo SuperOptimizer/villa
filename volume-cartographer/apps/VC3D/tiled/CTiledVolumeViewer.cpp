@@ -177,21 +177,28 @@ void CTiledVolumeViewer::OnVolumeChanged(std::shared_ptr<Volume> vol)
     _renderController->sliceCache().clear();
     _tileScene->resetMetadata();
 
+    // Remove old chunk-ready listener before switching volumes
+    if (_chunkCbId != 0 && _volume && _volume->tieredCache()) {
+        _volume->tieredCache()->removeChunkReadyListener(_chunkCbId);
+        _chunkCbId = 0;
+    }
+
     _volume = vol;
 
     // Reset pin progress tracking
     _pinTotal = 0;
     _pinReceived = 0;
     _pinLevel = -1;
+    _hadValidDataBounds = false;
 
     // Set up tiered chunk cache for progressive rendering
     if (_volume->numScales() >= 1) {
-        // Wire chunk-ready callback BEFORE pin to ensure no callbacks are missed
+        // Wire chunk-ready listener BEFORE pin to ensure no callbacks are missed
         auto* ctrl = _renderController;
         auto* viewer = this;
         int coarsestLevel = static_cast<int>(_volume->numScales()) - 1;
         auto* cache = _volume->tieredCache();
-        cache->setChunkReadyCallback(
+        _chunkCbId = cache->addChunkReadyListener(
             [ctrl, viewer, cache, coarsestLevel](const vc::cache::ChunkKey& key) {
                 QMetaObject::invokeMethod(ctrl, [ctrl, cache]() {
                     ctrl->markChunkArrived();
@@ -202,6 +209,16 @@ void CTiledVolumeViewer::OnVolumeChanged(std::shared_ptr<Volume> vol)
                     QMetaObject::invokeMethod(viewer, [viewer]() {
                         viewer->_pinReceived++;
                         viewer->updateStatusLabel();
+                    }, Qt::QueuedConnection);
+                }
+                // Check if data bounds just became available
+                if (!viewer->_hadValidDataBounds) {
+                    QMetaObject::invokeMethod(viewer, [viewer]() {
+                        if (!viewer->_hadValidDataBounds && viewer->_volume &&
+                            viewer->_volume->dataBounds().valid) {
+                            viewer->_hadValidDataBounds = true;
+                            viewer->onDataBoundsReady();
+                        }
                     }, Qt::QueuedConnection);
                 }
             });
@@ -226,12 +243,16 @@ void CTiledVolumeViewer::OnVolumeChanged(std::shared_ptr<Volume> vol)
             }
         }
         _volume->pinCoarsestLevel(!isRemote);
+
+        // Record whether data bounds are already valid (e.g. local volumes)
+        _hadValidDataBounds = _volume->dataBounds().valid;
     }
 
     // For remote volumes with no surface, create a default PlaneSurface
     // centered in the volume so the axis-aligned viewers can render.
     // The segmentation viewer should stay blank until a segment is loaded.
-    bool isAxisAligned = (_surfName == "xy plane" || _surfName == "xz plane" || _surfName == "yz plane");
+    bool isAxisAligned = (_surfName == "xy plane" || _surfName == "xz plane" || _surfName == "yz plane"
+                          || _surfName == "seg xz" || _surfName == "seg yz");
     if (!_surfWeak.lock() && _volume && isAxisAligned) {
         auto shape = _volume->shape();  // (z, y, x) at scale 0
         const auto& db = _volume->dataBounds();
@@ -245,8 +266,8 @@ void CTiledVolumeViewer::OnVolumeChanged(std::shared_ptr<Volume> vol)
         }
         cv::Vec3f normal;
         if (_surfName == "xy plane") normal = cv::Vec3f(0, 0, 1);
-        else if (_surfName == "xz plane") normal = cv::Vec3f(0, 1, 0);
-        else normal = cv::Vec3f(1, 0, 0);  // yz plane
+        else if (_surfName == "xz plane" || _surfName == "seg xz") normal = cv::Vec3f(0, 1, 0);
+        else normal = cv::Vec3f(1, 0, 0);  // yz plane / seg yz
         auto defaultSurf = std::make_shared<PlaneSurface>(center, normal);
         _defaultSurface = defaultSurf;
         _surfWeak = defaultSurf;
@@ -325,7 +346,8 @@ void CTiledVolumeViewer::onVolumeClosing()
 {
     if (_surfName == "segmentation") {
         onSurfaceChanged(_surfName, nullptr);
-    } else if (_surfName == "xy plane" || _surfName == "xz plane" || _surfName == "yz plane") {
+    } else if (_surfName == "xy plane" || _surfName == "xz plane" || _surfName == "yz plane"
+               || _surfName == "seg xz" || _surfName == "seg yz") {
         clearAllOverlayGroups();
         _tileScene->sceneCleared();
         _cursor = nullptr;
@@ -364,7 +386,8 @@ void CTiledVolumeViewer::updateContentMinScale()
 
     float contentW = 0, contentH = 0;
 
-    if (_volume && (_surfName == "xy plane" || _surfName == "xz plane" || _surfName == "yz plane")) {
+    if (_volume && (_surfName == "xy plane" || _surfName == "xz plane" || _surfName == "yz plane"
+                    || _surfName == "seg xz" || _surfName == "seg yz")) {
         auto [w, h, d] = _volume->shape();
         const auto& db = _volume->dataBounds();
         if (db.valid) {
@@ -375,10 +398,10 @@ void CTiledVolumeViewer::updateContentMinScale()
         if (_surfName == "xy plane") {
             contentW = static_cast<float>(w);
             contentH = static_cast<float>(h);
-        } else if (_surfName == "xz plane") {
+        } else if (_surfName == "xz plane" || _surfName == "seg xz") {
             contentW = static_cast<float>(w);
             contentH = static_cast<float>(d);
-        } else {
+        } else {  // yz plane / seg yz
             contentW = static_cast<float>(h);
             contentH = static_cast<float>(d);
         }
@@ -470,6 +493,49 @@ void CTiledVolumeViewer::centerViewport()
     if (!fGraphicsView || !_tileScene) return;
     QPointF scenePos = _tileScene->surfaceToScene(_camera.surfacePtr[0], _camera.surfacePtr[1]);
     fGraphicsView->centerOn(scenePos);
+}
+
+void CTiledVolumeViewer::onDataBoundsReady()
+{
+    if (!_volume) return;
+    const auto& db = _volume->dataBounds();
+    if (!db.valid) return;
+
+    // Only the "xy plane" viewer directly re-centers its PlaneSurface and
+    // updates the focus POI.  The POI change propagates through
+    // AxisAlignedSliceController to seg xz / seg yz, which receive new
+    // surfaces via onSurfaceChanged — no need to touch them here.
+    if (_surfName == "xy plane") {
+        auto surf = _surfWeak.lock();
+        auto* plane = dynamic_cast<PlaneSurface*>(surf.get());
+        if (plane) {
+            // Coordinate convention: Vec3f is (z, y, x)
+            cv::Vec3f center((db.minZ + db.maxZ) * 0.5f,
+                             (db.minY + db.maxY) * 0.5f,
+                             (db.minX + db.maxX) * 0.5f);
+            plane->setOrigin(center);
+        }
+
+        // Update focus POI — cascades to all axis-aligned viewers
+        POI* focus = _state->poi("focus");
+        if (focus) {
+            cv::Vec3f center((db.minZ + db.maxZ) * 0.5f,
+                             (db.minY + db.maxY) * 0.5f,
+                             (db.minX + db.maxX) * 0.5f);
+            focus->p = center;
+            _state->setPOI("focus", focus);
+        }
+    }
+
+    // Clear stale tiles and caches, then rebuild with new tight bounds
+    _renderController->cancelAll();
+    _renderController->sliceCache().clear();
+    _tileScene->clearAll();
+    updateContentMinScale();
+    rebuildContentGrid();
+    centerViewport();
+    _camera.invalidate();
+    submitRender();
 }
 
 QRectF CTiledVolumeViewer::viewportSceneRect() const

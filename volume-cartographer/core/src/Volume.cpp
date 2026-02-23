@@ -802,9 +802,16 @@ void Volume::computeDataBounds()
 
 const Volume::DataBounds& Volume::dataBounds() const
 {
-    std::call_once(boundsOnce_, [this]() {
-        const_cast<Volume*>(this)->computeDataBounds();
-    });
+    if (!boundsComputed_.load(std::memory_order_acquire)) {
+        std::lock_guard<std::mutex> lock(boundsMutex_);
+        if (!boundsComputed_.load(std::memory_order_relaxed)) {
+            const_cast<Volume*>(this)->computeDataBounds();
+            if (dataBounds_.valid) {
+                boundsComputed_.store(true, std::memory_order_release);
+            }
+            // If invalid, don't set flag — future calls will retry
+        }
+    }
     return dataBounds_;
 }
 

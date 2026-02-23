@@ -151,6 +151,14 @@ public:
     // Called from IOPool worker thread when a chunk becomes available.
     // Caller should bounce to main thread (e.g., via QMetaObject::invokeMethod).
     using ChunkReadyCallback = std::function<void(const ChunkKey&)>;
+    using ChunkReadyCallbackId = uint64_t;
+
+    // Register a chunk-ready listener. Returns an ID for removal.
+    // Multiple listeners can coexist; all are called on each notification.
+    [[nodiscard]] ChunkReadyCallbackId addChunkReadyListener(ChunkReadyCallback cb);
+    void removeChunkReadyListener(ChunkReadyCallbackId id);
+
+    // Legacy single-callback API (clears all listeners and adds one).
     void setChunkReadyCallback(ChunkReadyCallback cb);
 
     // Clear the chunk-arrived debounce flag. Call this after processing
@@ -262,7 +270,9 @@ private:
     void onIOComplete(const ChunkKey& key, std::vector<uint8_t>&& compressed);
 
     mutable std::mutex callbackMutex_;
-    ChunkReadyCallback chunkReadyCb_;
+    ChunkReadyCallback chunkReadyCb_;  // legacy single callback
+    std::vector<std::pair<ChunkReadyCallbackId, ChunkReadyCallback>> chunkReadyListeners_;
+    std::atomic<ChunkReadyCallbackId> nextListenerId_{1};
     std::atomic<bool> chunkArrivedFlag_{false};
 
     // --- Logical data bounds ---

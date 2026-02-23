@@ -18,6 +18,7 @@
 #include "vc/ui/VCCollection.hpp"
 #include "CVolumeViewerView.hpp"
 #include "vc/core/types/Volume.hpp"
+#include "vc/core/cache/TieredChunkCache.hpp"
 #include "vc/core/util/SurfacePatchIndex.hpp"
 #include "vc/core/util/Slicing.hpp"
 
@@ -263,6 +264,9 @@ private:
     // Compute content extent in surface parameter space and rebuild the tile grid
     void rebuildContentGrid();
 
+    // Called when data bounds become valid after async coarsest-level load
+    void onDataBoundsReady();
+
     // Center the viewport on the current surfacePtr
     void centerViewport();
 
@@ -360,6 +364,10 @@ private:
     int _pinTotal = 0;      // total chunks to pin at coarsest level
     int _pinReceived = 0;   // chunks received so far
     int _pinLevel = -1;     // pyramid level being pinned
+
+    // --- Chunk-ready listener tracking ---
+    vc::cache::TieredChunkCache::ChunkReadyCallbackId _chunkCbId = 0;
+    bool _hadValidDataBounds = false;
 
     // --- Zoom debounce ---
     float _renderScale = 0.5f;           // scale at which tiles were last rendered

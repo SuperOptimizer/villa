@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <atomic>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -184,7 +185,7 @@ public:
     // --- Data bounds ---
 
     // Return the bounding box of non-zero data (level-0 voxel coords).
-    // Computed lazily on first call via std::call_once.
+    // Computed lazily; retries if previous attempt found no data.
     [[nodiscard]] const DataBounds& dataBounds() const;
 
     // Scan the coarsest pyramid level to find non-zero data extent.
@@ -216,9 +217,10 @@ protected:
 
     void ensureTieredCache() const;
 
-    // Data bounds (lazy-computed)
+    // Data bounds (lazy-computed, retryable if invalid)
     mutable DataBounds dataBounds_;
-    mutable std::once_flag boundsOnce_;
+    mutable std::atomic<bool> boundsComputed_{false};
+    mutable std::mutex boundsMutex_;
 
     // Bounding box of coords in chunk index space (helper for allChunksCached/prefetch)
     struct ChunkBBox {

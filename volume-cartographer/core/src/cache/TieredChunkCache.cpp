@@ -137,14 +137,17 @@ TieredChunkCache::TieredChunkCache(
                 }
             }
 
-            // Notify caller (e.g., to trigger UI refresh).
-            // Use atomic flag to debounce: only fire the callback if it
-            // hasn't been fired since the last time the consumer cleared it.
+            // Notify listeners (e.g., to trigger UI refresh).
+            // Use atomic flag to debounce: only fire callbacks if they
+            // haven't been fired since the last time a consumer cleared it.
             // This batches rapid chunk arrivals into a single notification.
             if (!chunkArrivedFlag_.exchange(true, std::memory_order_acq_rel)) {
                 std::lock_guard cbLock(callbackMutex_);
                 if (chunkReadyCb_) {
                     chunkReadyCb_(key);
+                }
+                for (const auto& [id, cb] : chunkReadyListeners_) {
+                    cb(key);
                 }
             }
         });
@@ -507,9 +510,27 @@ bool TieredChunkCache::areAllCachedInRegion(
     return true;
 }
 
+TieredChunkCache::ChunkReadyCallbackId
+TieredChunkCache::addChunkReadyListener(ChunkReadyCallback cb)
+{
+    std::lock_guard lock(callbackMutex_);
+    auto id = nextListenerId_.fetch_add(1, std::memory_order_relaxed);
+    chunkReadyListeners_.emplace_back(id, std::move(cb));
+    return id;
+}
+
+void TieredChunkCache::removeChunkReadyListener(ChunkReadyCallbackId id)
+{
+    std::lock_guard lock(callbackMutex_);
+    auto it = std::remove_if(chunkReadyListeners_.begin(), chunkReadyListeners_.end(),
+        [id](const auto& p) { return p.first == id; });
+    chunkReadyListeners_.erase(it, chunkReadyListeners_.end());
+}
+
 void TieredChunkCache::setChunkReadyCallback(ChunkReadyCallback cb)
 {
     std::lock_guard lock(callbackMutex_);
+    chunkReadyListeners_.clear();
     chunkReadyCb_ = std::move(cb);
 }
 
@@ -818,6 +839,9 @@ void TieredChunkCache::onIOComplete(
         std::lock_guard cbLock(callbackMutex_);
         if (chunkReadyCb_) {
             chunkReadyCb_(key);
+        }
+        for (const auto& [id, cb] : chunkReadyListeners_) {
+            cb(key);
         }
     }
 }
