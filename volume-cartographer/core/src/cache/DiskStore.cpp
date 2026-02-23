@@ -36,15 +36,19 @@ std::filesystem::path DiskStore::chunkPath(
                     ? config_.root
                     : config_.root / volumeId;
     const auto& d = config_.delimiter;
-    std::string name = std::to_string(key.iz) + d +
-                       std::to_string(key.iy) + d +
-                       std::to_string(key.ix);
+    std::string name;
+    name.reserve(32);
+    name += std::to_string(key.iz);
+    name += d;
+    name += std::to_string(key.iy);
+    name += d;
+    name += std::to_string(key.ix);
     return base / std::to_string(key.level) / name;
 }
 
 size_t DiskStore::lockIndex(
     const std::string& volumeId,
-    const ChunkKey& key) const
+    const ChunkKey& key) const noexcept
 {
     size_t h = std::hash<std::string>()(volumeId);
     h ^= ChunkKeyHash()(key);

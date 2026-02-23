@@ -31,9 +31,6 @@ Volume::Volume(std::filesystem::path path) : path_(std::move(path))
     _height = metadata_["height"].get<int>();
     _slices = metadata_["slices"].get<int>();
 
-    std::vector<std::mutex> init_mutexes(_slices);
-
-
     zarrOpen();
 }
 
@@ -54,7 +51,7 @@ Volume::Volume(std::filesystem::path path, std::string uuid, std::string name)
     zarrOpen();
 }
 
-Volume::~Volume() = default;
+Volume::~Volume() noexcept = default;
 
 void Volume::loadMetadata()
 {
@@ -78,12 +75,12 @@ void Volume::loadMetadata()
     vc::json::require_fields(metadata_, {"uuid", "width", "height", "slices"}, metaPath.string());
 }
 
-std::string Volume::id() const
+std::string Volume::id() const noexcept
 {
     return metadata_["uuid"].get<std::string>();
 }
 
-std::string Volume::name() const
+std::string Volume::name() const noexcept
 {
     return metadata_["name"].get<std::string>();
 }
@@ -201,11 +198,11 @@ std::shared_ptr<Volume> Volume::NewFromUrl(
     return vol;
 }
 
-int Volume::sliceWidth() const { return _width; }
-int Volume::sliceHeight() const { return _height; }
-int Volume::numSlices() const { return _slices; }
-std::array<int, 3> Volume::shape() const { return {_width, _height, _slices}; }
-double Volume::voxelSize() const
+int Volume::sliceWidth() const noexcept { return _width; }
+int Volume::sliceHeight() const noexcept { return _height; }
+int Volume::numSlices() const noexcept { return _slices; }
+std::array<int, 3> Volume::shape() const noexcept { return {_width, _height, _slices}; }
+double Volume::voxelSize() const noexcept
 {
     return metadata_["voxelsize"].get<double>();
 }
@@ -217,7 +214,7 @@ vc::VcDataset *Volume::zarrDataset(int level) const {
     return zarrDs_[level].get();
 }
 
-size_t Volume::numScales() const {
+size_t Volume::numScales() const noexcept {
     return zarrDs_.size();
 }
 
@@ -295,10 +292,10 @@ std::unique_ptr<vc::cache::TieredChunkCache> Volume::createTieredCache(
 
 void Volume::ensureTieredCache() const
 {
-    if (!tieredCache_) {
+    std::call_once(cacheOnce_, [this]() {
         auto* self = const_cast<Volume*>(this);
         tieredCache_ = self->createTieredCache(self->pendingDiskStore_);
-    }
+    });
 }
 
 vc::cache::TieredChunkCache* Volume::tieredCache()
@@ -391,13 +388,16 @@ int Volume::sampleBestEffort(cv::Mat_<uint8_t>& out,
         }
     }
 
+    // No level had all chunks cached.  Fall back to a blocking read at the
+    // coarsest level (which is pinned hot in steady state, so this only blocks
+    // during initial loading).  This matches sampleCompositeBestEffort behavior.
     int last = std::max(0, nScales - 1);
-    static std::once_flag allMissWarn;
-    std::call_once(allMissWarn, [last]() {
-        fprintf(stderr, "[TILED] sampleBestEffort: ALL LEVELS MISS, returning empty (coarsest=%d)\n", last);
-    });
-    out = cv::Mat_<uint8_t>();
-    prefetchChunks(coords, level);
+    auto scaled = scaleCoords(coords, last);
+    readInterpolated3D(out, tieredCache(), last, scaled, params.method);
+    if (last > level)
+        prefetchChunks(coords, level);
+    if (!out.empty())
+        applyOptionalPostProcess(out, params);
     return last;
 }
 

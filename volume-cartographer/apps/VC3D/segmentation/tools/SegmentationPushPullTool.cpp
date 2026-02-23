@@ -6,7 +6,7 @@
 #include "SegmentationEditManager.hpp"
 #include "../SegmentationWidget.hpp"
 #include "../../overlays/SegmentationOverlayController.hpp"
-#include "../../CSurfaceCollection.hpp"
+#include "../../CState.hpp"
 
 #include "vc/core/types/Volume.hpp"
 #include "vc/core/util/Surface.hpp"
@@ -372,12 +372,12 @@ SegmentationPushPullTool::SegmentationPushPullTool(SegmentationModule& module,
                                                    SegmentationEditManager* editManager,
                                                    SegmentationWidget* widget,
                                                    SegmentationOverlayController* overlay,
-                                                   CSurfaceCollection* surfaces)
+                                                   CState* state)
     : _module(module)
     , _editManager(editManager)
     , _widget(widget)
     , _overlay(overlay)
-    , _surfaces(surfaces)
+    , _state(state)
 {
     ensureTimer();
 }
@@ -385,12 +385,12 @@ SegmentationPushPullTool::SegmentationPushPullTool(SegmentationModule& module,
 void SegmentationPushPullTool::setDependencies(SegmentationEditManager* editManager,
                                                SegmentationWidget* widget,
                                                SegmentationOverlayController* overlay,
-                                               CSurfaceCollection* surfaces)
+                                               CState* state)
 {
     _editManager = editManager;
     _widget = widget;
     _overlay = overlay;
-    _surfaces = surfaces;
+    _state = state;
 }
 
 void SegmentationPushPullTool::setStepMultiplier(float multiplier)
@@ -450,7 +450,7 @@ bool SegmentationPushPullTool::start(int direction, std::optional<bool> alphaOve
 
     ensureTimer();
 
-    if (_state.active && _state.direction == direction) {
+    if (_ppState.active && _ppState.direction == direction) {
         if (_timer && !_timer->isActive()) {
             _timer->start();
         }
@@ -471,8 +471,8 @@ bool SegmentationPushPullTool::start(int direction, std::optional<bool> alphaOve
     _activeAlphaEnabled = alphaOverride.value_or(false);
     _alphaOverrideActive = alphaOverride.has_value();
 
-    _state.active = true;
-    _state.direction = direction;
+    _ppState.active = true;
+    _ppState.direction = direction;
     _undoCaptured = false;
 
     // Reset cached position for new operation
@@ -497,10 +497,10 @@ bool SegmentationPushPullTool::start(int direction, std::optional<bool> alphaOve
 
 void SegmentationPushPullTool::stop(int direction)
 {
-    if (!_state.active) {
+    if (!_ppState.active) {
         return;
     }
-    if (direction != 0 && direction != _state.direction) {
+    if (direction != 0 && direction != _ppState.direction) {
         return;
     }
     stopAll();
@@ -508,9 +508,9 @@ void SegmentationPushPullTool::stop(int direction)
 
 void SegmentationPushPullTool::stopAll()
 {
-    const bool wasActive = _state.active;
-    _state.active = false;
-    _state.direction = 0;
+    const bool wasActive = _ppState.active;
+    _ppState.active = false;
+    _ppState.direction = 0;
     if (_timer && _timer->isActive()) {
         _timer->stop();
     }
@@ -527,7 +527,7 @@ void SegmentationPushPullTool::stopAll()
     }
 
     // Finalize the edits and trigger final surface update
-    if (wasActive && _editManager && _editManager->hasSession() && _surfaces) {
+    if (wasActive && _editManager && _editManager->hasSession() && _state) {
         // Capture delta for undo before applyPreview() clears edited vertices
         _module.captureUndoDelta();
 
@@ -546,7 +546,7 @@ void SegmentationPushPullTool::stopAll()
         }
 
         _editManager->applyPreview();
-        _surfaces->setSurface("segmentation", _editManager->previewSurface(), false, true);
+        _state->setSurface("segmentation", _editManager->previewSurface(), false, true);
         _module.emitPendingChanges();
     }
 
@@ -560,7 +560,7 @@ bool SegmentationPushPullTool::applyStep()
 
 bool SegmentationPushPullTool::applyStepInternal()
 {
-    if (!_state.active || !_editManager || !_editManager->hasSession()) {
+    if (!_ppState.active || !_editManager || !_editManager->hasSession()) {
         qCWarning(lcSegPushPull) << "Push/pull aborted: tool inactive or no active editing session.";
         return false;
     }
@@ -673,7 +673,7 @@ bool SegmentationPushPullTool::applyStepInternal()
                 bool sampleUnavailable = false;
                 auto sampleTarget = computeAlphaTarget(baseWorld,
                                  sampleNormal,
-                                 _state.direction,
+                                 _ppState.direction,
                                  baseSurface.get(),
                                  hover.viewer,
                                  &sampleUnavailable);
@@ -746,7 +746,7 @@ bool SegmentationPushPullTool::applyStepInternal()
         bool alphaUnavailable = false;
         auto alphaTarget = computeAlphaTarget(centerWorld,
                           normal,
-                          _state.direction,
+                          _ppState.direction,
                           baseSurface.get(),
                           hover.viewer,
                           &alphaUnavailable);
@@ -769,7 +769,7 @@ bool SegmentationPushPullTool::applyStepInternal()
             logFailure("Push/pull aborted: computed step size non-positive");
             return false;
         }
-        targetWorld = centerWorld + normal * (static_cast<float>(_state.direction) * stepWorld);
+        targetWorld = centerWorld + normal * (static_cast<float>(_ppState.direction) * stepWorld);
     }
 
     if (!usedAlphaPushPullPerVertex) {
@@ -788,8 +788,8 @@ bool SegmentationPushPullTool::applyStepInternal()
     _editManager->refreshActiveDragBasePositions();
 
     // Trigger visual refresh
-    if (_surfaces) {
-        _surfaces->setSurface("segmentation", _editManager->previewSurface(), false, true);
+    if (_state) {
+        _state->setSurface("segmentation", _editManager->previewSurface(), false, true);
     }
 
     _module.refreshOverlay();

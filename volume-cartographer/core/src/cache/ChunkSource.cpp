@@ -90,9 +90,13 @@ std::filesystem::path FileSystemChunkSource::chunkPath(
     const ChunkKey& key) const
 {
     // zarr v2: <root>/<level>/<iz>.<iy>.<ix>
-    std::string name = std::to_string(key.iz) + delimiter_ +
-                       std::to_string(key.iy) + delimiter_ +
-                       std::to_string(key.ix);
+    std::string name;
+    name.reserve(32);
+    name += std::to_string(key.iz);
+    name += delimiter_;
+    name += std::to_string(key.iy);
+    name += delimiter_;
+    name += std::to_string(key.ix);
     return root_ / std::to_string(key.level) / name;
 }
 
@@ -210,9 +214,18 @@ HttpChunkSource::~HttpChunkSource() = default;
 
 std::string HttpChunkSource::chunkUrl(const ChunkKey& key) const
 {
-    return baseUrl_ + "/" + std::to_string(key.level) + "/" +
-           std::to_string(key.iz) + delimiter_ + std::to_string(key.iy) +
-           delimiter_ + std::to_string(key.ix);
+    std::string url;
+    url.reserve(baseUrl_.size() + 32);
+    url += baseUrl_;
+    url += '/';
+    url += std::to_string(key.level);
+    url += '/';
+    url += std::to_string(key.iz);
+    url += delimiter_;
+    url += std::to_string(key.iy);
+    url += delimiter_;
+    url += std::to_string(key.ix);
+    return url;
 }
 
 std::vector<uint8_t> HttpChunkSource::fetch(const ChunkKey& key)

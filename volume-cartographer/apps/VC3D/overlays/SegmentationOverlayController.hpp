@@ -11,7 +11,7 @@
 
 #include <opencv2/core.hpp>
 
-class CSurfaceCollection;
+class CState;
 class SegmentationEditManager;
 class Surface;
 class QuadSurface;
@@ -84,7 +84,7 @@ public:
         bool operator!=(const State& rhs) const { return !(*this == rhs); }
     };
 
-    explicit SegmentationOverlayController(CSurfaceCollection* surfaces, QObject* parent = nullptr);
+    explicit SegmentationOverlayController(CState* state, QObject* parent = nullptr);
 
     void setEditingEnabled(bool enabled);
     void setEditManager(SegmentationEditManager* manager);
@@ -181,7 +181,7 @@ private:
     ViewerOverlayControllerBase::PathPrimitive buildMaskPrimitive(const State& state) const;
     bool shouldShowMask(const State& state) const;
 
-    CSurfaceCollection* _surfaces{nullptr};
+    CState* _state{nullptr};
     SegmentationEditManager* _editManager{nullptr};
     ViewerManager* _viewerManager{nullptr};
     bool _editingEnabled{false};

@@ -1,6 +1,6 @@
 #include "RawPointsOverlayController.hpp"
 
-#include "../CSurfaceCollection.hpp"
+#include "../CState.hpp"
 #include "../tiled/CTiledVolumeViewer.hpp"
 #include "../VolumeViewerBase.hpp"
 
@@ -24,14 +24,14 @@ bool isValidPoint(const cv::Vec3f& p)
 
 } // namespace
 
-RawPointsOverlayController::RawPointsOverlayController(CSurfaceCollection* surfaces, QObject* parent)
+RawPointsOverlayController::RawPointsOverlayController(CState* state, QObject* parent)
     : ViewerOverlayControllerBase(kOverlayGroupRawPoints, parent)
-    , _surfaces(surfaces)
+    , _state(state)
 {
-    if (_surfaces) {
-        connect(_surfaces, &CSurfaceCollection::sendSurfaceChanged,
+    if (_state) {
+        connect(_state, &CState::surfaceChanged,
                 this, &RawPointsOverlayController::onSurfaceChanged);
-        connect(_surfaces, &CSurfaceCollection::sendPOIChanged,
+        connect(_state, &CState::poiChanged,
                 this, &RawPointsOverlayController::onPoiChanged);
     }
 }
@@ -120,17 +120,17 @@ void RawPointsOverlayController::setPointOpacity(float opacity)
 
 bool RawPointsOverlayController::isOverlayEnabledFor(VolumeViewerBase* viewer) const
 {
-    return _enabled && _surfaces && viewer;
+    return _enabled && _state && viewer;
 }
 
 void RawPointsOverlayController::collectPrimitives(VolumeViewerBase* viewer, OverlayBuilder& builder)
 {
-    if (!_enabled || !_surfaces || !viewer) {
+    if (!_enabled || !_state || !viewer) {
         return;
     }
 
     // Get the segmentation surface
-    auto surfacePtr = _surfaces->surface("segmentation");
+    auto surfacePtr = _state->surface("segmentation");
     auto* quadSurface = dynamic_cast<QuadSurface*>(surfacePtr.get());
     if (!quadSurface) {
         return;
@@ -165,11 +165,11 @@ void RawPointsOverlayController::onPoiChanged(std::string name, POI* /*poi*/)
 
 std::optional<std::pair<int, int>> RawPointsOverlayController::focusGridPosition(QuadSurface* surface) const
 {
-    if (!_surfaces || !surface) {
+    if (!_state || !surface) {
         return std::nullopt;
     }
 
-    POI* focusPoi = _surfaces->poi("focus");
+    POI* focusPoi = _state->poi("focus");
     if (!focusPoi) {
         return std::nullopt;
     }

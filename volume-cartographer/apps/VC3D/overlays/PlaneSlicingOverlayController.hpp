@@ -8,14 +8,14 @@
 #include <string>
 #include <unordered_map>
 
-class CSurfaceCollection;
+class CState;
 
 class PlaneSlicingOverlayController : public ViewerOverlayControllerBase
 {
     Q_OBJECT
 
 public:
-    explicit PlaneSlicingOverlayController(CSurfaceCollection* surfaces, QObject* parent = nullptr);
+    explicit PlaneSlicingOverlayController(CState* state, QObject* parent = nullptr);
 
     void setAxisAlignedEnabled(bool enabled);
     void setRotationSetter(std::function<void(const std::string&, float)> setter);
@@ -78,7 +78,7 @@ private:
 
     static float normalizeDegrees(float degrees);
 
-    CSurfaceCollection* _surfaces{nullptr};
+    CState* _state{nullptr};
     bool _axisAlignedEnabled{false};
     std::function<void(const std::string&, float)> _rotationSetter;
     std::function<void()> _rotationFinishedCallback;

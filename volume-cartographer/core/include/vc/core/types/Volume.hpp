@@ -46,7 +46,7 @@ public:
 
     Volume(std::filesystem::path path, std::string uuid, std::string name);
 
-    ~Volume();
+    ~Volume() noexcept;
 
 
     static std::shared_ptr<Volume> New(std::filesystem::path path);
@@ -63,32 +63,32 @@ public:
         const std::filesystem::path& cacheRoot = {},
         const vc::cache::HttpAuth& auth = {});
 
-    [[nodiscard]] bool isRemote() const { return isRemote_; }
-    [[nodiscard]] std::string id() const;
-    [[nodiscard]] std::string name() const;
+    [[nodiscard]] bool isRemote() const noexcept { return isRemote_; }
+    [[nodiscard]] std::string id() const noexcept;
+    [[nodiscard]] std::string name() const noexcept;
     void setName(const std::string& n);
-    [[nodiscard]] std::filesystem::path path() const { return path_; }
+    [[nodiscard]] std::filesystem::path path() const noexcept { return path_; }
     void saveMetadata();
 
-    [[nodiscard]] int sliceWidth() const;
-    [[nodiscard]] int sliceHeight() const;
-    [[nodiscard]] int numSlices() const;
-    [[nodiscard]] std::array<int, 3> shape() const;
-    [[nodiscard]] double voxelSize() const;
+    [[nodiscard]] int sliceWidth() const noexcept;
+    [[nodiscard]] int sliceHeight() const noexcept;
+    [[nodiscard]] int numSlices() const noexcept;
+    [[nodiscard]] std::array<int, 3> shape() const noexcept;
+    [[nodiscard]] double voxelSize() const noexcept;
 
     [[nodiscard]] vc::VcDataset *zarrDataset(int level = 0) const;
-    [[nodiscard]] size_t numScales() const;
+    [[nodiscard]] size_t numScales() const noexcept;
 
     // Create a TieredChunkCache backed by this volume's zarr data.
     // diskStore: optional shared disk cache (nullptr to disable cold tier).
-    std::unique_ptr<vc::cache::TieredChunkCache> createTieredCache(
+    [[nodiscard]] std::unique_ptr<vc::cache::TieredChunkCache> createTieredCache(
         std::shared_ptr<vc::cache::DiskStore> diskStore = nullptr) const;
 
     // --- Cache management ---
 
     // Lazily create and return the tiered chunk cache for this volume.
     // Thread-safe: creates on first call, returns same cache thereafter.
-    vc::cache::TieredChunkCache* tieredCache();
+    [[nodiscard]] vc::cache::TieredChunkCache* tieredCache();
 
     // Set cache budget (must be called before first tieredCache() access).
     void setCacheBudget(size_t hotBytes, size_t warmBytes = 0);
@@ -164,7 +164,7 @@ public:
                    const vc::SampleParams& params);
 
     // Compute volume gradients at native surface resolution.
-    cv::Mat_<cv::Vec3f> computeGradients(const cv::Mat_<cv::Vec3f>& rawPoints,
+    [[nodiscard]] cv::Mat_<cv::Vec3f> computeGradients(const cv::Mat_<cv::Vec3f>& rawPoints,
                                          float dsScale, int level = 0);
 
     // Pin the coarsest pyramid level in the hot tier (never evicted).
@@ -185,15 +185,15 @@ public:
 
     // Return the bounding box of non-zero data (level-0 voxel coords).
     // Computed lazily on first call via std::call_once.
-    const DataBounds& dataBounds() const;
+    [[nodiscard]] const DataBounds& dataBounds() const;
 
     // Scan the coarsest pyramid level to find non-zero data extent.
     void computeDataBounds();
 
     // --- Query ---
-    bool allChunksCached(const cv::Mat_<cv::Vec3f>& coords, int level) const;
+    [[nodiscard]] bool allChunksCached(const cv::Mat_<cv::Vec3f>& coords, int level) const;
 
-    static bool checkDir(std::filesystem::path path);
+    [[nodiscard]] static bool checkDir(std::filesystem::path path);
 
 protected:
     std::filesystem::path path_;
@@ -209,6 +209,7 @@ protected:
 
     // Cache ownership
     mutable std::unique_ptr<vc::cache::TieredChunkCache> tieredCache_;
+    mutable std::once_flag cacheOnce_;
     size_t cacheBudgetHot_ = 8ULL << 30;   // 8 GB default
     size_t cacheBudgetWarm_ = 2ULL << 30;   // 2 GB default
     std::shared_ptr<vc::cache::DiskStore> pendingDiskStore_;

@@ -19,19 +19,19 @@ public:
     virtual ~ChunkSource() = default;
 
     // Fetch raw compressed chunk bytes. Returns empty vector if not found.
-    virtual std::vector<uint8_t> fetch(const ChunkKey& key) = 0;
+    [[nodiscard]] virtual std::vector<uint8_t> fetch(const ChunkKey& key) = 0;
 
     // Check if a chunk exists at the source (cheaper than fetch for some sources).
-    virtual bool exists(const ChunkKey& key) const = 0;
+    [[nodiscard]] virtual bool exists(const ChunkKey& key) const = 0;
 
     // Number of pyramid levels available.
-    virtual int numLevels() const = 0;
+    [[nodiscard]] virtual int numLevels() const = 0;
 
     // Chunk shape at a given level, in {z, y, x} order.
-    virtual std::array<int, 3> chunkShape(int level) const = 0;
+    [[nodiscard]] virtual std::array<int, 3> chunkShape(int level) const = 0;
 
     // Full dataset shape at a given level, in {z, y, x} order.
-    virtual std::array<int, 3> levelShape(int level) const = 0;
+    [[nodiscard]] virtual std::array<int, 3> levelShape(int level) const = 0;
 };
 
 // Reads compressed chunks from a local zarr v2 directory.
@@ -56,11 +56,11 @@ public:
         const std::string& delimiter,
         std::vector<LevelMeta> levels);
 
-    std::vector<uint8_t> fetch(const ChunkKey& key) override;
-    bool exists(const ChunkKey& key) const override;
-    int numLevels() const override;
-    std::array<int, 3> chunkShape(int level) const override;
-    std::array<int, 3> levelShape(int level) const override;
+    [[nodiscard]] std::vector<uint8_t> fetch(const ChunkKey& key) override;
+    [[nodiscard]] bool exists(const ChunkKey& key) const override;
+    [[nodiscard]] int numLevels() const override;
+    [[nodiscard]] std::array<int, 3> chunkShape(int level) const override;
+    [[nodiscard]] std::array<int, 3> levelShape(int level) const override;
 
 private:
     std::filesystem::path chunkPath(const ChunkKey& key) const;
@@ -89,11 +89,11 @@ public:
 
     ~HttpChunkSource() override;
 
-    std::vector<uint8_t> fetch(const ChunkKey& key) override;
-    bool exists(const ChunkKey& key) const override;
-    int numLevels() const override;
-    std::array<int, 3> chunkShape(int level) const override;
-    std::array<int, 3> levelShape(int level) const override;
+    [[nodiscard]] std::vector<uint8_t> fetch(const ChunkKey& key) override;
+    [[nodiscard]] bool exists(const ChunkKey& key) const override;
+    [[nodiscard]] int numLevels() const override;
+    [[nodiscard]] std::array<int, 3> chunkShape(int level) const override;
+    [[nodiscard]] std::array<int, 3> levelShape(int level) const override;
 
 private:
     std::string chunkUrl(const ChunkKey& key) const;

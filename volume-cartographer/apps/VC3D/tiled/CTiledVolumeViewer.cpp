@@ -3,7 +3,7 @@
 #include "ViewerManager.hpp"
 #include "VCSettings.hpp"
 #include "VolumeViewerCmaps.hpp"
-#include "CSurfaceCollection.hpp"
+#include "../CState.hpp"
 #include "vc/ui/VCCollection.hpp"
 #include "vc/core/types/VolumePkg.hpp"
 #include "vc/core/util/Surface.hpp"
@@ -41,11 +41,11 @@ constexpr auto COLOR_CURSOR = Qt::cyan;
 // Construction / destruction
 // ============================================================================
 
-CTiledVolumeViewer::CTiledVolumeViewer(CSurfaceCollection* col,
+CTiledVolumeViewer::CTiledVolumeViewer(CState* state,
                                        ViewerManager* manager,
                                        QWidget* parent)
     : QWidget(parent)
-    , _surfCol(col)
+    , _state(state)
     , _viewerManager(manager)
 {
     _compositeSettings.params.method = "max";
@@ -147,14 +147,14 @@ void CTiledVolumeViewer::setSurface(const std::string& name)
     _surfName = name;
     // Don't reset _surfWeak here — onSurfaceChanged() will update it
     markActiveSegmentationDirty();
-    onSurfaceChanged(name, _surfCol->surface(name));
+    onSurfaceChanged(name, _state->surface(name));
 }
 
 void CTiledVolumeViewer::setIntersects(const std::set<std::string>& set) { _intersectTgts = set; }
 
 Surface* CTiledVolumeViewer::currentSurface() const
 {
-    if (!_surfCol) {
+    if (!_state) {
         // NOTE: The returned raw pointer is only valid as long as the caller
         // (or another shared_ptr elsewhere) keeps the Surface alive.
         // _defaultSurface holds a shared_ptr that keeps the standalone
@@ -163,7 +163,7 @@ Surface* CTiledVolumeViewer::currentSurface() const
         auto shared = _surfWeak.lock();
         return shared ? shared.get() : nullptr;
     }
-    return _surfCol->surfaceRaw(_surfName);
+    return _state->surfaceRaw(_surfName);
 }
 
 // ============================================================================
@@ -580,8 +580,8 @@ void CTiledVolumeViewer::onZoom(int steps, QPointF scene_point, Qt::KeyboardModi
         int stepSize = _viewerManager ? _viewerManager->sliceStepSize() : 1;
         int adjustedSteps = steps * stepSize;
 
-        if (_surfName != "segmentation" && plane && _surfCol) {
-            POI* focus = _surfCol->poi("focus");
+        if (_surfName != "segmentation" && plane && _state) {
+            POI* focus = _state->poi("focus");
             if (!focus) {
                 focus = new POI;
                 focus->p = plane->origin();
@@ -612,7 +612,7 @@ void CTiledVolumeViewer::onZoom(int steps, QPointF scene_point, Qt::KeyboardModi
             focus->p = newPosition;
             if (length > 0.0) focus->n = normal;
             focus->surfaceId = _surfName;
-            _surfCol->setPOI("focus", focus);
+            _state->setPOI("focus", focus);
         } else {
             setSliceOffset(static_cast<float>(adjustedSteps));
         }
@@ -1022,7 +1022,7 @@ bool CTiledVolumeViewer::sceneToVolumeHelper(cv::Vec3f& p, cv::Vec3f& n,
 void CTiledVolumeViewer::onCursorMove(QPointF scene_loc)
 {
     auto surf = _surfWeak.lock();
-    if (!surf || !_surfCol) return;
+    if (!surf || !_state) return;
 
     // Handle panning: if middle/right button is down, pan instead
     if (_isPanning) {
@@ -1044,12 +1044,12 @@ void CTiledVolumeViewer::onCursorMove(QPointF scene_loc)
             _cursor->setPos(scene_loc);
         }
 
-        POI* cursor = _surfCol->poi("cursor");
+        POI* cursor = _state->poi("cursor");
         if (!cursor) cursor = new POI;
         cursor->p = p;
         cursor->n = n;
         cursor->surfaceId = _surfName;
-        _surfCol->setPOI("cursor", cursor);
+        _state->setPOI("cursor", cursor);
     }
 
     // Point highlight logic
@@ -1212,7 +1212,7 @@ void CTiledVolumeViewer::onPOIChanged(std::string name, POI* poi)
             if (poi->p == plane->origin()) return;
             plane->setOrigin(poi->p);
             emit overlaysUpdated();
-            _surfCol->setSurface(_surfName, surf);
+            _state->setSurface(_surfName, surf);
         } else if (auto* quad = dynamic_cast<QuadSurface*>(surf.get())) {
             cv::Vec3f ptr(0, 0, 0);
             auto* patchIndex = _viewerManager ? _viewerManager->surfacePatchIndex() : nullptr;
@@ -1593,7 +1593,7 @@ void CTiledVolumeViewer::onDrawingModeActive(bool active, float brushSize, bool 
         delete _cursor;
         _cursor = nullptr;
     }
-    POI* cursor = _surfCol->poi("cursor");
+    POI* cursor = _state->poi("cursor");
     if (cursor) onPOIChanged("cursor", cursor);
 }
 
@@ -1614,8 +1614,8 @@ const CTiledVolumeViewer::ActiveSegmentationHandle& CTiledVolumeViewer::activeSe
         (_surfName == "seg yz"   ? QColor(COLOR_SEG_YZ)
          : _surfName == "seg xz" ? QColor(COLOR_SEG_XZ)
                                   : QColor(COLOR_SEG_XY));
-    if (_surfCol) {
-        auto surfHolder = _surfCol->surface(handle.slotName);
+    if (_state) {
+        auto surfHolder = _state->surface(handle.slotName);
         handle.surface = dynamic_cast<QuadSurface*>(surfHolder.get());
     }
     if (!handle.surface) handle.slotName.clear();

@@ -49,7 +49,8 @@ auto main(int argc, char* argv[]) -> int
     if (auto fn = reinterpret_cast<void(*)()>(dlsym(RTLD_DEFAULT, "blas_shutdown")))
         fn();
 
-    cv::setNumThreads(1); //todo: also set to 1?
+    omp_set_num_threads(1);  // All parallelism is explicit (QThreadPool, IOPool); OMP threads just spin-wait
+    cv::setNumThreads(1);
     blosc_set_nthreads(1);  // We parallelize at tile level; blosc internal threads just spin-wait
 
     // Workaround for Qt dock widget issues on Wayland (QTBUG-87332)

@@ -19,30 +19,30 @@ struct ChunkData {
     std::array<int, 3> shape{0, 0, 0};  // {z, y, x}
     int elementSize = 1;                 // bytes per element (1=u8, 2=u16, 4=f32)
 
-    size_t numElements() const
+    [[nodiscard]] size_t numElements() const noexcept
     {
         return static_cast<size_t>(shape[0]) * shape[1] * shape[2];
     }
 
-    size_t totalBytes() const { return bytes.size(); }
+    [[nodiscard]] size_t totalBytes() const noexcept { return bytes.size(); }
 
     template <typename T>
-    T* data()
+    [[nodiscard]] T* data() noexcept
     {
         return reinterpret_cast<T*>(bytes.data());
     }
 
     template <typename T>
-    const T* data() const
+    [[nodiscard]] const T* data() const noexcept
     {
         return reinterpret_cast<const T*>(bytes.data());
     }
 
     // Stride helpers for (z, y, x) indexing into the flat buffer.
     // Physical layout is row-major: z varies slowest, x varies fastest.
-    int strideZ() const { return shape[1] * shape[2]; }
-    int strideY() const { return shape[2]; }
-    int strideX() const { return 1; }
+    [[nodiscard]] int strideZ() const noexcept { return shape[1] * shape[2]; }
+    [[nodiscard]] int strideY() const noexcept { return shape[2]; }
+    [[nodiscard]] int strideX() const noexcept { return 1; }
 };
 
 using ChunkDataPtr = std::shared_ptr<ChunkData>;
@@ -50,7 +50,6 @@ using ChunkDataPtr = std::shared_ptr<ChunkData>;
 // Compressed chunk bytes (warm tier / on-disk storage).
 struct CompressedChunk {
     std::vector<uint8_t> data;
-    size_t decompressedSize = 0;  // expected size after decompression (for pre-alloc)
 };
 
 // Callback signature for decompressing raw bytes into ChunkData.

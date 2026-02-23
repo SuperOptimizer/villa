@@ -2,7 +2,7 @@
 
 #include "../tiled/CTiledVolumeViewer.hpp"
 #include "../VolumeViewerBase.hpp"
-#include "../CSurfaceCollection.hpp"
+#include "../CState.hpp"
 #include "vc/core/util/Surface.hpp"
 
 #include <QCursor>
@@ -27,10 +27,10 @@ constexpr float kHandleVolumeOffset = 200.0f;
 constexpr float kMinDragDegrees = 0.25f;
 } // namespace
 
-PlaneSlicingOverlayController::PlaneSlicingOverlayController(CSurfaceCollection* surfaces,
+PlaneSlicingOverlayController::PlaneSlicingOverlayController(CState* state,
                                                              QObject* parent)
     : ViewerOverlayControllerBase(kOverlayGroup, parent)
-    , _surfaces(surfaces)
+    , _state(state)
 {
 }
 
@@ -156,7 +156,7 @@ void PlaneSlicingOverlayController::updateViewerState(VolumeViewerBase* viewer,
 void PlaneSlicingOverlayController::collectPrimitives(VolumeViewerBase* viewer,
                                                       OverlayBuilder& builder)
 {
-    if (!viewer || !_surfaces) {
+    if (!viewer || !_state) {
         return;
     }
 
@@ -169,7 +169,7 @@ void PlaneSlicingOverlayController::collectPrimitives(VolumeViewerBase* viewer,
     ViewerState& state = ensureViewerState(viewer);
     installInteractions(viewer, state);
 
-    auto* focusPoi = _surfaces->poi("focus");
+    auto* focusPoi = _state->poi("focus");
     if (!focusPoi) {
         clearViewerState(viewer);
         return;
@@ -187,7 +187,7 @@ void PlaneSlicingOverlayController::collectPrimitives(VolumeViewerBase* viewer,
     };
 
     for (const auto& def : planeDefs) {
-        auto planeHolder = _surfaces->surface(def.name);  // Keep surface alive during this iteration
+        auto planeHolder = _state->surface(def.name);  // Keep surface alive during this iteration
         auto* plane = dynamic_cast<PlaneSurface*>(planeHolder.get());
         if (!plane) {
             continue;
@@ -338,7 +338,7 @@ void PlaneSlicingOverlayController::handleMouseMove(VolumeViewerBase* viewer,
             return;
         }
 
-        auto* focusPoi = _surfaces ? _surfaces->poi("focus") : nullptr;
+        auto* focusPoi = _state ? _state->poi("focus") : nullptr;
         if (!focusPoi || !_rotationSetter) {
             return;
         }
@@ -361,7 +361,7 @@ void PlaneSlicingOverlayController::handleMouseMove(VolumeViewerBase* viewer,
         float candidate = normalizeDegrees(angle - visual.baseAngleDegrees);
 
         float currentAngle = 0.0f;
-        auto planeSurfaceHolder = _surfaces->surface(_activeDrag.planeName);  // Keep surface alive
+        auto planeSurfaceHolder = _state->surface(_activeDrag.planeName);  // Keep surface alive
         if (auto* planeSurface = dynamic_cast<PlaneSurface*>(planeSurfaceHolder.get())) {
             cv::Vec3f currentNormal = planeSurface->normal({}, {});
             cv::Vec3f currentDir3D = currentNormal.cross(cv::Vec3f(0.0f, 0.0f, 1.0f));

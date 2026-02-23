@@ -5,7 +5,7 @@
 #include <functional>
 #include <vector>
 
-class CSurfaceCollection;
+class CState;
 
 class VectorOverlayController : public ViewerOverlayControllerBase
 {
@@ -14,7 +14,7 @@ class VectorOverlayController : public ViewerOverlayControllerBase
 public:
     using Provider = std::function<void(VolumeViewerBase*, OverlayBuilder&)>;
 
-    explicit VectorOverlayController(CSurfaceCollection* surfaces, QObject* parent = nullptr);
+    explicit VectorOverlayController(CState* state, QObject* parent = nullptr);
 
     void addProvider(Provider provider);
 
@@ -26,6 +26,6 @@ private:
     void collectDirectionHints(VolumeViewerBase* viewer, OverlayBuilder& builder) const;
     void collectSurfaceNormals(VolumeViewerBase* viewer, OverlayBuilder& builder) const;
 
-    CSurfaceCollection* _surfaces;
+    CState* _state;
     std::vector<Provider> _providers;
 };

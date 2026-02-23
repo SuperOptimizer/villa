@@ -16,7 +16,7 @@
 
 class QMdiArea;
 class CTiledVolumeViewer;
-class CSurfaceCollection;
+class CState;
 class VCCollection;
 class SegmentationOverlayController;
 class PointsOverlayController;
@@ -35,7 +35,7 @@ class ViewerManager : public QObject
     Q_OBJECT
 
 public:
-    ViewerManager(CSurfaceCollection* surfaces,
+    ViewerManager(CState* state,
                   VCCollection* points,
                   QObject* parent = nullptr);
 
@@ -118,7 +118,7 @@ private slots:
 private:
     bool updateSurfacePatchIndexForSurface(const SurfacePatchIndex::SurfacePtr& quad, bool isEditUpdate);
 
-    CSurfaceCollection* _surfaces;
+    CState* _state;
     VCCollection* _points;
     // Cache is obtained from Volume::tieredCache()
     SegmentationOverlayController* _segmentationOverlay{nullptr};

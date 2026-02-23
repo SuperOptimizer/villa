@@ -2,7 +2,7 @@
 
 #include "../tiled/CTiledVolumeViewer.hpp"
 #include "../VolumeViewerBase.hpp"
-#include "../CSurfaceCollection.hpp"
+#include "../CState.hpp"
 #include "../VCSettings.hpp"
 #include "../ViewerManager.hpp"
 
@@ -35,9 +35,9 @@ const QColor kArrowFalseColor(Qt::red);
 const QColor kArrowTrueColor(Qt::green);
 }
 
-VectorOverlayController::VectorOverlayController(CSurfaceCollection* surfaces, QObject* parent)
+VectorOverlayController::VectorOverlayController(CState* state, QObject* parent)
     : ViewerOverlayControllerBase(kOverlayGroup, parent)
-    , _surfaces(surfaces)
+    , _state(state)
 {
     addProvider([this](VolumeViewerBase* viewer, OverlayBuilder& builder) {
         collectDirectionHints(viewer, builder);
@@ -143,16 +143,16 @@ void VectorOverlayController::collectDirectionHints(VolumeViewerBase* viewer,
     std::shared_ptr<Surface> segSurfaceHolder;  // Keep surface alive during this scope
     if (viewer->surfName() == "segmentation") {
         segSurface = dynamic_cast<QuadSurface*>(currentSurface);
-    } else if (_surfaces) {
-        segSurfaceHolder = _surfaces->surface("segmentation");
+    } else if (_state) {
+        segSurfaceHolder = _state->surface("segmentation");
         segSurface = dynamic_cast<QuadSurface*>(segSurfaceHolder.get());
     }
 
     auto fetchFocusScene = [&](QPointF& anchor) {
-        if (!segSurface || !_surfaces) {
+        if (!segSurface || !_state) {
             return;
         }
-        if (auto* poi = _surfaces->poi("focus")) {
+        if (auto* poi = _state->poi("focus")) {
             cv::Vec3f ptr(0, 0, 0);
             auto* patchIndex = manager() ? manager()->surfacePatchIndex() : nullptr;
             float dist = segSurface->pointTo(ptr, poi->p, 4.0, 100, patchIndex);
@@ -181,8 +181,8 @@ void VectorOverlayController::collectDirectionHints(VolumeViewerBase* viewer,
         addLabel(anchorScene + downOffset + QPointF(8.0, -8.0), QStringLiteral("true"), kArrowTrueColor);
 
         cv::Vec3f ptr(0, 0, 0);
-        if (_surfaces) {
-            if (auto* poi = _surfaces->poi("focus")) {
+        if (_state) {
+            if (auto* poi = _state->poi("focus")) {
                 auto* patchIndex = manager() ? manager()->surfacePatchIndex() : nullptr;
                 quad->pointTo(ptr, poi->p, 4.0, 100, patchIndex);
             }
@@ -231,8 +231,8 @@ void VectorOverlayController::collectDirectionHints(VolumeViewerBase* viewer,
         QPointF downOffset(0.0, 10.0);
 
         cv::Vec3f targetWP = plane->origin();
-        if (_surfaces) {
-            if (auto* poi = _surfaces->poi("focus")) {
+        if (_state) {
+            if (auto* poi = _state->poi("focus")) {
                 targetWP = poi->p;
             }
         }
@@ -495,8 +495,8 @@ void VectorOverlayController::collectSurfaceNormals(VolumeViewerBase* viewer,
     // Get the segmentation surface
     QuadSurface* segSurface = nullptr;
     std::shared_ptr<Surface> segSurfaceHolder;
-    if (_surfaces) {
-        segSurfaceHolder = _surfaces->surface("segmentation");
+    if (_state) {
+        segSurfaceHolder = _state->surface("segmentation");
         segSurface = dynamic_cast<QuadSurface*>(segSurfaceHolder.get());
     }
     if (!segSurface) {
@@ -505,8 +505,8 @@ void VectorOverlayController::collectSurfaceNormals(VolumeViewerBase* viewer,
 
     // Find current position on surface
     cv::Vec3f targetWP = plane->origin();
-    if (_surfaces) {
-        if (auto* poi = _surfaces->poi("focus")) {
+    if (_state) {
+        if (auto* poi = _state->poi("focus")) {
             targetWP = poi->p;
         }
     }

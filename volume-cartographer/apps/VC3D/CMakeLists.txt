@@ -5,10 +5,22 @@ add_definitions(-DCHUNK_CACHE_SIZE_GB=${CHUNK_CACHE_SIZE_GB})
 
 set(srcs
     VCAppMain.cpp
+    CState.cpp
+    CState.hpp
     Keybinds.cpp
     Keybinds.hpp
     CWindow.cpp
     CWindowContextMenu.cpp
+    FileWatcherService.cpp
+    FileWatcherService.hpp
+    AxisAlignedSliceController.cpp
+    AxisAlignedSliceController.hpp
+    FocusHistoryManager.cpp
+    FocusHistoryManager.hpp
+    SurfaceAreaCalculator.cpp
+    SurfaceAreaCalculator.hpp
+    SegmentationCommandHandler.cpp
+    SegmentationCommandHandler.hpp
     CVolumeViewerView.cpp
     VolumeViewerCmaps.cpp
     VolumeViewerCmaps.hpp
@@ -25,7 +37,6 @@ set(srcs
     elements/RangeSlider.cpp
     elements/RangeSlider.hpp
     SettingsDialog.cpp
-    CSurfaceCollection.cpp
     SurfaceTreeWidget.hpp
     SurfaceTreeWidget.cpp
     SeedingWidget.cpp

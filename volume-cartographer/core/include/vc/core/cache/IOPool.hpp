@@ -54,7 +54,7 @@ public:
     void cancelPending();
 
     // Number of pending + in-flight tasks.
-    size_t pendingCount() const;
+    [[nodiscard]] size_t pendingCount() const;
 
     // Gracefully stop all workers. Blocks until all threads exit.
     void stop();
@@ -71,7 +71,7 @@ private:
         uint64_t seq = 0;
         uint64_t epoch = 0;  // epoch when this task was submitted
 
-        bool operator>(const Task& o) const
+        bool operator>(const Task& o) const noexcept
         {
             if (key.level != o.key.level) return key.level < o.key.level;
             // Within same level, prefer newer epoch (higher = newer)

@@ -108,16 +108,8 @@ TieredChunkCache::TieredChunkCache(
             using Clock = std::chrono::steady_clock;
             auto t0 = Clock::now();
 
-            // Estimate decompressed size from chunk shape metadata
-            size_t decompSize = 0;
-            if (source_) {
-                auto cs = source_->chunkShape(key.level);
-                decompSize =
-                    static_cast<size_t>(cs[0]) * cs[1] * cs[2];  // * elementSize
-            }
-
             // Store in warm tier
-            warmPut(key, std::move(compressed), decompSize);
+            warmPut(key, std::move(compressed));
 
             // Decompress and store in hot tier
             auto warmEntry = warmGet(key);
@@ -281,27 +273,47 @@ void TieredChunkCache::prefetch(const ChunkKey& key)
 void TieredChunkCache::prefetchRegion(
     int level, int iz0, int iy0, int ix0, int iz1, int iy1, int ix1)
 {
-    // Phase 1: Collect candidate keys not in hot or warm
-    std::vector<ChunkKey> candidates;
+    // Build all candidate keys
     int totalChecked = 0;
+    std::vector<ChunkKey> allKeys;
+    allKeys.reserve(static_cast<size_t>(iz1 - iz0 + 1) * (iy1 - iy0 + 1) * (ix1 - ix0 + 1));
     for (int iz = iz0; iz <= iz1; iz++) {
         for (int iy = iy0; iy <= iy1; iy++) {
             for (int ix = ix0; ix <= ix1; ix++) {
                 totalChecked++;
-                ChunkKey key{level, iz, iy, ix};
-                if (!hotGet(key) && !warmGet(key).has_value()) {
-                    candidates.push_back(key);
-                }
+                allKeys.push_back(ChunkKey{level, iz, iy, ix});
             }
         }
     }
 
-    // Phase 2: Filter out negative-cached keys in a single lock acquisition
+    // Phase 1: Filter out hot-cached keys (single lock acquisition)
+    std::vector<ChunkKey> missingHot;
+    {
+        std::shared_lock lock(hotMutex_);
+        for (const auto& key : allKeys) {
+            if (hot_.find(key) == hot_.end()) {
+                missingHot.push_back(key);
+            }
+        }
+    }
+
+    // Phase 2: Filter out warm-cached keys (single lock acquisition)
+    std::vector<ChunkKey> candidates;
+    {
+        std::shared_lock lock(warmMutex_);
+        for (const auto& key : missingHot) {
+            if (warm_.find(key) == warm_.end()) {
+                candidates.push_back(key);
+            }
+        }
+    }
+
+    // Phase 3: Filter out negative-cached keys (single lock acquisition)
     std::vector<ChunkKey> keys;
     if (!candidates.empty()) {
         keys.reserve(candidates.size());
         std::shared_lock lock(negativeMutex_);
-        for (auto& key : candidates) {
+        for (const auto& key : candidates) {
             if (!negativeCache_.count(key)) {
                 keys.push_back(key);
             }
@@ -453,26 +465,41 @@ bool TieredChunkCache::areAllCachedInRegion(
     int iz1, int iy1, int ix1) const
 {
     // Single shared-lock acquisition for hot tier
-    std::shared_lock hotLock(hotMutex_);
-    // Collect keys missing from hot
     std::vector<ChunkKey> missingHot;
-    for (int iz = iz0; iz <= iz1; iz++) {
-        for (int iy = iy0; iy <= iy1; iy++) {
-            for (int ix = ix0; ix <= ix1; ix++) {
-                ChunkKey key{level, iz, iy, ix};
-                if (hot_.find(key) == hot_.end()) {
-                    missingHot.push_back(key);
+    missingHot.reserve(static_cast<size_t>(iz1 - iz0 + 1) * (iy1 - iy0 + 1) * (ix1 - ix0 + 1));
+    {
+        std::shared_lock hotLock(hotMutex_);
+        for (int iz = iz0; iz <= iz1; iz++) {
+            for (int iy = iy0; iy <= iy1; iy++) {
+                for (int ix = ix0; ix <= ix1; ix++) {
+                    ChunkKey key{level, iz, iy, ix};
+                    if (hot_.find(key) == hot_.end()) {
+                        missingHot.push_back(key);
+                    }
                 }
             }
         }
     }
-    hotLock.unlock();
 
     if (missingHot.empty()) return true;
 
-    // Single shared-lock acquisition for negative cache
+    // Check warm tier for chunks missing from hot (warm = compressed in RAM,
+    // fast to decompress — still counts as "cached")
+    std::vector<ChunkKey> missingBoth;
+    {
+        std::shared_lock warmLock(warmMutex_);
+        for (const auto& key : missingHot) {
+            if (warm_.find(key) == warm_.end()) {
+                missingBoth.push_back(key);
+            }
+        }
+    }
+
+    if (missingBoth.empty()) return true;
+
+    // Check negative cache for remaining misses
     std::shared_lock negLock(negativeMutex_);
-    for (const auto& key : missingHot) {
+    for (const auto& key : missingBoth) {
         if (negativeCache_.count(key) == 0) {
             return false;
         }
@@ -534,7 +561,9 @@ ChunkDataPtr TieredChunkCache::hotGet(const ChunkKey& key)
     std::shared_lock lock(hotMutex_);
     auto it = hot_.find(key);
     if (it == hot_.end()) return nullptr;
-    it->second.generation = hotGen_.fetch_add(1, std::memory_order_relaxed);
+    // No generation update under shared_lock — hotPut() generation is
+    // sufficient for LRU eviction ordering, and skipping it here avoids
+    // a data race (generation is not atomic, multiple readers would race).
     return it->second.data;
 }
 
@@ -587,7 +616,7 @@ void TieredChunkCache::hotEvictIfNeeded()
     {
         std::shared_lock lock(hotMutex_);
         candidates.reserve(hot_.size());
-        for (auto& [k, e] : hot_) {
+        for (const auto& [k, e] : hot_) {
             if (e.pinned) continue;  // never evict pinned entries
             candidates.push_back({k, e.bytes, e.generation});
         }
@@ -606,7 +635,7 @@ void TieredChunkCache::hotEvictIfNeeded()
     size_t evictedCount = 0;
 
     std::vector<ChunkKey> toRemove;
-    for (auto& c : candidates) {
+    for (const auto& c : candidates) {
         if (current - evictedBytes <= target) break;
         toRemove.push_back(c.key);
         evictedBytes += c.bytes;
@@ -615,7 +644,7 @@ void TieredChunkCache::hotEvictIfNeeded()
 
     if (!toRemove.empty()) {
         std::unique_lock lock(hotMutex_);
-        for (auto& k : toRemove) {
+        for (const auto& k : toRemove) {
             hot_.erase(k);
         }
         hotBytes_.fetch_sub(evictedBytes, std::memory_order_relaxed);
@@ -640,8 +669,7 @@ std::optional<CompressedChunk> TieredChunkCache::warmGet(const ChunkKey& key)
 
 void TieredChunkCache::warmPut(
     const ChunkKey& key,
-    std::vector<uint8_t> compressed,
-    size_t decompressedSize)
+    std::vector<uint8_t> compressed)
 {
     size_t bytes = compressed.size();
 
@@ -652,13 +680,12 @@ void TieredChunkCache::warmPut(
             // Update existing entry
             warmBytes_ -= it->second.chunk.data.size();
             it->second.chunk.data = std::move(compressed);
-            it->second.chunk.decompressedSize = decompressedSize;
             it->second.generation = warmGen_++;
         } else {
             warm_.emplace(
                 key,
                 WarmEntry{
-                    CompressedChunk{std::move(compressed), decompressedSize},
+                    CompressedChunk{std::move(compressed)},
                     warmGen_++});
         }
         warmBytes_ += bytes;
@@ -682,7 +709,7 @@ void TieredChunkCache::warmEvictIfNeeded()
 
     std::vector<Candidate> candidates;
     candidates.reserve(warm_.size());
-    for (auto& [k, e] : warm_) {
+    for (const auto& [k, e] : warm_) {
         candidates.push_back({k, e.chunk.data.size(), e.generation});
     }
 
@@ -692,7 +719,7 @@ void TieredChunkCache::warmEvictIfNeeded()
               });
 
     size_t target = config_.warmMaxBytes * 15 / 16;
-    for (auto& c : candidates) {
+    for (const auto& c : candidates) {
         if (warmBytes_ <= target) break;
         auto it = warm_.find(c.key);
         if (it != warm_.end()) {
@@ -728,15 +755,8 @@ ChunkDataPtr TieredChunkCache::promoteFromCold(const ChunkKey& key)
 
     statColdHits_.fetch_add(1, std::memory_order_relaxed);
 
-    // Estimate decompressed size
-    size_t decompSize = 0;
-    if (source_) {
-        auto cs = source_->chunkShape(key.level);
-        decompSize = static_cast<size_t>(cs[0]) * cs[1] * cs[2];
-    }
-
     // Store in warm
-    warmPut(key, std::move(*compressed), decompSize);
+    warmPut(key, std::move(*compressed));
 
     // Decompress and promote to hot
     auto warmEntry = warmGet(key);
@@ -759,13 +779,8 @@ ChunkDataPtr TieredChunkCache::promoteFromIce(const ChunkKey& key)
         diskStore_->put(config_.volumeId, key, compressed);
     }
 
-    // Estimate decompressed size
-    size_t decompSize = 0;
-    auto cs = source_->chunkShape(key.level);
-    decompSize = static_cast<size_t>(cs[0]) * cs[1] * cs[2];
-
     // Store in warm
-    warmPut(key, std::move(compressed), decompSize);
+    warmPut(key, std::move(compressed));
 
     // Decompress and promote to hot
     auto warmEntry = warmGet(key);
@@ -789,13 +804,7 @@ void TieredChunkCache::onIOComplete(
 {
     if (compressed.empty()) return;
 
-    size_t decompSize = 0;
-    if (source_) {
-        auto cs = source_->chunkShape(key.level);
-        decompSize = static_cast<size_t>(cs[0]) * cs[1] * cs[2];
-    }
-
-    warmPut(key, std::move(compressed), decompSize);
+    warmPut(key, std::move(compressed));
 
     auto warmEntry = warmGet(key);
     if (warmEntry && decompress_) {

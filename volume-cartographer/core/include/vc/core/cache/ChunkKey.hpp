@@ -22,7 +22,7 @@ struct ChunkKey {
 
     // Return the equivalent key at a coarser pyramid level.
     // Each level halves spatial resolution, so chunk indices halve.
-    ChunkKey coarsen(int targetLevel) const
+    [[nodiscard]] ChunkKey coarsen(int targetLevel) const noexcept
     {
         int shift = targetLevel - level;
         return {targetLevel, iz >> shift, iy >> shift, ix >> shift};

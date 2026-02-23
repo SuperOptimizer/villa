@@ -1,4 +1,5 @@
 #include "DrawingWidget.hpp"
+#include "CState.hpp"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -37,8 +38,6 @@ using PathRenderMode = ViewerOverlayControllerBase::PathRenderMode;
 
 DrawingWidget::DrawingWidget(QWidget* parent)
     : QWidget(parent)
-    , fVpkg(nullptr)
-    , currentVolume(nullptr)
     , currentPathId(0)
     , brushSize(3.0f)
     , opacity(1.0f)
@@ -200,27 +199,19 @@ void DrawingWidget::setupUI()
     
 }
 
-void DrawingWidget::setVolumePkg(std::shared_ptr<VolumePkg> vpkg)
+void DrawingWidget::setState(CState* state)
 {
-    fVpkg = vpkg;
-    updateUI();
-}
-
-void DrawingWidget::setCurrentVolume(std::shared_ptr<Volume> volume)
-{
-    currentVolume = volume;
+    _state = state;
     updateUI();
 }
 
 void DrawingWidget::onVolumeChanged(std::shared_ptr<Volume> vol)
 {
-    setCurrentVolume(vol);
+    updateUI();
 }
 
 void DrawingWidget::onVolumeChanged(std::shared_ptr<Volume> vol, const std::string& volumeId)
 {
-    currentVolume = vol;
-    currentVolumeId = volumeId;
     updateUI();
 }
 
@@ -379,8 +370,8 @@ void DrawingWidget::onClearAllClicked()
 
 void DrawingWidget::onSaveAsMaskClicked()
 {
-    if (!currentVolume || drawnPaths.isEmpty()) {
-        QMessageBox::warning(this, "No Data", 
+    if (!_state || !_state->currentVolume() || drawnPaths.isEmpty()) {
+        QMessageBox::warning(this, "No Data",
             "No paths to save or volume not loaded.");
         return;
     }
@@ -418,7 +409,7 @@ void DrawingWidget::clearAllPaths()
 
 void DrawingWidget::updateUI()
 {
-    bool hasVolume = currentVolume != nullptr;
+    bool hasVolume = _state && _state->currentVolume() != nullptr;
     saveAsMaskButton->setEnabled(hasVolume && !drawnPaths.isEmpty());
     
     // Update info label based on drawing mode
@@ -526,13 +517,15 @@ void DrawingWidget::updateColorPreview()
 
 cv::Mat DrawingWidget::generateMask()
 {
-    if (!currentVolume || drawnPaths.isEmpty()) {
+    if (!_state || !_state->currentVolume() || drawnPaths.isEmpty()) {
         return cv::Mat();
     }
-    
-    // Generate a 2D mask at the current Z slice 
-    const int width = currentVolume->sliceWidth();
-    const int height = currentVolume->sliceHeight();
+
+    auto vol = _state->currentVolume();
+
+    // Generate a 2D mask at the current Z slice
+    const int width = vol->sliceWidth();
+    const int height = vol->sliceHeight();
     
     QImage maskImage(width, height, QImage::Format_Grayscale8);
     maskImage.fill(0); // Start with black (background)
@@ -613,20 +606,22 @@ void DrawingWidget::saveMask(const cv::Mat& mask, const std::string& filename)
 bool DrawingWidget::isValidVolumePoint(const cv::Vec3f& point) const
 {
     // Check if we have a valid volume
-    if (!currentVolume) {
+    if (!_state || !_state->currentVolume()) {
         return false;
     }
-    
+
     // Check for invalid marker value (-1)
     if (point[0] < 0 || point[1] < 0 || point[2] < 0) {
         return false;
     }
-    
+
+    auto vol = _state->currentVolume();
+
     // Check if the point is within data bounds
-    auto [w, h, d] = currentVolume->shape();
+    auto [w, h, d] = vol->shape();
     float x0 = 0, y0 = 0, z0 = 0;
     float x1 = static_cast<float>(w), y1 = static_cast<float>(h), z1 = static_cast<float>(d);
-    const auto& db = currentVolume->dataBounds();
+    const auto& db = vol->dataBounds();
     if (db.valid) {
         x0 = static_cast<float>(db.minX); x1 = static_cast<float>(db.maxX);
         y0 = static_cast<float>(db.minY); y1 = static_cast<float>(db.maxY);

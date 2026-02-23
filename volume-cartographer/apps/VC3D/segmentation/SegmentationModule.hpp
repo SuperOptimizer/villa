@@ -34,7 +34,7 @@ inline constexpr int kStatusMedium = 2000;
 inline constexpr int kStatusLong = 5000;
 
 
-class CSurfaceCollection;
+class CState;
 class CTiledVolumeViewer;
 class PlaneSurface;
 class Surface;
@@ -60,7 +60,7 @@ public:
                        SegmentationEditManager* editManager,
                        SegmentationOverlayController* overlay,
                        ViewerManager* viewerManager,
-                       CSurfaceCollection* surfaces,
+                       CState* state,
                        VCCollection* pointCollection,
                        bool editingEnabled,
                        QObject* parent = nullptr);
@@ -332,7 +332,7 @@ private:
     SegmentationEditManager* _editManager{nullptr};
     SegmentationOverlayController* _overlay{nullptr};
     ViewerManager* _viewerManager{nullptr};
-    CSurfaceCollection* _surfaces{nullptr};
+    CState* _state{nullptr};
     VCCollection* _pointCollection{nullptr};
 
     bool _editingEnabled{false};

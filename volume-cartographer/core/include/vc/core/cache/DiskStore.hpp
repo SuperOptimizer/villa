@@ -36,7 +36,7 @@ public:
     DiskStore& operator=(const DiskStore&) = delete;
 
     // Read compressed chunk bytes from disk. Returns nullopt on miss.
-    std::optional<std::vector<uint8_t>> get(
+    [[nodiscard]] std::optional<std::vector<uint8_t>> get(
         const std::string& volumeId,
         const ChunkKey& key) const;
 
@@ -56,7 +56,7 @@ public:
     }
 
     // Check if a chunk file exists on disk.
-    bool has(const std::string& volumeId, const ChunkKey& key) const;
+    [[nodiscard]] bool has(const std::string& volumeId, const ChunkKey& key) const;
 
     // Remove a specific chunk from disk.
     void remove(const std::string& volumeId, const ChunkKey& key);
@@ -67,7 +67,7 @@ public:
 
     // Total bytes currently stored on disk.
     // Returns the incrementally tracked value (fast, no scan).
-    size_t totalBytes() const;
+    [[nodiscard]] size_t totalBytes() const;
 
     // Perform initial directory scan to populate totalBytes_.
     // Called automatically by the constructor if the cache directory exists.
@@ -79,7 +79,7 @@ public:
     // Remove all cached data.
     void clearAll();
 
-    const std::filesystem::path& root() const { return config_.root; }
+    [[nodiscard]] const std::filesystem::path& root() const { return config_.root; }
 
 private:
     std::filesystem::path chunkPath(
@@ -89,7 +89,7 @@ private:
     // Per-key lock pool to serialize same-key writes
     static constexpr int kLockPoolSize = 32;
     mutable std::mutex lockPool_[kLockPoolSize];
-    size_t lockIndex(const std::string& volumeId, const ChunkKey& key) const;
+    size_t lockIndex(const std::string& volumeId, const ChunkKey& key) const noexcept;
 
     Config config_;
 

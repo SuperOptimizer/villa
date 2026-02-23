@@ -11,7 +11,7 @@
 class SegmentationEditManager;
 class SegmentationWidget;
 class SegmentationOverlayController;
-class CSurfaceCollection;
+class CState;
 class SegmentationModule;
 class CTiledVolumeViewer;
 class QuadSurface;
@@ -24,12 +24,12 @@ public:
                              SegmentationEditManager* editManager,
                              SegmentationWidget* widget,
                              SegmentationOverlayController* overlay,
-                             CSurfaceCollection* surfaces);
+                             CState* state);
 
     void setDependencies(SegmentationEditManager* editManager,
                          SegmentationWidget* widget,
                          SegmentationOverlayController* overlay,
-                         CSurfaceCollection* surfaces);
+                         CState* state);
 
     void setStepMultiplier(float multiplier);
     [[nodiscard]] float stepMultiplier() const { return _stepMultiplier; }
@@ -46,7 +46,7 @@ public:
     bool applyStep();
 
     void cancel() override { stopAll(); }
-    [[nodiscard]] bool isActive() const override { return _state.active; }
+    [[nodiscard]] bool isActive() const override { return _ppState.active; }
 
 private:
     bool applyStepInternal();
@@ -62,7 +62,7 @@ private:
     SegmentationEditManager* _editManager{nullptr};
     SegmentationWidget* _widget{nullptr};
     SegmentationOverlayController* _overlay{nullptr};
-    CSurfaceCollection* _surfaces{nullptr};
+    CState* _state{nullptr};
 
     struct State
     {
@@ -70,7 +70,7 @@ private:
         int direction{0};
     };
 
-    State _state;
+    State _ppState;
     QTimer* _timer{nullptr};
     float _stepMultiplier{4.0f};
     bool _activeAlphaEnabled{false};

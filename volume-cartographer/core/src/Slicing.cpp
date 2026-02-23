@@ -507,8 +507,7 @@ static void readVolumeImpl(
                     }
 
                     if (params->lightingEnabled) {
-                        cv::Vec3f ln = getNormal(y, x);
-                        float lightFactor = computeLightingFactor(ln, *params);
+                        float lightFactor = computeLightingFactor(n, *params);
                         result *= lightFactor;
                     }
 

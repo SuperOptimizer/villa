@@ -2,7 +2,7 @@
 
 #include "tiled/CTiledVolumeViewer.hpp"
 #include "CVolumeViewerView.hpp"
-#include "CSurfaceCollection.hpp"
+#include "CState.hpp"
 #include "tools/SegmentationEditManager.hpp"
 #include "SegmentationWidget.hpp"
 #include "tools/SegmentationLineTool.hpp"
@@ -90,7 +90,7 @@ SegmentationModule::SegmentationModule(SegmentationWidget* widget,
                                        SegmentationEditManager* editManager,
                                        SegmentationOverlayController* overlay,
                                        ViewerManager* viewerManager,
-                                       CSurfaceCollection* surfaces,
+                                       CState* state,
                                        VCCollection* pointCollection,
                                        bool editingEnabled,
                                        QObject* parent)
@@ -99,7 +99,7 @@ SegmentationModule::SegmentationModule(SegmentationWidget* widget,
     , _editManager(editManager)
     , _overlay(overlay)
     , _viewerManager(viewerManager)
-    , _surfaces(surfaces)
+    , _state(state)
     , _pointCollection(pointCollection)
     , _editingEnabled(editingEnabled)
     , _growthMethod(_widget ? _widget->growthMethod() : SegmentationGrowthMethod::Tracer)
@@ -134,8 +134,8 @@ SegmentationModule::SegmentationModule(SegmentationWidget* widget,
         }
     }
 
-    _lineTool = std::make_unique<SegmentationLineTool>(*this, _editManager, _surfaces, _smoothStrength, _smoothIterations);
-    _pushPullTool = std::make_unique<SegmentationPushPullTool>(*this, _editManager, _widget, _overlay, _surfaces);
+    _lineTool = std::make_unique<SegmentationLineTool>(*this, _editManager, _state, _smoothStrength, _smoothIterations);
+    _pushPullTool = std::make_unique<SegmentationPushPullTool>(*this, _editManager, _widget, _overlay, _state);
     _pushPullTool->setStepMultiplier(initialPushPullStep);
     _pushPullTool->setAlphaConfig(initialAlphaConfig);
 
@@ -164,8 +164,8 @@ SegmentationModule::SegmentationModule(SegmentationWidget* widget,
         _viewerManager->setSegmentationModule(this);
     }
 
-    if (_surfaces) {
-        connect(_surfaces, &CSurfaceCollection::sendSurfaceChanged,
+    if (_state) {
+        connect(_state, &CState::surfaceChanged,
                 this, &SegmentationModule::onSurfaceCollectionChanged);
     }
 
@@ -490,9 +490,9 @@ void SegmentationModule::setShowApprovalMask(bool enabled)
         if (_editManager && _editManager->hasSession()) {
             qCInfo(lcSegModule) << "  Loading approval mask (has active session)";
             surface = _editManager->baseSurface().get();
-        } else if (_surfaces) {
+        } else if (_state) {
             qCInfo(lcSegModule) << "  Loading approval mask (from surfaces collection)";
-            surfaceHolder = _surfaces->surface("segmentation");
+            surfaceHolder = _state->surface("segmentation");
             surface = dynamic_cast<QuadSurface*>(surfaceHolder.get());
         }
 
@@ -621,8 +621,8 @@ void SegmentationModule::setEditApprovedMask(bool enabled)
             // the most up-to-date approval mask (preserved after tracer growth)
             QuadSurface* surface = nullptr;
             std::shared_ptr<Surface> surfaceHolder;  // Keep surface alive during this scope
-            if (_surfaces) {
-                surfaceHolder = _surfaces->surface("segmentation");
+            if (_state) {
+                surfaceHolder = _state->surface("segmentation");
                 surface = dynamic_cast<QuadSurface*>(surfaceHolder.get());
             }
             if (!surface && _editManager && _editManager->hasSession()) {
@@ -683,8 +683,8 @@ void SegmentationModule::setEditUnapprovedMask(bool enabled)
             // the most up-to-date approval mask (preserved after tracer growth)
             QuadSurface* surface = nullptr;
             std::shared_ptr<Surface> surfaceHolder;  // Keep surface alive during this scope
-            if (_surfaces) {
-                surfaceHolder = _surfaces->surface("segmentation");
+            if (_state) {
+                surfaceHolder = _state->surface("segmentation");
                 surface = dynamic_cast<QuadSurface*>(surfaceHolder.get());
             }
             if (!surface && _editManager && _editManager->hasSession()) {
@@ -799,8 +799,8 @@ void SegmentationModule::saveApprovalMaskToDisk()
     std::shared_ptr<Surface> surfaceHolder;  // Keep surface alive during this scope
     if (_editManager && _editManager->hasSession()) {
         surface = _editManager->baseSurface().get();
-    } else if (_surfaces) {
-        surfaceHolder = _surfaces->surface("segmentation");
+    } else if (_state) {
+        surfaceHolder = _state->surface("segmentation");
         surface = dynamic_cast<QuadSurface*>(surfaceHolder.get());
     }
 
@@ -928,9 +928,9 @@ void SegmentationModule::applyEdits()
     }
 
     _editManager->applyPreview();
-    if (_surfaces) {
+    if (_state) {
         auto preview = _editManager->previewSurface();
-        _surfaces->setSurface("segmentation", preview, false, true);
+        _state->setSurface("segmentation", preview, false, true);
     }
     emitPendingChanges();
     markAutosaveNeeded(true);
@@ -948,8 +948,8 @@ void SegmentationModule::resetEdits()
     cancelDrag();
     clearLineDragStroke();
     _editManager->resetPreview();
-    if (_surfaces) {
-        _surfaces->setSurface("segmentation", _editManager->previewSurface(), false, true);
+    if (_state) {
+        _state->setSurface("segmentation", _editManager->previewSurface(), false, true);
     }
     refreshOverlay();
     emitPendingChanges();
@@ -1049,8 +1049,8 @@ void SegmentationModule::refreshOverlay()
     std::shared_ptr<Surface> approvalSurfaceHolder;  // Keep surface alive during this scope
     if (hasSession && _editManager) {
         approvalSurface = _editManager->baseSurface().get();
-    } else if (_surfaces) {
-        approvalSurfaceHolder = _surfaces->surface("segmentation");
+    } else if (_state) {
+        approvalSurfaceHolder = _state->surface("segmentation");
         approvalSurface = dynamic_cast<QuadSurface*>(approvalSurfaceHolder.get());
     }
 
@@ -1539,8 +1539,8 @@ void SegmentationModule::finishDrag()
         }
 
         _editManager->applyPreview();
-        if (_surfaces) {
-            _surfaces->setSurface("segmentation", _editManager->previewSurface(), false, true);
+        if (_state) {
+            _state->setSurface("segmentation", _editManager->previewSurface(), false, true);
         }
         markAutosaveNeeded();
     }

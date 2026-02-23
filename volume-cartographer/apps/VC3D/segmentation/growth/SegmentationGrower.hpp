@@ -23,7 +23,7 @@ struct CorrectionsBounds {
 
 class SegmentationModule;
 class SegmentationWidget;
-class CSurfaceCollection;
+class CState;
 class ViewerManager;
 class SurfacePanelController;
 class VolumePkg;
@@ -40,7 +40,7 @@ public:
     {
         SegmentationModule* module{nullptr};
         SegmentationWidget* widget{nullptr};
-        CSurfaceCollection* surfaces{nullptr};
+        CState* state{nullptr};
         ViewerManager* viewerManager{nullptr};
     };
 

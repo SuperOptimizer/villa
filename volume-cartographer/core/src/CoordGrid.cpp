@@ -3,7 +3,7 @@
 namespace vc {
 
 cv::Mat_<cv::Vec3f> makeCoordGrid(
-    cv::Vec3f origin, cv::Vec3f axisU, cv::Vec3f axisV, int w, int h)
+    const cv::Vec3f& origin, const cv::Vec3f& axisU, const cv::Vec3f& axisV, int w, int h)
 {
     cv::Mat_<cv::Vec3f> coords(h, w);
     for (int r = 0; r < h; r++)

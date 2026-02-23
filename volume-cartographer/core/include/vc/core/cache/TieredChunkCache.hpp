@@ -70,18 +70,18 @@ public:
 
     // Returns immediately. Returns nullptr on miss (hot and warm both miss).
     // Does NOT trigger a fetch. Use prefetch() to schedule background loading.
-    ChunkDataPtr get(const ChunkKey& key);
+    [[nodiscard]] ChunkDataPtr get(const ChunkKey& key);
 
     // Returns the best available data, searching from the requested level
     // up to the coarsest. Returns {data, actualLevel}.
     // The coarsest level is always pinned hot, so this never returns nullptr
     // (after pinLevel() has been called).
-    std::pair<ChunkDataPtr, int> getBestAvailable(const ChunkKey& key);
+    [[nodiscard]] std::pair<ChunkDataPtr, int> getBestAvailable(const ChunkKey& key);
 
     // --- Blocking reads ---
 
     // Blocks until the chunk is available (loads from cold/ice if needed).
-    ChunkDataPtr getBlocking(const ChunkKey& key);
+    [[nodiscard]] ChunkDataPtr getBlocking(const ChunkKey& key);
 
     // --- Async prefetch ---
 
@@ -113,13 +113,13 @@ public:
     void clearAll();
 
     // Number of pyramid levels in the source.
-    int numLevels() const;
+    [[nodiscard]] int numLevels() const;
 
     // Chunk shape at a given level, in {z, y, x} order.
-    std::array<int, 3> chunkShape(int level) const;
+    [[nodiscard]] std::array<int, 3> chunkShape(int level) const;
 
     // Full dataset shape at a given level, in {z, y, x} order.
-    std::array<int, 3> levelShape(int level) const;
+    [[nodiscard]] std::array<int, 3> levelShape(int level) const;
 
     // --- Logical data bounds (level-0 voxel coords, x/y/z order) ---
     // Set by Volume after scanning the coarsest level for non-zero data.
@@ -132,17 +132,17 @@ public:
     };
 
     void setDataBounds(int minX, int maxX, int minY, int maxY, int minZ, int maxZ);
-    DataBoundsL0 dataBounds() const;
+    [[nodiscard]] DataBoundsL0 dataBounds() const;
 
     // Check if a chunk is negative-cached (known to not exist on source).
     // In zarr format, missing chunks contain the fill value (zeros),
     // so callers should treat negative-cached chunks as available.
-    bool isNegativeCached(const ChunkKey& key) const;
+    [[nodiscard]] bool isNegativeCached(const ChunkKey& key) const;
 
-    // Batch check: are ALL chunks in a region either hot-cached or
-    // negative-cached?  Acquires each lock only once, avoiding the
+    // Batch check: are ALL chunks in a region either hot-cached, warm-cached,
+    // or negative-cached?  Acquires each lock only once, avoiding the
     // per-chunk lock overhead of calling get()+isNegativeCached() in a loop.
-    bool areAllCachedInRegion(int level,
+    [[nodiscard]] bool areAllCachedInRegion(int level,
                               int iz0, int iy0, int ix0,
                               int iz1, int iy1, int ix1) const;
 
@@ -172,7 +172,7 @@ public:
         size_t ioPending = 0;   // pending + in-flight IO tasks
     };
 
-    Stats stats() const;
+    [[nodiscard]] Stats stats() const;
     void resetStats();
 
 private:
@@ -184,7 +184,7 @@ private:
         bool pinned;
     };
 
-    ChunkDataPtr hotGet(const ChunkKey& key);
+    [[nodiscard]] ChunkDataPtr hotGet(const ChunkKey& key);
     void hotPut(const ChunkKey& key, ChunkDataPtr data, bool pinned = false);
     void hotEvictIfNeeded();
 
@@ -200,9 +200,8 @@ private:
         uint64_t generation;
     };
 
-    std::optional<CompressedChunk> warmGet(const ChunkKey& key);
-    void warmPut(const ChunkKey& key, std::vector<uint8_t> compressed,
-                 size_t decompressedSize);
+    [[nodiscard]] std::optional<CompressedChunk> warmGet(const ChunkKey& key);
+    void warmPut(const ChunkKey& key, std::vector<uint8_t> compressed);
     void warmEvictIfNeeded();
 
     mutable std::shared_mutex warmMutex_;
@@ -240,7 +239,7 @@ private:
     // --- Per-key lock pool (prevents duplicate loads) ---
     static constexpr int kLockPoolSize = 64;
     std::mutex lockPool_[kLockPoolSize];
-    size_t lockIndex(const ChunkKey& key) const
+    size_t lockIndex(const ChunkKey& key) const noexcept
     {
         return ChunkKeyHash()(key) % kLockPoolSize;
     }
@@ -248,16 +247,16 @@ private:
     // --- Promotion helpers ---
 
     // Load from warm → hot. Returns the decompressed data.
-    ChunkDataPtr promoteFromWarm(const ChunkKey& key, CompressedChunk warm);
+    [[nodiscard]] ChunkDataPtr promoteFromWarm(const ChunkKey& key, CompressedChunk warm);
 
     // Load from cold → warm → hot. Returns the decompressed data.
-    ChunkDataPtr promoteFromCold(const ChunkKey& key);
+    [[nodiscard]] ChunkDataPtr promoteFromCold(const ChunkKey& key);
 
     // Fetch from ice → cold → warm → hot. Returns the decompressed data.
-    ChunkDataPtr promoteFromIce(const ChunkKey& key);
+    [[nodiscard]] ChunkDataPtr promoteFromIce(const ChunkKey& key);
 
     // Full promotion chain (checks each tier in order).
-    ChunkDataPtr loadFull(const ChunkKey& key);
+    [[nodiscard]] ChunkDataPtr loadFull(const ChunkKey& key);
 
     // IO completion handler (called from worker thread).
     void onIOComplete(const ChunkKey& key, std::vector<uint8_t>&& compressed);

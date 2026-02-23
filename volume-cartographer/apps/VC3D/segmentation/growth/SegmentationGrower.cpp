@@ -6,7 +6,7 @@
 #include "../SegmentationWidget.hpp"
 
 #include "../../tiled/CTiledVolumeViewer.hpp"
-#include "../../CSurfaceCollection.hpp"
+#include "../../CState.hpp"
 #include "../../ViewerManager.hpp"
 #include "../../SurfacePanelController.hpp"
 
@@ -650,12 +650,12 @@ bool SegmentationGrower::start(const VolumeContext& volumeContext,
         return false;
     }
 
-    if (!_context.module || !_context.widget || !_context.surfaces) {
+    if (!_context.module || !_context.widget || !_context.state) {
         showStatus(tr("Segmentation growth is unavailable."), kStatusLong);
         return false;
     }
 
-    auto segmentationSurface = std::dynamic_pointer_cast<QuadSurface>(_context.surfaces->surface("segmentation"));
+    auto segmentationSurface = std::dynamic_pointer_cast<QuadSurface>(_context.state->surface("segmentation"));
     if (!segmentationSurface) {
         qCInfo(lcSegGrowth) << "Rejecting growth because segmentation surface is missing";
         showStatus(tr("Segmentation surface is not available."), kStatusMedium);
@@ -899,8 +899,8 @@ bool SegmentationGrower::start(const VolumeContext& volumeContext,
 
         // Re-set the surface in the collection to trigger proper viewer refresh
         // (same pattern used by Tracer growth)
-        if (_context.surfaces) {
-            _context.surfaces->setSurface("segmentation", segmentationSurface, false, true);
+        if (_context.state) {
+            _context.state->setSurface("segmentation", segmentationSurface, false, true);
         }
         refreshSegmentationViewers(_context.viewerManager);
         if (_context.module && _context.module->hasActiveSession()) {
@@ -1487,8 +1487,8 @@ void SegmentationGrower::onFutureFinished()
         });
     }
 
-    if (_context.surfaces) {
-        _context.surfaces->setSurface("segmentation", request.segmentationSurface, false, true);
+    if (_context.state) {
+        _context.state->setSurface("segmentation", request.segmentationSurface, false, true);
         // Note: SurfacePatchIndex is automatically updated via handleSurfaceChanged signal
     }
 
@@ -1521,8 +1521,8 @@ void SegmentationGrower::onFutureFinished()
 
     QuadSurface* currentSegSurface = nullptr;
     std::shared_ptr<Surface> currentSegSurfaceHolder;  // Keep surface alive during this scope
-    if (_context.surfaces) {
-        currentSegSurfaceHolder = _context.surfaces->surface("segmentation");
+    if (_context.state) {
+        currentSegSurfaceHolder = _context.state->surface("segmentation");
         currentSegSurface = dynamic_cast<QuadSurface*>(currentSegSurfaceHolder.get());
     }
     if (!currentSegSurface) {

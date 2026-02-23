@@ -16,7 +16,6 @@
 
 #include "VolumeViewerBase.hpp"
 #include "vc/ui/VCCollection.hpp"
-#include "CSurfaceCollection.hpp"
 #include "CVolumeViewerView.hpp"
 #include "vc/core/types/Volume.hpp"
 #include "vc/core/util/SurfacePatchIndex.hpp"
@@ -31,6 +30,8 @@ class QGraphicsScene;
 class QGraphicsItem;
 class QGraphicsPixmapItem;
 class QLabel;
+struct POI;
+class CState;
 class ViewerManager;
 
 // Tiled volume viewer: fixed-size canvas composed of a grid of tile
@@ -44,7 +45,7 @@ class CTiledVolumeViewer : public QWidget, public VolumeViewerBase
     Q_OBJECT
 
 public:
-    CTiledVolumeViewer(CSurfaceCollection* col, ViewerManager* manager,
+    CTiledVolumeViewer(CState* state, ViewerManager* manager,
                        QWidget* parent = nullptr);
     ~CTiledVolumeViewer();
 
@@ -280,7 +281,7 @@ private:
     std::weak_ptr<Surface> _surfWeak;
     std::shared_ptr<Surface> _defaultSurface;  // keeps alive for surfaceless remote volumes
     std::string _surfName;
-    CSurfaceCollection* _surfCol = nullptr;
+    CState* _state = nullptr;
     ViewerManager* _viewerManager = nullptr;
     VCCollection* _pointCollection = nullptr;
 

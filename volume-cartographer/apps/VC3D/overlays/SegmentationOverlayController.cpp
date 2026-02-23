@@ -1,6 +1,6 @@
 #include "SegmentationOverlayController.hpp"
 
-#include "../CSurfaceCollection.hpp"
+#include "../CState.hpp"
 #include "../tiled/CTiledVolumeViewer.hpp"
 #include "../VolumeViewerBase.hpp"
 #include "../ViewerManager.hpp"
@@ -143,12 +143,12 @@ bool SegmentationOverlayController::State::operator==(const State& rhs) const
            vec3fOptEqual(approvalHoverPlaneNormal, rhs.approvalHoverPlaneNormal);
 }
 
-SegmentationOverlayController::SegmentationOverlayController(CSurfaceCollection* surfaces, QObject* parent)
+SegmentationOverlayController::SegmentationOverlayController(CState* state, QObject* parent)
     : ViewerOverlayControllerBase(kOverlayGroupKey, parent)
-    , _surfaces(surfaces)
+    , _state(state)
 {
-    if (_surfaces) {
-        connect(_surfaces, &CSurfaceCollection::sendSurfaceChanged,
+    if (_state) {
+        connect(_state, &CState::surfaceChanged,
                 this, &SegmentationOverlayController::onSurfaceChanged);
     }
 }

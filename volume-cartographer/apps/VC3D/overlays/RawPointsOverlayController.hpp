@@ -1,13 +1,13 @@
 #pragma once
 
 #include "ViewerOverlayControllerBase.hpp"
-#include "../CSurfaceCollection.hpp"
-
 #include <memory>
 #include <optional>
 
 #include <opencv2/core.hpp>
 
+struct POI;
+class CState;
 class QuadSurface;
 
 // Overlay controller that displays the raw surface grid points
@@ -22,7 +22,7 @@ class RawPointsOverlayController : public ViewerOverlayControllerBase
     Q_OBJECT
 
 public:
-    explicit RawPointsOverlayController(CSurfaceCollection* surfaces, QObject* parent = nullptr);
+    explicit RawPointsOverlayController(CState* state, QObject* parent = nullptr);
     ~RawPointsOverlayController() override;
 
     // Enable/disable the overlay
@@ -73,7 +73,7 @@ private:
                                 QuadSurface* surface,
                                 OverlayBuilder& builder);
 
-    CSurfaceCollection* _surfaces{nullptr};
+    CState* _state{nullptr};
     bool _enabled{false};
     int _maxPoints{2000};
     int _gridRadius{50};  // Grid steps from POI for flattened view

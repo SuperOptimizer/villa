@@ -19,6 +19,8 @@ using PathPrimitive = ViewerOverlayControllerBase::PathPrimitive;
 using PathBrushShape = ViewerOverlayControllerBase::PathBrushShape;
 #include "vc/core/types/VolumePkg.hpp"
 
+class CState;
+
 
 /**
  * @brief Widget for freehand drawing on volume surfaces
@@ -34,12 +36,9 @@ public:
     explicit DrawingWidget(QWidget* parent = nullptr);
     ~DrawingWidget();
     
-    /** Set the volume package */
-    void setVolumePkg(std::shared_ptr<VolumePkg> vpkg);
-    
-    /** Set the current volume */
-    void setCurrentVolume(std::shared_ptr<Volume> volume);
-    
+    /** Set the application state (replaces setVolumePkg/setCurrentVolume) */
+    void setState(CState* state);
+
     /** Clear all drawn paths */
     void clearAllPaths();
     
@@ -140,10 +139,8 @@ private:
                               float eraserRadius, PathBrushShape brushShape) const;
 
 private:
-    // Volume data
-    std::shared_ptr<VolumePkg> fVpkg;
-    std::shared_ptr<Volume> currentVolume;
-    std::string currentVolumeId;
+    // Application state (owns volume/vpkg references)
+    CState* _state{nullptr};
     
     // Drawing state
     int currentPathId;

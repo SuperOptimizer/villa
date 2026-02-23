@@ -78,6 +78,71 @@ std::shared_ptr<VolumePkg> VolumePkg::New(const std::filesystem::path& fileLocat
     return std::make_shared<VolumePkg>(fileLocation);
 }
 
+VolumePkg::VolumePkg(const vc::RemoteScrollInfo& scrollInfo,
+                     const std::filesystem::path& cachePath)
+    : rootDir_(cachePath)
+    , isRemote_(true)
+{
+    config_ = nlohmann::json{
+        {"name", "RemoteScroll"},
+        {"version", 6}
+    };
+
+    for (const auto& volName : scrollInfo.volumeNames) {
+        std::string volumeUrl = scrollInfo.baseUrl + "/volumes/" + volName;
+        auto vol = Volume::NewFromUrl(volumeUrl, cachePath, scrollInfo.auth);
+        volumes_.emplace(vol->id(), vol);
+    }
+
+    const std::string& dlBase =
+        (scrollInfo.segmentSource == vc::RemoteSegmentSource::Direct)
+            ? scrollInfo.segmentsBaseUrl : scrollInfo.baseUrl;
+
+    for (const auto& segId : scrollInfo.segmentIds) {
+        try {
+            auto localDir = vc::downloadRemoteSegment(
+                dlBase, segId, cachePath, scrollInfo.auth, scrollInfo.segmentSource);
+
+            if (std::filesystem::exists(localDir / "meta.json")) {
+                auto seg = Segmentation::New(localDir);
+                segmentations_.emplace(seg->id(), seg);
+                segmentationDirectories_[seg->id()] = "paths";
+            }
+        } catch (const std::exception& e) {
+            Logger()->warn("Failed to load remote segment {}: {}", segId, e.what());
+        }
+    }
+}
+
+VolumePkg::VolumePkg(std::shared_ptr<Volume> vol,
+                     const std::filesystem::path& cachePath)
+    : rootDir_(cachePath)
+    , isRemote_(true)
+{
+    config_ = nlohmann::json{
+        {"name", "RemoteVolume"},
+        {"version", 6}
+    };
+
+    volumes_.emplace(vol->id(), std::move(vol));
+}
+
+std::shared_ptr<VolumePkg> VolumePkg::NewFromScrollInfo(
+    const vc::RemoteScrollInfo& scrollInfo,
+    const std::filesystem::path& cachePath)
+{
+    return std::shared_ptr<VolumePkg>(new VolumePkg(scrollInfo, cachePath));
+}
+
+std::shared_ptr<VolumePkg> VolumePkg::NewFromVolume(
+    std::shared_ptr<Volume> vol,
+    const std::filesystem::path& cachePath)
+{
+    return std::shared_ptr<VolumePkg>(new VolumePkg(std::move(vol), cachePath));
+}
+
+bool VolumePkg::isRemote() const { return isRemote_; }
+
 
 std::string VolumePkg::name() const
 {
@@ -259,6 +324,10 @@ auto VolumePkg::getVolpkgDirectory() const -> std::string
 
 auto VolumePkg::getAvailableSegmentationDirectories() const -> std::vector<std::string>
 {
+    if (isRemote_) {
+        return {"paths"};
+    }
+
     std::vector<std::string> dirs;
 
     // Check for common segmentation directories

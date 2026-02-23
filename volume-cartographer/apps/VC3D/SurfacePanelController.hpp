@@ -11,7 +11,7 @@
 #include <unordered_set>
 #include <vector>
 
-class CSurfaceCollection;
+class CState;
 class QLineEdit;
 class ViewerManager;
 class SurfaceTreeWidgetItem;
@@ -74,7 +74,7 @@ public:
     };
 
     SurfacePanelController(const UiRefs& ui,
-                           CSurfaceCollection* surfaces,
+                           CState* state,
                            ViewerManager* viewerManager,
                            std::function<CTiledVolumeViewer*()> segmentationViewerProvider,
                            std::function<void()> filtersUpdated,
@@ -171,7 +171,7 @@ private:
     std::shared_ptr<QuadSurface> getSurfaceById(const std::string& id) const;
 
     UiRefs _ui;
-    CSurfaceCollection* _surfaces{nullptr};
+    CState* _state{nullptr};
     ViewerManager* _viewerManager{nullptr};
     std::shared_ptr<VolumePkg> _volumePkg;
     std::function<CTiledVolumeViewer*()> _segmentationViewerProvider;

@@ -7,7 +7,6 @@
 #include "segmentation/SegmentationModule.hpp"
 #include "tiled/CTiledVolumeViewer.hpp"
 #include "CVolumeViewerView.hpp"
-#include "CSurfaceCollection.hpp"
 #include "CommandLineToolRunner.hpp"
 #include "SettingsDialog.hpp"
 #include "segmentation/SegmentationModule.hpp"
@@ -834,10 +833,6 @@ void MenuActionController::openRemoteScroll(
 
                     _window->CloseVolume();
 
-                    // Store remote scroll info for volume switching
-                    _window->_remoteScrollInfo = scrollInfo;
-                    _window->_remoteCachePath = cachePath;
-
                     _window->setVolume(result.volume);
 
                     if (!result.surfaces.empty()) {
@@ -1063,7 +1058,7 @@ void MenuActionController::toggleConsoleOutput()
 
 void MenuActionController::generateReviewReport()
 {
-    if (!_window || !_window->fVpkg) {
+    if (!_window || !_window->_state->vpkg()) {
         QMessageBox::warning(_window, QObject::tr("Error"), QObject::tr("No volume package loaded."));
         return;
     }
@@ -1086,8 +1081,8 @@ void MenuActionController::generateReviewReport()
     int totalReviewedCount = 0;
     double grandTotalArea = 0.0;
 
-    for (const auto& id : _window->fVpkg->getLoadedSurfaceIDs()) {
-        auto surf = _window->fVpkg->getSurface(id);
+    for (const auto& id : _window->_state->vpkg()->getLoadedSurfaceIDs()) {
+        auto surf = _window->_state->vpkg()->getSurface(id);
         if (!surf || !surf->meta) {
             continue;
         }
@@ -1188,7 +1183,7 @@ void MenuActionController::toggleCursorMirroring(bool enabled)
 
 void MenuActionController::surfaceFromSelection()
 {
-    if (!_window || !_window->_viewerManager || !_window->fVpkg) {
+    if (!_window || !_window->_viewerManager || !_window->_state->vpkg()) {
         return;
     }
 
@@ -1210,12 +1205,12 @@ void MenuActionController::surfaceFromSelection()
         return;
     }
 
-    if (_window->_surfID.empty() || !_window->fVpkg->getSurface(_window->_surfID)) {
+    if (_window->_state->activeSurfaceId().empty() || !_window->_state->vpkg()->getSurface(_window->_state->activeSurfaceId())) {
         _window->statusBar()->showMessage(QObject::tr("Select a segmentation first"), 3000);
         return;
     }
 
-    auto surf = _window->fVpkg->getSurface(_window->_surfID);
+    auto surf = _window->_state->vpkg()->getSurface(_window->_state->activeSurfaceId());
     std::filesystem::path baseSegPath = surf->path;
     std::filesystem::path parentDir = baseSegPath.parent_path();
 
@@ -1229,7 +1224,7 @@ void MenuActionController::surfaceFromSelection()
             continue;
         }
 
-        std::string newId = _window->_surfID + std::string("_sel_") + ts.toStdString() + std::string("_") + std::to_string(idx++);
+        std::string newId = _window->_state->activeSurfaceId() + std::string("_sel_") + ts.toStdString() + std::string("_") + std::to_string(idx++);
         std::filesystem::path outDir = parentDir / newId;
         try {
             filtered->save(outDir.string(), newId);
@@ -1289,7 +1284,7 @@ void MenuActionController::runTeleaInpaint()
 
     for (QTreeWidgetItem* item : selectedItems) {
         const std::string id = item->data(SURFACE_ID_COLUMN, Qt::UserRole).toString().toStdString();
-        auto surf = _window->fVpkg ? _window->fVpkg->getSurface(id) : nullptr;
+        auto surf = _window->_state->vpkg() ? _window->_state->vpkg()->getSurface(id) : nullptr;
         if (!surf) {
             ++failCount;
             continue;
@@ -1373,7 +1368,7 @@ void MenuActionController::runTeleaInpaint()
 
 void MenuActionController::importObjAsPatch()
 {
-    if (!_window || !_window->fVpkg) {
+    if (!_window || !_window->_state->vpkg()) {
         QMessageBox::warning(_window, QObject::tr("Error"), QObject::tr("No volume package loaded."));
         return;
     }
@@ -1388,8 +1383,8 @@ void MenuActionController::importObjAsPatch()
         return;
     }
 
-    auto pathsDirFs = std::filesystem::path(_window->fVpkg->getVolpkgDirectory()) /
-                      std::filesystem::path(_window->fVpkg->getSegmentationDirectory());
+    auto pathsDirFs = std::filesystem::path(_window->_state->vpkg()->getVolpkgDirectory()) /
+                      std::filesystem::path(_window->_state->vpkg()->getSegmentationDirectory());
     QString pathsDir = QString::fromStdString(pathsDirFs.string());
 
     QStringList successfulIds;
