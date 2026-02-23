@@ -4,8 +4,10 @@
 #include <QThread>
 #include <QTimer>
 #include <QImage>
+#include <algorithm>
 #include <vector>
 
+#include "vc/core/cache/TieredChunkCache.hpp"
 #include "vc/core/types/Volume.hpp"
 #include "vc/core/util/Surface.hpp"
 
@@ -53,6 +55,7 @@ void TileRenderController::onCameraChanged(
 
     if (epochChanged && volume) {
         volume->cancelPendingPrefetch();
+        volume->tieredCache()->setIOEpoch(camera.epoch);
     }
 
     // Store last render state for refinement retries
@@ -62,8 +65,8 @@ void TileRenderController::onCameraChanged(
     _lastBuildParams = buildParams;
     _lastViewportRect = viewportRect;
 
-    // Get visible tiles (+ 1 tile buffer for smooth scrolling)
-    auto visibleKeys = _tileScene->visibleTiles(viewportRect, 1);
+    // Get visible tiles (+ buffer for smooth scrolling)
+    auto visibleKeys = _tileScene->visibleTiles(viewportRect, tiled_config::VISIBLE_BUFFER_TILES);
 
     for (const auto& wk : visibleKeys) {
         SliceCacheKey cacheKey = SliceCacheKey::make(wk, camera, _paramsHash);
@@ -117,9 +120,10 @@ void TileRenderController::cancelAll()
 
 void TileRenderController::drainResults()
 {
-    // Take up to 32 results per drain cycle
-    auto results = _renderPool.drainCompleted(32, _currentEpoch);
+    // Take up to DRAIN_BATCH_SIZE results per drain cycle
+    auto results = _renderPool.drainCompleted(tiled_config::DRAIN_BATCH_SIZE, _currentEpoch);
 
+    bool anyUpdated = false;
 
     for (auto& result : results) {
         if (result.image.isNull()) {
@@ -145,8 +149,18 @@ void TileRenderController::drainResults()
         _cache.put(cacheKey, pixmap);
 
         // Apply to scene directly via world key
-        _tileScene->setTileWorld(result.worldKey, pixmap, result.epoch,
-                                 static_cast<int8_t>(result.actualLevel));
+        if (_tileScene->setTileWorld(result.worldKey, pixmap, result.epoch,
+                                     static_cast<int8_t>(result.actualLevel))) {
+            anyUpdated = true;
+        }
+    }
+
+    // Ensure the scene repaints after progressive refinement updates.
+    // QGraphicsPixmapItem::setPixmap() should trigger this automatically,
+    // but explicitly requesting an update guarantees the view refreshes
+    // even when updates arrive while the view is idle.
+    if (anyUpdated) {
+        emit sceneNeedsUpdate();
     }
 
     // Process pending viewport change (coalesced)
@@ -182,19 +196,34 @@ void TileRenderController::tick()
     //    Without the chunksJustArrived guard, idle pool + stale tiles = infinite loop.
     if (_progressiveEnabled && chunksJustArrived) {
         if (_lastSurface && _lastVolume && _lastBuildParams) {
-            auto stale = _tileScene->staleTilesInRect(_desiredLevel, _currentEpoch, _lastViewportRect, 1);
-            fprintf(stderr, "[TICK] chunk arrived, stale=%zu desiredLvl=%d epoch=%lu\n",
-                    stale.size(), _desiredLevel, (unsigned long)_currentEpoch);
+            auto stale = _tileScene->staleTilesInRect(_desiredLevel, _currentEpoch, _lastViewportRect, tiled_config::VISIBLE_BUFFER_TILES);
             if (!stale.empty()) {
-                for (const auto& wk : stale) {
-                    TileRenderParams params = _lastBuildParams(wk);
+                // Sort by distance to viewport center so the user sees
+                // center-of-screen tiles refine first.
+                const auto& b = _tileScene->bounds();
+                float cx = static_cast<float>(_lastViewportRect.center().x());
+                float cy = static_cast<float>(_lastViewportRect.center().y());
+                // Convert viewport center to fractional world-tile coords
+                float wcx = cx / TileScene::TILE_PX - 0.5f;
+                float wcy = cy / TileScene::TILE_PX - 0.5f;
+
+                std::sort(stale.begin(), stale.end(),
+                    [wcx, wcy](const WorldTileKey& a, const WorldTileKey& b) {
+                        float da = (a.worldCol - wcx) * (a.worldCol - wcx)
+                                 + (a.worldRow - wcy) * (a.worldRow - wcy);
+                        float db = (b.worldCol - wcx) * (b.worldCol - wcx)
+                                 + (b.worldRow - wcy) * (b.worldRow - wcy);
+                        return da < db;
+                    });
+
+                int maxRefine = std::min(static_cast<int>(stale.size()),
+                                         tiled_config::DRAIN_BATCH_SIZE);
+                for (int i = 0; i < maxRefine; i++) {
+                    TileRenderParams params = _lastBuildParams(stale[i]);
                     _renderPool.submit(params, _lastSurface, _lastVolume);
                 }
                 moreWork = true;
             }
-        } else {
-            fprintf(stderr, "[TICK] chunk arrived but missing state: surface=%d vol=%d params=%d\n",
-                    (bool)_lastSurface, (bool)_lastVolume, (bool)_lastBuildParams);
         }
     }
 
@@ -240,7 +269,7 @@ void TileRenderController::startZoomSettle()
 {
     _zoomSettlePending = true;
     ensureTickRunning();
-    _zoomSettleTicksLeft = 6;  // ~200ms at 33ms/tick
+    _zoomSettleTicksLeft = tiled_config::ZOOM_SETTLE_TICKS;  // ~200ms at 33ms/tick
 }
 
 void TileRenderController::cancelZoomSettle()

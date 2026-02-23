@@ -622,13 +622,21 @@ bool DrawingWidget::isValidVolumePoint(const cv::Vec3f& point) const
         return false;
     }
     
-    // Check if the point is within volume bounds
+    // Check if the point is within data bounds
     auto [w, h, d] = currentVolume->shape();
+    float x0 = 0, y0 = 0, z0 = 0;
+    float x1 = static_cast<float>(w), y1 = static_cast<float>(h), z1 = static_cast<float>(d);
+    const auto& db = currentVolume->dataBounds();
+    if (db.valid) {
+        x0 = static_cast<float>(db.minX); x1 = static_cast<float>(db.maxX);
+        y0 = static_cast<float>(db.minY); y1 = static_cast<float>(db.maxY);
+        z0 = static_cast<float>(db.minZ); z1 = static_cast<float>(db.maxZ);
+    }
 
-    if (point[0] >= w || point[1] >= h || point[2] >= d) {
+    if (point[0] < x0 || point[0] >= x1 || point[1] < y0 || point[1] >= y1 || point[2] < z0 || point[2] >= z1) {
         return false;
     }
-    
+
     return true;
 }
 

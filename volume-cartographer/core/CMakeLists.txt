@@ -28,6 +28,8 @@ add_library(vc_core
         src/cache/HttpMetadataFetcher.cpp
         src/RemoteUrl.cpp
         src/RemoteScroll.cpp
+        src/CoordGrid.cpp
+        src/PostProcess.cpp
         src/Geometry.cpp
         src/Thinning.cpp
         src/Umbilicus.cpp

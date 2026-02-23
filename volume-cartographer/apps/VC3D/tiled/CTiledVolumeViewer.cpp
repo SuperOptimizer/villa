@@ -87,6 +87,13 @@ CTiledVolumeViewer::CTiledVolumeViewer(CSurfaceCollection* col,
     // Set the scene on the view
     fGraphicsView->setScene(_scene);
 
+    // Force viewport repaint when progressive refinement updates tiles.
+    // QGraphicsPixmapItem::setPixmap() should auto-trigger this, but the
+    // explicit signal guarantees the view refreshes when updates arrive
+    // while the view is otherwise idle (no user interaction).
+    connect(_renderController, &TileRenderController::sceneNeedsUpdate,
+            this, [this]() { fGraphicsView->viewport()->update(); });
+
     // Read settings
     using namespace vc3d::settings;
     QSettings settings(vc3d::settingsFilePath(), QSettings::IniFormat);
@@ -138,7 +145,7 @@ void CTiledVolumeViewer::setPointCollection(VCCollection* pc)
 void CTiledVolumeViewer::setSurface(const std::string& name)
 {
     _surfName = name;
-    _surfWeak.reset();
+    // Don't reset _surfWeak here — onSurfaceChanged() will update it
     markActiveSegmentationDirty();
     onSurfaceChanged(name, _surfCol->surface(name));
 }
@@ -148,6 +155,11 @@ void CTiledVolumeViewer::setIntersects(const std::set<std::string>& set) { _inte
 Surface* CTiledVolumeViewer::currentSurface() const
 {
     if (!_surfCol) {
+        // NOTE: The returned raw pointer is only valid as long as the caller
+        // (or another shared_ptr elsewhere) keeps the Surface alive.
+        // _defaultSurface holds a shared_ptr that keeps the standalone
+        // surface alive for the lifetime of this viewer, so this is safe
+        // as long as callers don't stash the pointer across event loops.
         auto shared = _surfWeak.lock();
         return shared ? shared.get() : nullptr;
     }
@@ -178,10 +190,13 @@ void CTiledVolumeViewer::OnVolumeChanged(std::shared_ptr<Volume> vol)
         auto* ctrl = _renderController;
         auto* viewer = this;
         int coarsestLevel = static_cast<int>(_volume->numScales()) - 1;
-        _volume->tieredCache()->setChunkReadyCallback(
-            [ctrl, viewer, coarsestLevel](const vc::cache::ChunkKey& key) {
-                QMetaObject::invokeMethod(ctrl, [ctrl]() { ctrl->markChunkArrived(); },
-                                          Qt::QueuedConnection);
+        auto* cache = _volume->tieredCache();
+        cache->setChunkReadyCallback(
+            [ctrl, viewer, cache, coarsestLevel](const vc::cache::ChunkKey& key) {
+                QMetaObject::invokeMethod(ctrl, [ctrl, cache]() {
+                    ctrl->markChunkArrived();
+                    cache->clearChunkArrivedFlag();
+                }, Qt::QueuedConnection);
                 // Track coarsest-level pin progress for remote volumes
                 if (key.level == coarsestLevel && viewer->_pinTotal > 0) {
                     QMetaObject::invokeMethod(viewer, [viewer]() {
@@ -219,7 +234,15 @@ void CTiledVolumeViewer::OnVolumeChanged(std::shared_ptr<Volume> vol)
     bool isAxisAligned = (_surfName == "xy plane" || _surfName == "xz plane" || _surfName == "yz plane");
     if (!_surfWeak.lock() && _volume && isAxisAligned) {
         auto shape = _volume->shape();  // (z, y, x) at scale 0
-        cv::Vec3f center(shape[2] * 0.5f, shape[1] * 0.5f, shape[0] * 0.5f);
+        const auto& db = _volume->dataBounds();
+        cv::Vec3f center;
+        if (db.valid) {
+            center = cv::Vec3f((db.minZ + db.maxZ) * 0.5f,
+                               (db.minY + db.maxY) * 0.5f,
+                               (db.minX + db.maxX) * 0.5f);
+        } else {
+            center = cv::Vec3f(shape[2] * 0.5f, shape[1] * 0.5f, shape[0] * 0.5f);
+        }
         cv::Vec3f normal;
         if (_surfName == "xy plane") normal = cv::Vec3f(0, 0, 1);
         else if (_surfName == "xz plane") normal = cv::Vec3f(0, 1, 0);
@@ -260,13 +283,13 @@ void CTiledVolumeViewer::onSurfaceChanged(std::string name, std::shared_ptr<Surf
         if (!surf) {
             clearAllOverlayGroups();
             _tileScene->sceneCleared();
+            _cursor = nullptr;
+            _centerMarker = nullptr;
             _scene->clear();
             _intersectItems.clear();
             _sliceVisItems.clear();
             _paths.clear();
             emit overlaysUpdated();
-            _cursor = nullptr;
-            _centerMarker = nullptr;
             // Grid will be rebuilt when new surface is set
         } else {
             invalidateVis();
@@ -305,13 +328,13 @@ void CTiledVolumeViewer::onVolumeClosing()
     } else if (_surfName == "xy plane" || _surfName == "xz plane" || _surfName == "yz plane") {
         clearAllOverlayGroups();
         _tileScene->sceneCleared();
+        _cursor = nullptr;
+        _centerMarker = nullptr;
         _scene->clear();
         _intersectItems.clear();
         _sliceVisItems.clear();
         _paths.clear();
         emit overlaysUpdated();
-        _cursor = nullptr;
-        _centerMarker = nullptr;
         _contentBounds = ContentBounds{};
     } else {
         onSurfaceChanged(_surfName, nullptr);
@@ -343,6 +366,12 @@ void CTiledVolumeViewer::updateContentMinScale()
 
     if (_volume && (_surfName == "xy plane" || _surfName == "xz plane" || _surfName == "yz plane")) {
         auto [w, h, d] = _volume->shape();
+        const auto& db = _volume->dataBounds();
+        if (db.valid) {
+            w = db.maxX - db.minX + 1;
+            h = db.maxY - db.minY + 1;
+            d = db.maxZ - db.minZ + 1;
+        }
         if (_surfName == "xy plane") {
             contentW = static_cast<float>(w);
             contentH = static_cast<float>(h);
@@ -384,9 +413,16 @@ void CTiledVolumeViewer::rebuildContentGrid()
         if (auto* plane = dynamic_cast<PlaneSurface*>(surf.get())) {
             // Project volume bounding box corners onto the plane
             auto [w, h, d] = _volume->shape();
+            float x0 = 0, x1 = (float)w, y0 = 0, y1 = (float)h, z0 = 0, z1 = (float)d;
+            const auto& db = _volume->dataBounds();
+            if (db.valid) {
+                x0 = (float)db.minX; x1 = (float)db.maxX;
+                y0 = (float)db.minY; y1 = (float)db.maxY;
+                z0 = (float)db.minZ; z1 = (float)db.maxZ;
+            }
             float corners[][3] = {
-                {0,0,0}, {(float)w,0,0}, {0,(float)h,0}, {(float)w,(float)h,0},
-                {0,0,(float)d}, {(float)w,0,(float)d}, {0,(float)h,(float)d}, {(float)w,(float)h,(float)d}
+                {x0,y0,z0}, {x1,y0,z0}, {x0,y1,z0}, {x1,y1,z0},
+                {x0,y0,z1}, {x1,y0,z1}, {x0,y1,z1}, {x1,y1,z1}
             };
             contentMinX = contentMinY = std::numeric_limits<float>::max();
             contentMaxX = contentMaxY = std::numeric_limits<float>::lowest();
@@ -451,6 +487,20 @@ void CTiledVolumeViewer::panBy(int dx, int dy)
     const float invScale = 1.0f / _camera.scale;
     _camera.surfacePtr[0] -= dx * invScale;
     _camera.surfacePtr[1] -= dy * invScale;
+
+    // Clamp pan to content bounds (derived from data bounds)
+    if (_contentBounds.totalCols > 0 && _contentBounds.totalRows > 0) {
+        float minU = _contentBounds.firstWorldCol * _contentBounds.worldTileSize;
+        float maxU = (_contentBounds.firstWorldCol + _contentBounds.totalCols) * _contentBounds.worldTileSize;
+        float minV = _contentBounds.firstWorldRow * _contentBounds.worldTileSize;
+        float maxV = (_contentBounds.firstWorldRow + _contentBounds.totalRows) * _contentBounds.worldTileSize;
+        _camera.surfacePtr[0] = std::clamp(_camera.surfacePtr[0], minU, maxU);
+        _camera.surfacePtr[1] = std::clamp(_camera.surfacePtr[1], minV, maxV);
+    }
+
+    _renderScale = _camera.scale;
+    _renderSurfacePtr = _camera.surfacePtr;
+
     centerViewport();
     submitRender();
     updateStatusLabel();
@@ -546,9 +596,17 @@ void CTiledVolumeViewer::onZoom(int steps, QPointF scene_point, Qt::KeyboardModi
 
             if (_volume) {
                 auto [w, h, d] = _volume->shape();
-                newPosition[0] = std::clamp(newPosition[0], 0.0f, static_cast<float>(w - 1));
-                newPosition[1] = std::clamp(newPosition[1], 0.0f, static_cast<float>(h - 1));
-                newPosition[2] = std::clamp(newPosition[2], 0.0f, static_cast<float>(d - 1));
+                float cx0 = 0, cy0 = 0, cz0 = 0;
+                float cx1 = static_cast<float>(w - 1), cy1 = static_cast<float>(h - 1), cz1 = static_cast<float>(d - 1);
+                const auto& db = _volume->dataBounds();
+                if (db.valid) {
+                    cx0 = static_cast<float>(db.minX); cx1 = static_cast<float>(db.maxX);
+                    cy0 = static_cast<float>(db.minY); cy1 = static_cast<float>(db.maxY);
+                    cz0 = static_cast<float>(db.minZ); cz1 = static_cast<float>(db.maxZ);
+                }
+                newPosition[0] = std::clamp(newPosition[0], cx0, cx1);
+                newPosition[1] = std::clamp(newPosition[1], cy0, cy1);
+                newPosition[2] = std::clamp(newPosition[2], cz0, cz1);
             }
 
             focus->p = newPosition;
@@ -563,12 +621,11 @@ void CTiledVolumeViewer::onZoom(int steps, QPointF scene_point, Qt::KeyboardModi
         int zoomDir = (steps > 0) ? 1 : (steps < 0) ? -1 : 0;
         if (zoomDir != 0) {
             zoomStepsAt(zoomDir, scene_point);
-            emit overlaysUpdated();
         }
     }
 
     updateStatusLabel();
-    _renderController->markOverlaysDirty();
+    invalidateOverlays();
 }
 
 void CTiledVolumeViewer::adjustZoomByFactor(float factor)
@@ -585,17 +642,15 @@ void CTiledVolumeViewer::adjustZoomByFactor(float factor)
     QPointF sceneCenter = fGraphicsView->mapToScene(vpCenter.toPoint());
     zoomStepsAt(steps, sceneCenter);
 
-    emit overlaysUpdated();
     updateStatusLabel();
-    _renderController->markOverlaysDirty();
+    invalidateOverlays();
 }
 
 void CTiledVolumeViewer::adjustSurfaceOffset(float dn)
 {
     setSliceOffset(dn);
-    emit overlaysUpdated();
     updateStatusLabel();
-    _renderController->markOverlaysDirty();
+    invalidateOverlays();
 }
 
 void CTiledVolumeViewer::resetSurfaceOffsets()
@@ -603,9 +658,8 @@ void CTiledVolumeViewer::resetSurfaceOffsets()
     _camera.zOff = 0.0f;
     _camera.invalidate();
     submitRender();
-    emit overlaysUpdated();
     updateStatusLabel();
-    _renderController->markOverlaysDirty();
+    invalidateOverlays();
 }
 
 // ============================================================================
@@ -620,6 +674,10 @@ void CTiledVolumeViewer::onPanStart(Qt::MouseButton /*buttons*/, Qt::KeyboardMod
     // We need to intercept the mouse move deltas instead.
     // Store current mouse pos for delta computation
     _lastPanPos = QCursor::pos();
+
+    // Record viewport center in scene coords for predictive prefetch
+    QRectF vp = viewportSceneRect();
+    _lastPanScenePos = vp.center();
 }
 
 void CTiledVolumeViewer::onPanRelease(Qt::MouseButton /*buttons*/, Qt::KeyboardModifiers /*modifiers*/)
@@ -713,6 +771,31 @@ void CTiledVolumeViewer::submitRender()
     auto buildParams = [this](const WorldTileKey& wk) { return buildRenderParams(wk); };
     _renderController->scheduleRender(_camera, surf, _volume.get(), buildParams, vpRect);
 
+    // Compute prefetch viewport: extend in pan direction for predictive prefetch
+    QRectF prefetchRect = vpRect;
+    if (_isPanning) {
+        QPointF currentCenter = vpRect.center();
+        QPointF delta = currentCenter - _lastPanScenePos;
+        _lastPanScenePos = currentCenter;
+
+        // Extend viewport by 1 tile width in the direction of pan movement
+        const float tileExtent = static_cast<float>(TileScene::TILE_PX);
+        if (std::abs(delta.x()) > 0.5 || std::abs(delta.y()) > 0.5) {
+            // Normalize delta and scale by tile extent
+            double len = std::sqrt(delta.x() * delta.x() + delta.y() * delta.y());
+            double nx = delta.x() / len;
+            double ny = delta.y() / len;
+            double extX = nx * tileExtent;
+            double extY = ny * tileExtent;
+
+            // Extend the rect in the direction of movement
+            if (extX > 0) prefetchRect.setRight(prefetchRect.right() + extX);
+            else           prefetchRect.setLeft(prefetchRect.left() + extX);
+            if (extY > 0) prefetchRect.setBottom(prefetchRect.bottom() + extY);
+            else           prefetchRect.setTop(prefetchRect.top() + extY);
+        }
+    }
+
     // Viewport-aware prefetch
     if (_volume->tieredCache()) {
         auto* plane = dynamic_cast<PlaneSurface*>(surf.get());
@@ -721,8 +804,8 @@ void CTiledVolumeViewer::submitRender()
             const float margin = TileScene::TILE_PX * invScale;
 
             // Get viewport extent in surface params
-            cv::Vec2f vpTopLeft = _tileScene->sceneToSurface(QPointF(vpRect.left(), vpRect.top()));
-            cv::Vec2f vpBotRight = _tileScene->sceneToSurface(QPointF(vpRect.right(), vpRect.bottom()));
+            cv::Vec2f vpTopLeft = _tileScene->sceneToSurface(QPointF(prefetchRect.left(), prefetchRect.top()));
+            cv::Vec2f vpBotRight = _tileScene->sceneToSurface(QPointF(prefetchRect.right(), prefetchRect.bottom()));
 
             const float uMin = vpTopLeft[0] - margin * invScale;
             const float uMax = vpBotRight[0] + margin * invScale;
@@ -752,6 +835,65 @@ void CTiledVolumeViewer::submitRender()
                     lo[i] = std::min(lo[i], c[i]);
                     hi[i] = std::max(hi[i], c[i]);
                 }
+            }
+            const auto& db = _volume->dataBounds();
+            if (db.valid) {
+                lo[0] = std::max(lo[0], static_cast<float>(db.minX));
+                lo[1] = std::max(lo[1], static_cast<float>(db.minY));
+                lo[2] = std::max(lo[2], static_cast<float>(db.minZ));
+                hi[0] = std::min(hi[0], static_cast<float>(db.maxX));
+                hi[1] = std::min(hi[1], static_cast<float>(db.maxY));
+                hi[2] = std::min(hi[2], static_cast<float>(db.maxZ));
+                if (lo[0] > hi[0] || lo[1] > hi[1] || lo[2] > hi[2]) return;
+            }
+            _volume->prefetchWorldBBox(lo, hi, _camera.dsScaleIdx);
+        } else {
+            // Non-plane surfaces: compute bounding box from viewport corners
+            QRectF vp = prefetchRect;
+            cv::Vec2f corners2d[4] = {
+                _tileScene->sceneToSurface(QPointF(vp.left(), vp.top())),
+                _tileScene->sceneToSurface(QPointF(vp.right(), vp.top())),
+                _tileScene->sceneToSurface(QPointF(vp.left(), vp.bottom())),
+                _tileScene->sceneToSurface(QPointF(vp.right(), vp.bottom())),
+            };
+
+            // Generate 3D coords at each corner to get world-space bounding box
+            cv::Vec3f lo(std::numeric_limits<float>::max(),
+                         std::numeric_limits<float>::max(),
+                         std::numeric_limits<float>::max());
+            cv::Vec3f hi(std::numeric_limits<float>::lowest(),
+                         std::numeric_limits<float>::lowest(),
+                         std::numeric_limits<float>::lowest());
+
+            for (const auto& c2 : corners2d) {
+                cv::Mat_<cv::Vec3f> pt;
+                surf->gen(&pt, nullptr, cv::Size(1, 1), cv::Vec3f(0, 0, 0),
+                          _camera.scale,
+                          {c2[0] * _camera.scale, c2[1] * _camera.scale, _camera.zOff});
+                if (pt.empty()) continue;
+                const cv::Vec3f& v = pt(0, 0);
+                for (int i = 0; i < 3; i++) {
+                    lo[i] = std::min(lo[i], v[i]);
+                    hi[i] = std::max(hi[i], v[i]);
+                }
+            }
+
+            // Add margin for interpolation + scrolling
+            float margin = TileScene::TILE_PX / _camera.scale;
+            for (int i = 0; i < 3; i++) {
+                lo[i] -= margin;
+                hi[i] += margin;
+            }
+
+            const auto& db = _volume->dataBounds();
+            if (db.valid) {
+                lo[0] = std::max(lo[0], static_cast<float>(db.minX));
+                lo[1] = std::max(lo[1], static_cast<float>(db.minY));
+                lo[2] = std::max(lo[2], static_cast<float>(db.minZ));
+                hi[0] = std::min(hi[0], static_cast<float>(db.maxX));
+                hi[1] = std::min(hi[1], static_cast<float>(db.maxY));
+                hi[2] = std::min(hi[2], static_cast<float>(db.maxZ));
+                if (lo[0] > hi[0] || lo[1] > hi[1] || lo[2] > hi[2]) return;
             }
             _volume->prefetchWorldBBox(lo, hi, _camera.dsScaleIdx);
         }
@@ -867,7 +1009,7 @@ bool CTiledVolumeViewer::sceneToVolumeHelper(cv::Vec3f& p, cv::Vec3f& n,
         cv::Vec3f ptr(0, 0, 0);
         n = surf->normal(ptr, surfLoc);
         p = surf->coord(ptr, surfLoc);
-    } catch (const cv::Exception&) {
+    } catch (const std::exception&) {
         return false;
     }
     return true;
@@ -1192,7 +1334,7 @@ void CTiledVolumeViewer::fitSurfaceInView()
 
     auto surf = _surfWeak.lock();
     if (!surf || !dynamic_cast<QuadSurface*>(surf.get())) {
-        // No surface (e.g. remote volume only) — reset to volume center at scale 1
+        // No surface (e.g. remote volume only) — reset to data center at scale 1
         _camera.scale = 1.0f;
         _camera.surfacePtr = cv::Vec3f(0, 0, 0);
         _camera.zOff = 0;
@@ -1392,6 +1534,12 @@ void CTiledVolumeViewer::clearAllOverlayGroups()
         }
     }
     _overlayGroups.clear();
+}
+
+void CTiledVolumeViewer::invalidateOverlays()
+{
+    _renderController->markOverlaysDirty();
+    emit overlaysUpdated();
 }
 
 void CTiledVolumeViewer::updateAllOverlays()

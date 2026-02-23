@@ -71,7 +71,11 @@ void RenderPool::submit(const TileRenderParams& params,
 {
     _pendingCount.fetch_add(1, std::memory_order_relaxed);
     auto* task = new TileRenderTask(params, surface, volume, this);
-    _pool->start(task);
+    // Coarser pyramid levels (higher dsScaleIdx) get higher priority so
+    // fallback previews appear before fine tiles.  QThreadPool runs higher
+    // priority values first.
+    int priority = 100 - params.dsScaleIdx;
+    _pool->start(task, priority);
 }
 
 std::vector<TileRenderResult> RenderPool::drainCompleted(int maxResults, uint64_t minEpoch)

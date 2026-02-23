@@ -95,6 +95,9 @@ public:
     // Cancel all pending (not in-flight) prefetch tasks.
     void cancelPendingPrefetch();
 
+    // Set the IO pool epoch. Tasks from the current epoch get higher priority.
+    void setIOEpoch(uint64_t epoch);
+
     // --- Cache management ---
 
     // Pin all chunks at a pyramid level: load them into hot and mark non-evictable.
@@ -118,10 +121,30 @@ public:
     // Full dataset shape at a given level, in {z, y, x} order.
     std::array<int, 3> levelShape(int level) const;
 
+    // --- Logical data bounds (level-0 voxel coords, x/y/z order) ---
+    // Set by Volume after scanning the coarsest level for non-zero data.
+    // Used by CacheParams/ChunkSampler to skip chunks in zero-padded regions.
+    struct DataBoundsL0 {
+        int minX = 0, maxX = 0;
+        int minY = 0, maxY = 0;
+        int minZ = 0, maxZ = 0;
+        bool valid = false;
+    };
+
+    void setDataBounds(int minX, int maxX, int minY, int maxY, int minZ, int maxZ);
+    DataBoundsL0 dataBounds() const;
+
     // Check if a chunk is negative-cached (known to not exist on source).
     // In zarr format, missing chunks contain the fill value (zeros),
     // so callers should treat negative-cached chunks as available.
     bool isNegativeCached(const ChunkKey& key) const;
+
+    // Batch check: are ALL chunks in a region either hot-cached or
+    // negative-cached?  Acquires each lock only once, avoiding the
+    // per-chunk lock overhead of calling get()+isNegativeCached() in a loop.
+    bool areAllCachedInRegion(int level,
+                              int iz0, int iy0, int ix0,
+                              int iz1, int iy1, int ix1) const;
 
     // --- Notifications ---
 
@@ -129,6 +152,10 @@ public:
     // Caller should bounce to main thread (e.g., via QMetaObject::invokeMethod).
     using ChunkReadyCallback = std::function<void(const ChunkKey&)>;
     void setChunkReadyCallback(ChunkReadyCallback cb);
+
+    // Clear the chunk-arrived debounce flag. Call this after processing
+    // the chunk-ready callback to allow the next notification.
+    void clearChunkArrivedFlag();
 
     // --- Stats ---
 
@@ -178,7 +205,7 @@ private:
                  size_t decompressedSize);
     void warmEvictIfNeeded();
 
-    mutable std::mutex warmMutex_;
+    mutable std::shared_mutex warmMutex_;
     std::unordered_map<ChunkKey, WarmEntry, ChunkKeyHash> warm_;
     size_t warmBytes_ = 0;
     uint64_t warmGen_ = 0;
@@ -235,7 +262,12 @@ private:
     // IO completion handler (called from worker thread).
     void onIOComplete(const ChunkKey& key, std::vector<uint8_t>&& compressed);
 
+    mutable std::mutex callbackMutex_;
     ChunkReadyCallback chunkReadyCb_;
+    std::atomic<bool> chunkArrivedFlag_{false};
+
+    // --- Logical data bounds ---
+    DataBoundsL0 dataBoundsL0_;
 
     // --- Stats ---
     mutable std::atomic<uint64_t> statHotHits_{0};

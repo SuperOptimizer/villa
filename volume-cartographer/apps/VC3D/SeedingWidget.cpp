@@ -536,7 +536,7 @@ void SeedingWidget::computeDistanceTransform()
     }
     
     // Read the slice data using the volume's dataset
-    readInterpolated3D(sliceData, currentVolume->tieredCache(), 0, coords);
+    currentVolume->sample(sliceData, coords, vc::SampleParams{});
     
     // Threshold the slice to create a binary image for distance transform
     cv::Mat binaryImage;
@@ -597,24 +597,32 @@ void SeedingWidget::findPeaksAlongRay(
     
     const int maxRadius = maxRadiusSpinBox->value();
     auto [width, height, depth] = currentVolume->shape();
-    
+    float bx0 = 0, by0 = 0, bz0 = 0;
+    float bx1 = static_cast<float>(width), by1 = static_cast<float>(height), bz1 = static_cast<float>(depth);
+    const auto& db = currentVolume->dataBounds();
+    if (db.valid) {
+        bx0 = static_cast<float>(db.minX); bx1 = static_cast<float>(db.maxX);
+        by0 = static_cast<float>(db.minY); by1 = static_cast<float>(db.maxY);
+        bz0 = static_cast<float>(db.minZ); bz1 = static_cast<float>(db.maxZ);
+    }
+
     std::vector<float> intensities;
     std::vector<cv::Vec3f> positions;
-    
+
     // Get the window size from the spinbox
     const int window = windowSizeSpinBox->value();
-    
+
     // Trace ray up to max radius (assuming ray is in XY plane for now)
     for (int dist = 1; dist < maxRadius; dist++) {
         cv::Vec3f point;
         point[0] = startPoint[0] + dist * rayDir[0];
         point[1] = startPoint[1] + dist * rayDir[1];
         point[2] = startPoint[2]; // Keep Z constant for now (ray in XY plane)
-        
-        // Check bounds
-        if (point[0] < 0 || point[0] >= width || 
-            point[1] < 0 || point[1] >= height ||
-            point[2] < 0 || point[2] >= depth) {
+
+        // Check bounds against data region
+        if (point[0] < bx0 || point[0] >= bx1 ||
+            point[1] < by0 || point[1] >= by1 ||
+            point[2] < bz0 || point[2] >= bz1) {
             break;
         }
         
@@ -623,7 +631,7 @@ void SeedingWidget::findPeaksAlongRay(
         coord(0, 0) = point;
         
         cv::Mat_<uint8_t> intensity(1, 1);
-        readInterpolated3D(intensity, currentVolume->tieredCache(), 0, coord);
+        currentVolume->sample(intensity, coord, vc::SampleParams{});
 
         // Store intensity and position
         intensities.push_back(intensity(0, 0));
@@ -1055,18 +1063,26 @@ void SeedingWidget::findPeaksAlongPath(const PathPrimitive& path)
     // densify the path so we don't skip over small surfaces when drawing
     PathPrimitive densifiedPath = path.densify(0.5f); // Sample every 0.5 pixels
 
-    // Get volume dimensions for bounds checking
+    // Get data bounds for bounds checking
     auto [width, height, depth] = currentVolume->shape();
-    
+    float bx0 = 0, by0 = 0, bz0 = 0;
+    float bx1 = static_cast<float>(width), by1 = static_cast<float>(height), bz1 = static_cast<float>(depth);
+    const auto& db = currentVolume->dataBounds();
+    if (db.valid) {
+        bx0 = static_cast<float>(db.minX); bx1 = static_cast<float>(db.maxX);
+        by0 = static_cast<float>(db.minY); by1 = static_cast<float>(db.maxY);
+        bz0 = static_cast<float>(db.minZ); bz1 = static_cast<float>(db.maxZ);
+    }
+
     std::vector<float> intensities;
     std::vector<cv::Vec3f> positions;
-    
+
     // Read intensity values at each point along the (denser) path
     for (const auto& pt : densifiedPath.points) {
-        // Check bounds
-        if (pt[0] >= 0 && pt[0] < width && 
-            pt[1] >= 0 && pt[1] < height && 
-            pt[2] >= 0 && pt[2] < depth) {
+        // Check bounds against data region
+        if (pt[0] >= bx0 && pt[0] < bx1 &&
+            pt[1] >= by0 && pt[1] < by1 &&
+            pt[2] >= bz0 && pt[2] < bz1) {
             
             // Create a single-point coordinate matrix for reading
             cv::Mat_<cv::Vec3f> coord(1, 1);
@@ -1074,7 +1090,7 @@ void SeedingWidget::findPeaksAlongPath(const PathPrimitive& path)
             
             // Read the intensity value at this 3D point
             cv::Mat_<uint8_t> intensity(1, 1);
-            readInterpolated3D(intensity, currentVolume->tieredCache(), 0, coord);
+            currentVolume->sample(intensity, coord, vc::SampleParams{});
 
             intensities.push_back(intensity(0, 0));
             positions.push_back(pt);
@@ -1266,18 +1282,26 @@ void SeedingWidget::findPeaksAlongPathToCollection(const PathPrimitive& path, co
     PathPrimitive densifiedPath = path.densify(0.5f);
 
     auto [width, height, depth] = currentVolume->shape();
+    float bx0 = 0, by0 = 0, bz0 = 0;
+    float bx1 = static_cast<float>(width), by1 = static_cast<float>(height), bz1 = static_cast<float>(depth);
+    const auto& db = currentVolume->dataBounds();
+    if (db.valid) {
+        bx0 = static_cast<float>(db.minX); bx1 = static_cast<float>(db.maxX);
+        by0 = static_cast<float>(db.minY); by1 = static_cast<float>(db.maxY);
+        bz0 = static_cast<float>(db.minZ); bz1 = static_cast<float>(db.maxZ);
+    }
 
     std::vector<float> intensities;
     std::vector<cv::Vec3f> positions;
 
     for (const auto& pt : densifiedPath.points) {
-        if (pt[0] >= 0 && pt[0] < width &&
-            pt[1] >= 0 && pt[1] < height &&
-            pt[2] >= 0 && pt[2] < depth) {
+        if (pt[0] >= bx0 && pt[0] < bx1 &&
+            pt[1] >= by0 && pt[1] < by1 &&
+            pt[2] >= bz0 && pt[2] < bz1) {
             cv::Mat_<cv::Vec3f> coord(1, 1);
             coord(0, 0) = pt;
             cv::Mat_<uint8_t> intensity(1, 1);
-            readInterpolated3D(intensity, currentVolume->tieredCache(), 0, coord);
+            currentVolume->sample(intensity, coord, vc::SampleParams{});
             intensities.push_back(intensity(0, 0));
             positions.push_back(pt);
         }

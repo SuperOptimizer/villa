@@ -62,6 +62,15 @@ struct ContentBounds {
     }
 };
 
+// Shared configuration constants for the tiled renderer subsystem.
+// TILE_PX lives in TileScene (tightly coupled to grid layout).
+namespace tiled_config {
+    constexpr int VISIBLE_BUFFER_TILES = 1;   // extra tiles around viewport for smooth scrolling
+    constexpr int MAX_COARSER_LEVELS   = 8;   // fallback levels searched in SliceCache::getBest()
+    constexpr int ZOOM_SETTLE_TICKS    = 6;   // ticks before zoom settle fires (~200ms at 33ms/tick)
+    constexpr int DRAIN_BATCH_SIZE     = 32;  // max results drained per tick cycle
+}
+
 // Per-tile metadata for staleness checks during progressive rendering.
 struct TileMetadata {
     uint64_t epoch = 0;
@@ -115,13 +124,13 @@ public:
 
     // Get world tile keys visible in the given viewport scene rect (+ buffer tiles).
     std::vector<WorldTileKey> visibleTiles(const QRectF& viewportSceneRect,
-                                            int buffer = 1) const;
+                                            int buffer = tiled_config::VISIBLE_BUFFER_TILES) const;
 
     // Returns world keys of tiles whose rendered level is worse than desiredLevel,
     // limited to tiles visible in the given viewport rect.
     std::vector<WorldTileKey> staleTilesInRect(int desiredLevel, uint64_t epoch,
                                                 const QRectF& viewportSceneRect,
-                                                int buffer = 1) const;
+                                                int buffer = tiled_config::VISIBLE_BUFFER_TILES) const;
 
     // Iterate all tile keys (grid-local)
     template<typename Func>

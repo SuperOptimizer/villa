@@ -844,14 +844,6 @@ std::optional<cv::Vec3f> SegmentationPushPullTool::computeAlphaTarget(const cv::
         datasetIndex = std::clamp(datasetIndex, 0, static_cast<int>(scaleCount) - 1);
     }
 
-    auto* cache = volume->tieredCache();
-    if (!cache) {
-        if (outUnavailable) {
-            *outUnavailable = true;
-        }
-        return std::nullopt;
-    }
-
     float scale = viewer->datasetScaleFactor();
     if (!std::isfinite(scale) || scale <= 0.0f) {
         scale = 1.0f;
@@ -888,7 +880,9 @@ std::optional<cv::Vec3f> SegmentationPushPullTool::computeAlphaTarget(const cv::
     for (float offset = start; offset <= stop + 1e-4f; offset += step) {
         cv::Mat_<uint8_t> slice;
         cv::Mat_<cv::Vec3f> offsetMat(patchSize, orientedNormal * (offset * scale));
-        readInterpolated3D(slice, cache, datasetIndex, coords + offsetMat);
+        vc::SampleParams sp;
+        sp.level = datasetIndex;
+        volume->sample(slice, coords + offsetMat, sp);
         if (slice.empty()) {
             continue;
         }

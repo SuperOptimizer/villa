@@ -1,9 +1,6 @@
 #include "vc/core/util/Surface.hpp"
 #include "vc/core/util/QuadSurface.hpp"
-#include "vc/core/util/Slicing.hpp"
-#include "vc/core/cache/SimpleCacheFactory.hpp"
 #include "vc/core/types/Volume.hpp"
-#include "vc/core/types/VcDataset.hpp"
 #include <opencv2/imgcodecs.hpp>
 #include <iostream>
 #include <opencv2/imgproc.hpp>
@@ -14,16 +11,17 @@ namespace fs = std::filesystem;
 void generate_mask(QuadSurface* surf,
                             cv::Mat_<uint8_t>& mask,
                             cv::Mat_<uint8_t>& img,
-                            vc::cache::TieredChunkCache* cache_high = nullptr,
-                            vc::cache::TieredChunkCache* cache_low = nullptr) {
+                            Volume* volume = nullptr) {
     cv::Mat_<cv::Vec3f> points = surf->rawPoints();
     cv::Mat_<uint8_t> rawMask = surf->validMask();
 
     // Choose resolution based on surface size
     if (points.cols >= 4000) {
-        // Large surface: work at 0.25x scale
-        if (cache_low) {
-            readInterpolated3D(img, cache_low, 0, points * 0.25);
+        // Large surface: work at 0.25x scale using pyramid level 2
+        if (volume) {
+            vc::SampleParams sp;
+            sp.level = 2;
+            volume->sample(img, points, sp);
         } else {
             img.create(points.size());
             img.setTo(0);
@@ -35,8 +33,8 @@ void generate_mask(QuadSurface* surf,
         cv::Vec2f scale = surf->scale();
         cv::resize(points, scaled, {0,0}, 1.0/scale[0], 1.0/scale[1], cv::INTER_CUBIC);
 
-        if (cache_high) {
-            readInterpolated3D(img, cache_high, 0, scaled);
+        if (volume) {
+            volume->sample(img, scaled, vc::SampleParams{});
             cv::resize(img, img, {0,0}, 0.25, 0.25, cv::INTER_CUBIC);
         } else {
             img.create(cv::Size(points.cols/4.0, points.rows/4.0));
@@ -100,14 +98,8 @@ int main(int argc, char *argv[])
     if (!volume_path.empty()) {
         try {
             auto volume = Volume::New(volume_path);
-            auto cache_high = vc::cache::createSimpleTieredCache(
-                volume->zarrDataset(0), 512ULL << 20, volume->zarrDataset(0)->path());
-            auto cache_low = vc::cache::createSimpleTieredCache(
-                volume->zarrDataset(2), 512ULL << 20, volume->zarrDataset(2)->path());
 
-            generate_mask(surf.get(), mask, img,
-                         cache_high.get(),
-                         cache_low.get());
+            generate_mask(surf.get(), mask, img, volume.get());
 
             // Save as multi-layer TIFF
             std::vector<cv::Mat> layers = {mask, img};

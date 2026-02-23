@@ -216,7 +216,9 @@ std::vector<WorldTileKey> TileScene::staleTilesInRect(int desiredLevel, uint64_t
     std::vector<WorldTileKey> result;
     for (int r = firstRow; r <= lastRow; ++r) {
         for (int c = firstCol; c <= lastCol; ++c) {
-            const auto& m = _meta[r * _bounds.totalCols + c];
+            size_t idx = static_cast<size_t>(r) * _bounds.totalCols + c;
+            if (idx >= _meta.size()) continue;
+            const auto& m = _meta[idx];
             if (m.epoch == epoch && (m.level < 0 || m.level > desiredLevel)) {
                 result.push_back(_bounds.worldKeyAt(c, r));
             }

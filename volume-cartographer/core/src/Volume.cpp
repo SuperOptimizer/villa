@@ -16,6 +16,8 @@
 #include "vc/core/cache/DiskStore.hpp"
 #include "vc/core/cache/HttpMetadataFetcher.hpp"
 #include "vc/core/util/RemoteUrl.hpp"
+#include "vc/core/util/CoordGrid.hpp"
+#include "vc/core/util/PostProcess.hpp"
 #include "vc/core/types/VcDataset.hpp"
 
 static const std::filesystem::path METADATA_FILE = "meta.json";
@@ -322,211 +324,238 @@ void Volume::setDiskStore(std::shared_ptr<vc::cache::DiskStore> store)
 }
 
 // ============================================================================
-// Sampling
+// Sampling API
 // ============================================================================
+
+// Helper: apply optional post-processing from SampleParams in-place.
+static void applyOptionalPostProcess(cv::Mat_<uint8_t>& img,
+                                     const vc::SampleParams& params)
+{
+    if (!params.postProcess) return;
+    const auto& pp = *params.postProcess;
+    vc::PostProcessParams coreParams;
+    coreParams.windowLow = pp.windowLow;
+    coreParams.windowHigh = pp.windowHigh;
+    coreParams.stretchValues = pp.stretchValues;
+    coreParams.postStretchValues = pp.postStretchValues;
+    coreParams.removeSmallComponents = pp.removeSmallComponents;
+    coreParams.minComponentSize = pp.minComponentSize;
+    coreParams.isoCutoff = pp.isoCutoff;
+    vc::applyPostProcess(img, coreParams);
+}
+
+// Helper: scale level-0 coords to pyramid level coords.
+static cv::Mat_<cv::Vec3f> scaleCoords(const cv::Mat_<cv::Vec3f>& coords, int level)
+{
+    if (level <= 0) return coords;
+    float scale = 1.0f / static_cast<float>(1 << level);
+    return coords * scale;
+}
 
 void Volume::sample(cv::Mat_<uint8_t>& out,
                     const cv::Mat_<cv::Vec3f>& coords,
-                    int level, vc::Sampling method)
+                    const vc::SampleParams& params)
 {
-    float scale = 1.0f / std::pow(2.0f, level);
-    cv::Mat_<cv::Vec3f> scaled;
-    if (level > 0) {
-        scaled = coords * scale;
-    } else {
-        scaled = coords;
-    }
-    readInterpolated3D(out, tieredCache(), level, scaled, method);
+    auto scaled = scaleCoords(coords, params.level);
+    readInterpolated3D(out, tieredCache(), params.level, scaled, params.method);
+    applyOptionalPostProcess(out, params);
 }
 
-void Volume::sampleComposite(cv::Mat_<uint8_t>& out,
-                              const cv::Mat_<cv::Vec3f>& baseCoords,
-                              const cv::Mat_<cv::Vec3f>& normals,
-                              int zStart, int zEnd,
-                              const CompositeParams& params,
-                              int level)
+void Volume::sample(cv::Mat_<uint16_t>& out,
+                    const cv::Mat_<cv::Vec3f>& coords,
+                    const vc::SampleParams& params)
 {
-    float scale = 1.0f / std::pow(2.0f, level);
-    cv::Mat_<cv::Vec3f> scaled;
-    if (level > 0) {
-        scaled = baseCoords * scale;
-    } else {
-        scaled = baseCoords;
-    }
-    readCompositeFast(out, tieredCache(), level, scaled, normals, scale,
-                      zStart, zEnd, params);
+    auto scaled = scaleCoords(coords, params.level);
+    readInterpolated3D(out, tieredCache(), params.level, scaled, params.method);
 }
 
 int Volume::sampleBestEffort(cv::Mat_<uint8_t>& out,
                               const cv::Mat_<cv::Vec3f>& coords,
-                              int level, vc::Sampling method)
+                              const vc::SampleParams& params)
 {
     const int nScales = static_cast<int>(numScales());
+    const int level = params.level;
 
-    // Try from requested level to coarser
     for (int lvl = level; lvl < nScales; lvl++) {
         if (allChunksCached(coords, lvl)) {
-            float scale = 1.0f / std::pow(2.0f, lvl);
-            cv::Mat_<cv::Vec3f> scaled = (lvl > 0) ? cv::Mat_<cv::Vec3f>(coords * scale) : coords;
-            readInterpolated3D(out, tieredCache(), lvl, scaled, method);
-            // If we fell back to a coarser level, prefetch the requested level
+            auto scaled = scaleCoords(coords, lvl);
+            readInterpolated3D(out, tieredCache(), lvl, scaled, params.method);
             if (lvl > level) {
                 prefetchChunks(coords, level);
+                if (lvl - level > 1)
+                    prefetchChunks(coords, level + 1);
             }
+            if (!out.empty())
+                applyOptionalPostProcess(out, params);
             return lvl;
         }
     }
 
-    // No level has cached chunks. Return empty (black tile) and kick prefetch.
-    // The progressive rendering pipeline will re-render when chunks arrive.
     int last = std::max(0, nScales - 1);
     static std::once_flag allMissWarn;
     std::call_once(allMissWarn, [last]() {
         fprintf(stderr, "[TILED] sampleBestEffort: ALL LEVELS MISS, returning empty (coarsest=%d)\n", last);
     });
-    out = cv::Mat_<uint8_t>();  // empty — caller treats as black tile
+    out = cv::Mat_<uint8_t>();
     prefetchChunks(coords, level);
     return last;
 }
 
-// ============================================================================
-// Dimensioned read API (readNd)
-// ============================================================================
-
-static cv::Mat_<cv::Vec3f> makeCoordGrid(
-    cv::Vec3f origin, cv::Vec3f axisU, cv::Vec3f axisV, int w, int h)
-{
-    cv::Mat_<cv::Vec3f> coords(h, w);
-    for (int r = 0; r < h; r++)
-        for (int c = 0; c < w; c++)
-            coords(r, c) = origin + axisU * static_cast<float>(c)
-                                  + axisV * static_cast<float>(r);
-    return coords;
-}
-
-uint8_t Volume::read0d(cv::Vec3f point, int level, vc::Sampling method)
-{
-    cv::Mat_<cv::Vec3f> coords(1, 1);
-    coords(0, 0) = point;
-    cv::Mat_<uint8_t> out;
-    read2d(out, coords, level, method);
-    return out.empty() ? 0 : out(0, 0);
-}
-
-void Volume::read1d(cv::Mat_<uint8_t>& out,
-                    cv::Vec3f origin, cv::Vec3f step, int count,
-                    int level, vc::Sampling method)
-{
-    cv::Mat_<cv::Vec3f> coords(1, count);
-    for (int i = 0; i < count; i++)
-        coords(0, i) = origin + step * static_cast<float>(i);
-    read2d(out, coords, level, method);
-}
-
-void Volume::read2d(cv::Mat_<uint8_t>& out,
-                    cv::Vec3f origin, cv::Vec3f axisU, cv::Vec3f axisV,
-                    int w, int h, int level, vc::Sampling method)
-{
-    auto coords = makeCoordGrid(origin, axisU, axisV, w, h);
-    read2d(out, coords, level, method);
-}
-
-int Volume::read2dBestEffort(cv::Mat_<uint8_t>& out,
-                             cv::Vec3f origin, cv::Vec3f axisU, cv::Vec3f axisV,
-                             int w, int h, int level, vc::Sampling method)
-{
-    auto coords = makeCoordGrid(origin, axisU, axisV, w, h);
-    return read2dBestEffort(out, coords, level, method);
-}
-
-void Volume::read2d(cv::Mat_<uint8_t>& out,
-                    const cv::Mat_<cv::Vec3f>& coords,
-                    int level, vc::Sampling method)
-{
-    sample(out, coords, level, method);
-}
-
-int Volume::read2dBestEffort(cv::Mat_<uint8_t>& out,
-                              const cv::Mat_<cv::Vec3f>& coords,
-                              int level, vc::Sampling method)
-{
-    return sampleBestEffort(out, coords, level, method);
-}
-
-void Volume::read3d(cv::Mat_<uint8_t>& out,
-                    const cv::Mat_<cv::Vec3f>& coords,
-                    const cv::Mat_<cv::Vec3f>& normals,
-                    int zStart, int zEnd, const CompositeParams& params,
-                    int level)
-{
-    sampleComposite(out, coords, normals, zStart, zEnd, params, level);
-}
-
-int Volume::read3dBestEffort(cv::Mat_<uint8_t>& out,
+void Volume::sampleComposite(cv::Mat_<uint8_t>& out,
                               const cv::Mat_<cv::Vec3f>& coords,
                               const cv::Mat_<cv::Vec3f>& normals,
-                              int zStart, int zEnd,
-                              const CompositeParams& params, int level)
+                              const vc::SampleParams& params)
+{
+    float scale = (params.level > 0) ? (1.0f / static_cast<float>(1 << params.level)) : 1.0f;
+    auto scaled = scaleCoords(coords, params.level);
+    readCompositeFast(out, tieredCache(), params.level, scaled, normals, scale,
+                      params.zStart, params.zEnd,
+                      params.composite.value_or(CompositeParams{}),
+                      params.method);
+    applyOptionalPostProcess(out, params);
+}
+
+int Volume::sampleCompositeBestEffort(cv::Mat_<uint8_t>& out,
+                                       const cv::Mat_<cv::Vec3f>& coords,
+                                       const cv::Mat_<cv::Vec3f>& normals,
+                                       const vc::SampleParams& params)
 {
     const int nScales = static_cast<int>(numScales());
+    const int level = params.level;
+    const auto& cp = params.composite.value_or(CompositeParams{});
 
     for (int lvl = level; lvl < nScales; lvl++) {
-        if (allCompositeChunksCached(coords, normals, zStart, zEnd, lvl)) {
-            read3d(out, coords, normals, zStart, zEnd, params, lvl);
+        if (allCompositeChunksCached(coords, normals, params.zStart, params.zEnd, lvl)) {
+            // Render at this level
+            vc::SampleParams lvlParams = params;
+            lvlParams.level = lvl;
+            sampleComposite(out, coords, normals, lvlParams);
             if (lvl > level)
-                prefetchCompositeChunks(coords, normals, zStart, zEnd, level);
+                prefetchCompositeChunks(coords, normals, params.zStart, params.zEnd, level);
             return lvl;
         }
     }
 
     // Coarsest level — block
     int last = std::max(0, nScales - 1);
-    read3d(out, coords, normals, zStart, zEnd, params, last);
+    vc::SampleParams lastParams = params;
+    lastParams.level = last;
+    sampleComposite(out, coords, normals, lastParams);
     if (last > level)
-        prefetchCompositeChunks(coords, normals, zStart, zEnd, level);
+        prefetchCompositeChunks(coords, normals, params.zStart, params.zEnd, level);
     return last;
 }
 
-void Volume::read3d(cv::Mat_<uint8_t>& out,
-                    cv::Vec3f origin, cv::Vec3f axisU, cv::Vec3f axisV,
-                    cv::Vec3f normal, int w, int h,
-                    int zStart, int zEnd, const CompositeParams& params,
-                    int level)
+void Volume::sampleMultiSlice(std::vector<cv::Mat_<uint8_t>>& out,
+                               const cv::Mat_<cv::Vec3f>& basePoints,
+                               const cv::Mat_<cv::Vec3f>& stepDirs,
+                               const std::vector<float>& offsets,
+                               const vc::SampleParams& params)
 {
-    auto coords = makeCoordGrid(origin, axisU, axisV, w, h);
-    cv::Mat_<cv::Vec3f> normals(h, w, normal);
-    read3d(out, coords, normals, zStart, zEnd, params, level);
+    float scale = (params.level > 0) ? (1.0f / static_cast<float>(1 << params.level)) : 1.0f;
+    cv::Mat_<cv::Vec3f> scaledBase = scaleCoords(basePoints, params.level);
+    cv::Mat_<cv::Vec3f> scaledDirs = (params.level > 0)
+        ? cv::Mat_<cv::Vec3f>(stepDirs * scale) : stepDirs;
+    std::vector<float> scaledOffsets(offsets.size());
+    for (size_t i = 0; i < offsets.size(); i++)
+        scaledOffsets[i] = offsets[i] * scale;
+    readMultiSlice(out, tieredCache(), params.level, scaledBase, scaledDirs, scaledOffsets);
+    if (params.postProcess) {
+        for (auto& slice : out)
+            if (!slice.empty())
+                applyOptionalPostProcess(slice, params);
+    }
 }
 
-int Volume::read3dBestEffort(cv::Mat_<uint8_t>& out,
-                              cv::Vec3f origin, cv::Vec3f axisU, cv::Vec3f axisV,
-                              cv::Vec3f normal, int w, int h,
-                              int zStart, int zEnd, const CompositeParams& params,
-                              int level)
+void Volume::sampleMultiSlice(std::vector<cv::Mat_<uint16_t>>& out,
+                               const cv::Mat_<cv::Vec3f>& basePoints,
+                               const cv::Mat_<cv::Vec3f>& stepDirs,
+                               const std::vector<float>& offsets,
+                               const vc::SampleParams& params)
 {
-    auto coords = makeCoordGrid(origin, axisU, axisV, w, h);
-    cv::Mat_<cv::Vec3f> normals(h, w, normal);
-    return read3dBestEffort(out, coords, normals, zStart, zEnd, params, level);
+    float scale = (params.level > 0) ? (1.0f / static_cast<float>(1 << params.level)) : 1.0f;
+    cv::Mat_<cv::Vec3f> scaledBase = scaleCoords(basePoints, params.level);
+    cv::Mat_<cv::Vec3f> scaledDirs = (params.level > 0)
+        ? cv::Mat_<cv::Vec3f>(stepDirs * scale) : stepDirs;
+    std::vector<float> scaledOffsets(offsets.size());
+    for (size_t i = 0; i < offsets.size(); i++)
+        scaledOffsets[i] = offsets[i] * scale;
+    readMultiSlice(out, tieredCache(), params.level, scaledBase, scaledDirs, scaledOffsets);
+}
+
+void Volume::sampleMultiSliceST(std::vector<cv::Mat_<uint8_t>>& out,
+                                 const cv::Mat_<cv::Vec3f>& basePoints,
+                                 const cv::Mat_<cv::Vec3f>& stepDirs,
+                                 const std::vector<float>& offsets,
+                                 const vc::SampleParams& params)
+{
+    float scale = (params.level > 0) ? (1.0f / static_cast<float>(1 << params.level)) : 1.0f;
+    cv::Mat_<cv::Vec3f> scaledBase = scaleCoords(basePoints, params.level);
+    cv::Mat_<cv::Vec3f> scaledDirs = (params.level > 0)
+        ? cv::Mat_<cv::Vec3f>(stepDirs * scale) : stepDirs;
+    std::vector<float> scaledOffsets(offsets.size());
+    for (size_t i = 0; i < offsets.size(); i++)
+        scaledOffsets[i] = offsets[i] * scale;
+    sampleTileSlices(out, tieredCache(), params.level, scaledBase, scaledDirs, scaledOffsets);
+    if (params.postProcess) {
+        for (auto& slice : out)
+            if (!slice.empty())
+                applyOptionalPostProcess(slice, params);
+    }
+}
+
+void Volume::sampleMultiSliceST(std::vector<cv::Mat_<uint16_t>>& out,
+                                 const cv::Mat_<cv::Vec3f>& basePoints,
+                                 const cv::Mat_<cv::Vec3f>& stepDirs,
+                                 const std::vector<float>& offsets,
+                                 const vc::SampleParams& params)
+{
+    float scale = (params.level > 0) ? (1.0f / static_cast<float>(1 << params.level)) : 1.0f;
+    cv::Mat_<cv::Vec3f> scaledBase = scaleCoords(basePoints, params.level);
+    cv::Mat_<cv::Vec3f> scaledDirs = (params.level > 0)
+        ? cv::Mat_<cv::Vec3f>(stepDirs * scale) : stepDirs;
+    std::vector<float> scaledOffsets(offsets.size());
+    for (size_t i = 0; i < offsets.size(); i++)
+        scaledOffsets[i] = offsets[i] * scale;
+    sampleTileSlices(out, tieredCache(), params.level, scaledBase, scaledDirs, scaledOffsets);
+}
+
+void Volume::readBlock(xt::xtensor<uint8_t, 3, xt::layout_type::column_major>& out,
+                        const cv::Vec3i& offset,
+                        const vc::SampleParams& params)
+{
+    readArea3D(out, offset, tieredCache(), params.level);
+}
+
+void Volume::readBlock(xt::xtensor<uint16_t, 3, xt::layout_type::column_major>& out,
+                        const cv::Vec3i& offset,
+                        const vc::SampleParams& params)
+{
+    readArea3D(out, offset, tieredCache(), params.level);
+}
+
+cv::Mat_<cv::Vec3f> Volume::computeGradients(const cv::Mat_<cv::Vec3f>& rawPoints,
+                                              float dsScale, int level)
+{
+    auto* ds = zarrDataset(level);
+    if (!ds) return cv::Mat_<cv::Vec3f>();
+    return computeVolumeGradientsNative(ds, rawPoints, dsScale);
 }
 
 // ============================================================================
 // Composite-aware chunk helpers
 // ============================================================================
 
-bool Volume::allCompositeChunksCached(
-    const cv::Mat_<cv::Vec3f>& coords,
-    const cv::Mat_<cv::Vec3f>& normals,
-    int zStart, int zEnd, int level) const
+namespace {
+struct BBox6f {
+    float loX, loY, loZ, hiX, hiY, hiZ;
+};
+
+BBox6f computeCompositeBBox(const cv::Mat_<cv::Vec3f>& coords,
+                            const cv::Mat_<cv::Vec3f>& normals,
+                            int zStart, int zEnd, int level)
 {
-    ensureTieredCache();
-    if (!tieredCache_ || coords.empty()) return false;
-
-    vc::VcDataset* ds = zarrDataset(level);
-    if (!ds) return false;
-
-    float scale = 1.0f / std::pow(2.0f, level);
-    auto cs = ds->defaultChunkShape();  // {cz, cy, cx}
-    const auto& shape = ds->shape();    // {z, y, x}
+    float scale = (level > 0) ? (1.0f / static_cast<float>(1 << level)) : 1.0f;
 
     float loX = std::numeric_limits<float>::max();
     float loY = std::numeric_limits<float>::max();
@@ -557,27 +586,44 @@ bool Volume::allCompositeChunksCached(
         }
     }
 
+    // 1-voxel margin for interpolation
     loX -= 1.0f; loY -= 1.0f; loZ -= 1.0f;
     hiX += 1.0f; hiY += 1.0f; hiZ += 1.0f;
 
-    int minIx = std::max(0, static_cast<int>(std::floor(loX / cs[2])));
-    int maxIx = std::min(static_cast<int>(std::floor(hiX / cs[2])),
+    return {loX, loY, loZ, hiX, hiY, hiZ};
+}
+} // anonymous namespace
+
+bool Volume::allCompositeChunksCached(
+    const cv::Mat_<cv::Vec3f>& coords,
+    const cv::Mat_<cv::Vec3f>& normals,
+    int zStart, int zEnd, int level) const
+{
+    ensureTieredCache();
+    if (!tieredCache_ || coords.empty()) return false;
+
+    vc::VcDataset* ds = zarrDataset(level);
+    if (!ds) return false;
+
+    auto bb = computeCompositeBBox(coords, normals, zStart, zEnd, level);
+
+    auto cs = ds->defaultChunkShape();  // {cz, cy, cx}
+    const auto& shape = ds->shape();    // {z, y, x}
+
+    int minIx = std::max(0, static_cast<int>(std::floor(bb.loX / cs[2])));
+    int maxIx = std::min(static_cast<int>(std::ceil(bb.hiX / cs[2])),
                          static_cast<int>((shape[2] - 1) / cs[2]));
-    int minIy = std::max(0, static_cast<int>(std::floor(loY / cs[1])));
-    int maxIy = std::min(static_cast<int>(std::floor(hiY / cs[1])),
+    int minIy = std::max(0, static_cast<int>(std::floor(bb.loY / cs[1])));
+    int maxIy = std::min(static_cast<int>(std::ceil(bb.hiY / cs[1])),
                          static_cast<int>((shape[1] - 1) / cs[1]));
-    int minIz = std::max(0, static_cast<int>(std::floor(loZ / cs[0])));
-    int maxIz = std::min(static_cast<int>(std::floor(hiZ / cs[0])),
+    int minIz = std::max(0, static_cast<int>(std::floor(bb.loZ / cs[0])));
+    int maxIz = std::min(static_cast<int>(std::ceil(bb.hiZ / cs[0])),
                          static_cast<int>((shape[0] - 1) / cs[0]));
 
     if (minIx > maxIx || minIy > maxIy || minIz > maxIz) return false;
 
-    for (int iz = minIz; iz <= maxIz; iz++)
-        for (int iy = minIy; iy <= maxIy; iy++)
-            for (int ix = minIx; ix <= maxIx; ix++)
-                if (!tieredCache_->get(vc::cache::ChunkKey{level, iz, iy, ix}))
-                    return false;
-    return true;
+    return tieredCache_->areAllCachedInRegion(
+        level, minIz, minIy, minIx, maxIz, maxIy, maxIx);
 }
 
 void Volume::prefetchCompositeChunks(
@@ -591,50 +637,19 @@ void Volume::prefetchCompositeChunks(
     vc::VcDataset* ds = zarrDataset(level);
     if (!ds || coords.empty()) return;
 
-    float scale = 1.0f / std::pow(2.0f, level);
+    auto bb = computeCompositeBBox(coords, normals, zStart, zEnd, level);
+
     auto cs = ds->defaultChunkShape();
     const auto& shape = ds->shape();
 
-    float loX = std::numeric_limits<float>::max();
-    float loY = std::numeric_limits<float>::max();
-    float loZ = std::numeric_limits<float>::max();
-    float hiX = std::numeric_limits<float>::lowest();
-    float hiY = std::numeric_limits<float>::lowest();
-    float hiZ = std::numeric_limits<float>::lowest();
-
-    const bool hasNormals = !normals.empty() && normals.size() == coords.size();
-
-    for (int r = 0; r < coords.rows; r++) {
-        for (int c = 0; c < coords.cols; c++) {
-            const auto& v = coords(r, c);
-            float sx = v[0] * scale;
-            float sy = v[1] * scale;
-            float sz = v[2] * scale;
-
-            cv::Vec3f n = hasNormals ? normals(r, c) : cv::Vec3f(1, 0, 0);
-            for (int z : {zStart, zEnd}) {
-                float off = z * scale;
-                float px = sx + n[0] * off;
-                float py = sy + n[1] * off;
-                float pz = sz + n[2] * off;
-                loX = std::min(loX, px); hiX = std::max(hiX, px);
-                loY = std::min(loY, py); hiY = std::max(hiY, py);
-                loZ = std::min(loZ, pz); hiZ = std::max(hiZ, pz);
-            }
-        }
-    }
-
-    loX -= 1.0f; loY -= 1.0f; loZ -= 1.0f;
-    hiX += 1.0f; hiY += 1.0f; hiZ += 1.0f;
-
-    int minIx = std::max(0, static_cast<int>(std::floor(loX / cs[2])));
-    int maxIx = std::min(static_cast<int>(std::floor(hiX / cs[2])),
+    int minIx = std::max(0, static_cast<int>(std::floor(bb.loX / cs[2])));
+    int maxIx = std::min(static_cast<int>(std::ceil(bb.hiX / cs[2])),
                          static_cast<int>((shape[2] - 1) / cs[2]));
-    int minIy = std::max(0, static_cast<int>(std::floor(loY / cs[1])));
-    int maxIy = std::min(static_cast<int>(std::floor(hiY / cs[1])),
+    int minIy = std::max(0, static_cast<int>(std::floor(bb.loY / cs[1])));
+    int maxIy = std::min(static_cast<int>(std::ceil(bb.hiY / cs[1])),
                          static_cast<int>((shape[1] - 1) / cs[1]));
-    int minIz = std::max(0, static_cast<int>(std::floor(loZ / cs[0])));
-    int maxIz = std::min(static_cast<int>(std::floor(hiZ / cs[0])),
+    int minIz = std::max(0, static_cast<int>(std::floor(bb.loZ / cs[0])));
+    int maxIz = std::min(static_cast<int>(std::ceil(bb.hiZ / cs[0])),
                          static_cast<int>((shape[0] - 1) / cs[0]));
 
     if (minIx > maxIx || minIy > maxIy || minIz > maxIz) return;
@@ -659,6 +674,138 @@ void Volume::pinCoarsestLevel(bool blocking)
         static_cast<int>((shape[2] + chunks[2] - 1) / chunks[2])
     };
     tieredCache_->pinLevel(last, gridDims, blocking);
+
+    if (blocking) {
+        computeDataBounds();
+    }
+}
+
+// ============================================================================
+// Data bounds
+// ============================================================================
+
+void Volume::computeDataBounds()
+{
+    ensureTieredCache();
+    if (!tieredCache_ || zarrDs_.empty()) return;
+
+    int coarsest = static_cast<int>(zarrDs_.size()) - 1;
+    auto levelShape = tieredCache_->levelShape(coarsest);   // {z, y, x}
+    auto chunkShape = tieredCache_->chunkShape(coarsest);   // {z, y, x}
+
+    int gridZ = (levelShape[0] + chunkShape[0] - 1) / chunkShape[0];
+    int gridY = (levelShape[1] + chunkShape[1] - 1) / chunkShape[1];
+    int gridX = (levelShape[2] + chunkShape[2] - 1) / chunkShape[2];
+
+    // Track min/max in coarsest-level voxel coordinates
+    int cMinX = std::numeric_limits<int>::max();
+    int cMinY = std::numeric_limits<int>::max();
+    int cMinZ = std::numeric_limits<int>::max();
+    int cMaxX = std::numeric_limits<int>::lowest();
+    int cMaxY = std::numeric_limits<int>::lowest();
+    int cMaxZ = std::numeric_limits<int>::lowest();
+    bool found = false;
+
+    for (int iz = 0; iz < gridZ; iz++) {
+        for (int iy = 0; iy < gridY; iy++) {
+            for (int ix = 0; ix < gridX; ix++) {
+                auto chunk = tieredCache_->get(
+                    vc::cache::ChunkKey{coarsest, iz, iy, ix});
+                if (!chunk) continue;  // nullptr = missing/all-zeros
+
+                const int cz = chunkShape[0];
+                const int cy = chunkShape[1];
+                const int cx = chunkShape[2];
+                const int strideZ = chunk->strideZ();
+                const int strideY = chunk->strideY();
+
+                // Clamp to actual level shape (edge chunks may be padded)
+                int maxLz = std::min(cz, levelShape[0] - iz * cz);
+                int maxLy = std::min(cy, levelShape[1] - iy * cy);
+                int maxLx = std::min(cx, levelShape[2] - ix * cx);
+
+                if (chunk->elementSize == 2) {
+                    const auto* ptr = chunk->data<uint16_t>();
+                    for (int lz = 0; lz < maxLz; lz++) {
+                        for (int ly = 0; ly < maxLy; ly++) {
+                            for (int lx = 0; lx < maxLx; lx++) {
+                                if (ptr[lz * strideZ + ly * strideY + lx] != 0) {
+                                    int gx = ix * cx + lx;
+                                    int gy = iy * cy + ly;
+                                    int gz = iz * cz + lz;
+                                    cMinX = std::min(cMinX, gx);
+                                    cMaxX = std::max(cMaxX, gx);
+                                    cMinY = std::min(cMinY, gy);
+                                    cMaxY = std::max(cMaxY, gy);
+                                    cMinZ = std::min(cMinZ, gz);
+                                    cMaxZ = std::max(cMaxZ, gz);
+                                    found = true;
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    const auto* ptr = chunk->data<uint8_t>();
+                    for (int lz = 0; lz < maxLz; lz++) {
+                        for (int ly = 0; ly < maxLy; ly++) {
+                            for (int lx = 0; lx < maxLx; lx++) {
+                                if (ptr[lz * strideZ + ly * strideY + lx] != 0) {
+                                    int gx = ix * cx + lx;
+                                    int gy = iy * cy + ly;
+                                    int gz = iz * cz + lz;
+                                    cMinX = std::min(cMinX, gx);
+                                    cMaxX = std::max(cMaxX, gx);
+                                    cMinY = std::min(cMinY, gy);
+                                    cMaxY = std::max(cMaxY, gy);
+                                    cMinZ = std::min(cMinZ, gz);
+                                    cMaxZ = std::max(cMaxZ, gz);
+                                    found = true;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (!found) {
+        fprintf(stderr, "[Volume] dataBounds: no non-zero data found\n");
+        return;
+    }
+
+    // Scale back to level-0 coordinates
+    int scaleFactor = 1 << coarsest;
+    dataBounds_.minX = cMinX * scaleFactor;
+    dataBounds_.minY = cMinY * scaleFactor;
+    dataBounds_.minZ = cMinZ * scaleFactor;
+    dataBounds_.maxX = std::min((cMaxX + 1) * scaleFactor - 1, _width - 1);
+    dataBounds_.maxY = std::min((cMaxY + 1) * scaleFactor - 1, _height - 1);
+    dataBounds_.maxZ = std::min((cMaxZ + 1) * scaleFactor - 1, _slices - 1);
+    dataBounds_.valid = true;
+
+    // Push to cache so ChunkSampler can skip chunks in zero-padded regions
+    if (tieredCache_) {
+        tieredCache_->setDataBounds(
+            dataBounds_.minX, dataBounds_.maxX,
+            dataBounds_.minY, dataBounds_.maxY,
+            dataBounds_.minZ, dataBounds_.maxZ);
+    }
+
+    fprintf(stderr, "[Volume] dataBounds: x=[%d, %d] y=[%d, %d] z=[%d, %d] "
+                    "(from level %d, scale %dx)\n",
+            dataBounds_.minX, dataBounds_.maxX,
+            dataBounds_.minY, dataBounds_.maxY,
+            dataBounds_.minZ, dataBounds_.maxZ,
+            coarsest, scaleFactor);
+}
+
+const Volume::DataBounds& Volume::dataBounds() const
+{
+    std::call_once(boundsOnce_, [this]() {
+        const_cast<Volume*>(this)->computeDataBounds();
+    });
+    return dataBounds_;
 }
 
 // ============================================================================
@@ -673,7 +820,7 @@ Volume::ChunkBBox Volume::coordsToChunkBBox(
         return {0, -1, 0, -1, 0, -1};  // invalid bbox
     }
 
-    float scale = 1.0f / std::pow(2.0f, level);
+    float scale = (level > 0) ? (1.0f / static_cast<float>(1 << level)) : 1.0f;
     auto cs = ds->defaultChunkShape();  // {cz, cy, cx}
 
     float loX = std::numeric_limits<float>::max();
@@ -700,13 +847,13 @@ Volume::ChunkBBox Volume::coordsToChunkBBox(
     const auto& shape = ds->shape();  // {z, y, x}
     ChunkBBox bb;
     bb.minIx = std::max(0, static_cast<int>(std::floor(loX / cs[2])));
-    bb.maxIx = std::min(static_cast<int>(std::floor(hiX / cs[2])),
+    bb.maxIx = std::min(static_cast<int>(std::ceil(hiX / cs[2])),
                         static_cast<int>((shape[2] - 1) / cs[2]));
     bb.minIy = std::max(0, static_cast<int>(std::floor(loY / cs[1])));
-    bb.maxIy = std::min(static_cast<int>(std::floor(hiY / cs[1])),
+    bb.maxIy = std::min(static_cast<int>(std::ceil(hiY / cs[1])),
                         static_cast<int>((shape[1] - 1) / cs[1]));
     bb.minIz = std::max(0, static_cast<int>(std::floor(loZ / cs[0])));
-    bb.maxIz = std::min(static_cast<int>(std::floor(hiZ / cs[0])),
+    bb.maxIz = std::min(static_cast<int>(std::ceil(hiZ / cs[0])),
                         static_cast<int>((shape[0] - 1) / cs[0]));
     return bb;
 }
@@ -719,18 +866,11 @@ bool Volume::allChunksCached(const cv::Mat_<cv::Vec3f>& coords, int level) const
     auto bb = coordsToChunkBBox(coords, level);
     if (bb.minIx > bb.maxIx) return false;  // invalid bbox
 
-    for (int iz = bb.minIz; iz <= bb.maxIz; iz++)
-        for (int iy = bb.minIy; iy <= bb.maxIy; iy++)
-            for (int ix = bb.minIx; ix <= bb.maxIx; ix++) {
-                vc::cache::ChunkKey key{level, iz, iy, ix};
-                // In zarr, missing chunks (404) contain fill value (zeros).
-                // The rendering handles nullptr as zero, so treat
-                // negative-cached chunks as available.
-                if (!tieredCache_->get(key) &&
-                    !tieredCache_->isNegativeCached(key))
-                    return false;
-            }
-    return true;
+    // Batch check acquires hot + negative locks once each, instead of
+    // per-chunk lock pairs in a loop.
+    return tieredCache_->areAllCachedInRegion(
+        level, bb.minIz, bb.minIy, bb.minIx,
+        bb.maxIz, bb.maxIy, bb.maxIx);
 }
 
 void Volume::prefetchChunks(const cv::Mat_<cv::Vec3f>& coords, int level)
@@ -761,19 +901,27 @@ void Volume::prefetchWorldBBox(const cv::Vec3f& lo, const cv::Vec3f& hi, int lev
     vc::VcDataset* ds = zarrDataset(level);
     if (!ds) return;
 
-    float scale = 1.0f / std::pow(2.0f, level);
+    float scale = (level > 0) ? (1.0f / static_cast<float>(1 << level)) : 1.0f;
     auto cs = ds->defaultChunkShape();  // {cz, cy, cx}
     const auto& shape = ds->shape();    // {z, y, x}
 
-    int minIx = std::max(0, static_cast<int>(std::floor(lo[0] * scale - 1) / static_cast<int>(cs[2])));
+    // Apply margin to float coords, then floor/ceil to chunk indices
+    float sLoX = lo[0] * scale - 1.0f;
+    float sHiX = hi[0] * scale + 1.0f;
+    float sLoY = lo[1] * scale - 1.0f;
+    float sHiY = hi[1] * scale + 1.0f;
+    float sLoZ = lo[2] * scale - 1.0f;
+    float sHiZ = hi[2] * scale + 1.0f;
+
+    int minIx = std::max(0, static_cast<int>(std::floor(sLoX / cs[2])));
     int maxIx = std::min(static_cast<int>((shape[2] - 1) / cs[2]),
-                         static_cast<int>(std::floor(hi[0] * scale + 1) / static_cast<int>(cs[2])));
-    int minIy = std::max(0, static_cast<int>(std::floor(lo[1] * scale - 1) / static_cast<int>(cs[1])));
+                         static_cast<int>(std::ceil(sHiX / cs[2])));
+    int minIy = std::max(0, static_cast<int>(std::floor(sLoY / cs[1])));
     int maxIy = std::min(static_cast<int>((shape[1] - 1) / cs[1]),
-                         static_cast<int>(std::floor(hi[1] * scale + 1) / static_cast<int>(cs[1])));
-    int minIz = std::max(0, static_cast<int>(std::floor(lo[2] * scale - 1) / static_cast<int>(cs[0])));
+                         static_cast<int>(std::ceil(sHiY / cs[1])));
+    int minIz = std::max(0, static_cast<int>(std::floor(sLoZ / cs[0])));
     int maxIz = std::min(static_cast<int>((shape[0] - 1) / cs[0]),
-                         static_cast<int>(std::floor(hi[2] * scale + 1) / static_cast<int>(cs[0])));
+                         static_cast<int>(std::ceil(sHiZ / cs[0])));
 
     if (minIx > maxIx || minIy > maxIy || minIz > maxIz) return;
 

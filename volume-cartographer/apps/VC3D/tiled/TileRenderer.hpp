@@ -19,31 +19,33 @@ namespace vc { class VcDataset; }
 // Parameters for a single tile render call.
 // Collected on the main thread, passed to the renderer.
 struct TileRenderParams {
+    // --- Tile identity ---
     WorldTileKey worldKey;
-    bool isPlaneSurface = false;
     uint64_t epoch = 0;
 
+    // --- Surface type ---
+    bool isPlaneSurface = false;
+
+    // --- Tile geometry ---
     // Surface parameter space ROI for this tile (same for both surface types)
     cv::Rect2f surfaceROI;
+    int tileW = 0;   // tile width in pixels
+    int tileH = 0;   // tile height in pixels
 
-    // Tile dimensions in pixels
-    int tileW = 0;
-    int tileH = 0;
+    // --- Camera state ---
+    float scale = 1.0f;       // user zoom level
+    float dsScale = 1.0f;     // pyramid downscale factor at dsScaleIdx
+    int dsScaleIdx = 0;       // pyramid level index (0 = finest)
+    float zOff = 0.0f;        // Z-axis slice offset
 
-    // Camera state snapshot
-    float scale = 1.0f;
-    float dsScale = 1.0f;
-    int dsScaleIdx = 0;
-    float zOff = 0.0f;
-
-    // Rendering parameters
-    float windowLow = 0.0f;
-    float windowHigh = 255.0f;
-    bool stretchValues = false;
-    std::string colormapId;
-    bool useFastInterpolation = false;
-    CompositeRenderSettings compositeSettings;
-    uint8_t isoCutoff = 0;
+    // --- Render settings ---
+    float windowLow = 0.0f;            // window/level low bound
+    float windowHigh = 255.0f;         // window/level high bound
+    bool stretchValues = false;         // auto-stretch intensity range
+    std::string colormapId;             // colormap identifier (empty = grayscale)
+    bool useFastInterpolation = false;  // nearest-neighbor instead of trilinear
+    CompositeRenderSettings compositeSettings;  // multi-layer composite params
+    uint8_t isoCutoff = 0;             // ISO surface cutoff threshold
 };
 
 // Result from rendering a single tile

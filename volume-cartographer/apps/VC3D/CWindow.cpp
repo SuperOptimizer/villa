@@ -1246,6 +1246,14 @@ void CWindow::setVolume(std::shared_ptr<Volume> newvol)
 
     if (currentVolume && _surf_col) {
         auto [w, h, d] = currentVolume->shape();
+        const auto& db = currentVolume->dataBounds();
+        float x0 = 0, y0 = 0, z0 = 0;
+        float x1 = static_cast<float>(w - 1), y1 = static_cast<float>(h - 1), z1 = static_cast<float>(d - 1);
+        if (db.valid) {
+            x0 = static_cast<float>(db.minX); x1 = static_cast<float>(db.maxX);
+            y0 = static_cast<float>(db.minY); y1 = static_cast<float>(db.maxY);
+            z0 = static_cast<float>(db.minZ); z1 = static_cast<float>(db.maxZ);
+        }
 
         POI* poi = existingFocusPoi;
         const bool createdPoi = (poi == nullptr);
@@ -1254,20 +1262,12 @@ void CWindow::setVolume(std::shared_ptr<Volume> newvol)
             poi->n = cv::Vec3f(0, 0, 1);
         }
 
-        const auto clampCoord = [](float value, int maxDim) {
-            if (maxDim <= 0) {
-                return 0.0f;
-            }
-            const float maxValue = static_cast<float>(maxDim - 1);
-            return std::clamp(value, 0.0f, maxValue);
-        };
-
         if (createdPoi || !hadVolume) {
-            poi->p = cv::Vec3f(w / 2.0f, h / 2.0f, d / 2.0f);
+            poi->p = cv::Vec3f((x0 + x1) * 0.5f, (y0 + y1) * 0.5f, (z0 + z1) * 0.5f);
         } else {
-            poi->p[0] = clampCoord(poi->p[0], w);
-            poi->p[1] = clampCoord(poi->p[1], h);
-            poi->p[2] = clampCoord(poi->p[2], d);
+            poi->p[0] = std::clamp(poi->p[0], x0, x1);
+            poi->p[1] = std::clamp(poi->p[1], y0, y1);
+            poi->p[2] = std::clamp(poi->p[2], z0, z1);
         }
 
         _surf_col->setPOI("focus", poi);
@@ -3661,7 +3661,7 @@ void CWindow::onAppendMaskPressed(void)
                 cv::Mat_<cv::Vec3f> coords;
                 surf->gen(&coords, nullptr, maskSize, ptr, surfScale, offset);
 
-                render_image_from_coords(coords, img, currentVolume->tieredCache(), 0);
+                render_image_from_coords(coords, img, currentVolume.get());
             }
             cv::normalize(img, img, 0, 255, cv::NORM_MINMAX, CV_8U);
 
@@ -3680,7 +3680,7 @@ void CWindow::onAppendMaskPressed(void)
             render_binary_mask(surf.get(), mask, coords, 1.0f);
             cv::Size maskSize = mask.size();
 
-            render_surface_image(surf.get(), mask, img, currentVolume->tieredCache(), 0, 1.0f);
+            render_surface_image(surf.get(), mask, img, currentVolume.get(), 0, 1.0f);
             cv::normalize(img, img, 0, 255, cv::NORM_MINMAX, CV_8U);
 
             // Save as new multi-layer TIFF
@@ -3792,12 +3792,20 @@ void CWindow::onManualLocationChanged()
         return;
     }
 
-    // Clamp values to volume bounds
+    // Clamp values to data bounds
     auto [w, h, d] = currentVolume->shape();
+    int cx0 = 0, cy0 = 0, cz0 = 0;
+    int cx1 = w - 1, cy1 = h - 1, cz1 = d - 1;
+    const auto& db = currentVolume->dataBounds();
+    if (db.valid) {
+        cx0 = db.minX; cx1 = db.maxX;
+        cy0 = db.minY; cy1 = db.maxY;
+        cz0 = db.minZ; cz1 = db.maxZ;
+    }
 
-    x = std::max(0, std::min(x, w - 1));
-    y = std::max(0, std::min(y, h - 1));
-    z = std::max(0, std::min(z, d - 1));
+    x = std::max(cx0, std::min(x, cx1));
+    y = std::max(cy0, std::min(y, cy1));
+    z = std::max(cz0, std::min(z, cz1));
 
     // Update the line edit with clamped values
     lblLocFocus->setText(QString("%1, %2, %3").arg(x).arg(y).arg(z));

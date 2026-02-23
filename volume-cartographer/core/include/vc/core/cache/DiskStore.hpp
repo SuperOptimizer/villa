@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -64,8 +65,13 @@ public:
     // Uses file modification time for ordering.
     void evictToSize(size_t targetBytes);
 
-    // Total bytes currently stored on disk (approximate, scanned on demand).
+    // Total bytes currently stored on disk.
+    // Returns the incrementally tracked value (fast, no scan).
     size_t totalBytes() const;
+
+    // Perform initial directory scan to populate totalBytes_.
+    // Called automatically by the constructor if the cache directory exists.
+    void initTotalBytes();
 
     // Remove all cached data for a volume.
     void clearVolume(const std::string& volumeId);
@@ -86,6 +92,10 @@ private:
     size_t lockIndex(const std::string& volumeId, const ChunkKey& key) const;
 
     Config config_;
+
+    // Incrementally tracked total bytes on disk.
+    // Initialized to 0; populated by initTotalBytes() on construction.
+    std::atomic<size_t> totalBytes_{0};
 };
 
 }  // namespace vc::cache

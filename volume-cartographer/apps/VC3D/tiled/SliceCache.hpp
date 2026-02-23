@@ -68,7 +68,7 @@ public:
     // Find best available: checks requested level, then coarser.
     // Returns {pixmap, level} where level is the actual pyramid level found,
     // or level = -1 on complete miss.
-    SliceCacheLookup getBest(const SliceCacheKey& key, int maxCoarserLevels = 8);
+    SliceCacheLookup getBest(const SliceCacheKey& key, int maxCoarserLevels = tiled_config::MAX_COARSER_LEVELS);
 
     // Store a rendered tile.
     void put(const SliceCacheKey& key, const QPixmap& pixmap);

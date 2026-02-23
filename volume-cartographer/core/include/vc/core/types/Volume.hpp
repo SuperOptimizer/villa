@@ -4,11 +4,15 @@
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <mutex>
 #include <vector>
 #include <nlohmann/json.hpp>
 #include <opencv2/core.hpp>
 
+#include <xtensor/containers/xtensor.hpp>
+
 #include "vc/core/types/Sampling.hpp"
+#include "vc/core/types/SampleParams.hpp"
 #include "vc/core/cache/HttpMetadataFetcher.hpp"  // HttpAuth
 
 // Forward declarations
@@ -24,6 +28,15 @@ struct CompositeParams;
 class Volume
 {
 public:
+    // Bounding box of non-zero data in level-0 voxel coordinates (inclusive).
+    // Derived from the coarsest pyramid level.
+    struct DataBounds {
+        int minX = 0, maxX = 0;  // level-0 voxel coords, inclusive
+        int minY = 0, maxY = 0;
+        int minZ = 0, maxZ = 0;
+        bool valid = false;
+    };
+
     // Static flag to skip zarr shape validation against meta.json
     static inline bool skipShapeCheck = false;
 
@@ -84,82 +97,75 @@ public:
     // Must be called before first tieredCache() access.
     void setDiskStore(std::shared_ptr<vc::cache::DiskStore> store);
 
-    // --- Blocking sampling (CLI / batch) ---
+    // --- Sampling API ---
 
+    // Single-slice blocking sample (uint8)
     void sample(cv::Mat_<uint8_t>& out,
                 const cv::Mat_<cv::Vec3f>& coords,
-                int level = 0,
-                vc::Sampling method = vc::Sampling::Trilinear);
+                const vc::SampleParams& params);
 
-    void sampleComposite(cv::Mat_<uint8_t>& out,
-                         const cv::Mat_<cv::Vec3f>& baseCoords,
-                         const cv::Mat_<cv::Vec3f>& normals,
-                         int zStart, int zEnd,
-                         const CompositeParams& params,
-                         int level = 0);
+    // Single-slice blocking sample (uint16)
+    void sample(cv::Mat_<uint16_t>& out,
+                const cv::Mat_<cv::Vec3f>& coords,
+                const vc::SampleParams& params);
 
-    // --- Non-blocking sampling (interactive) ---
-
-    // Returns actual pyramid level used. If the requested level's chunks
-    // aren't all cached, falls back to coarser levels.
-    // Prefetches missing chunks at the requested level in the background.
+    // Single-slice non-blocking (returns actual level used)
     int sampleBestEffort(cv::Mat_<uint8_t>& out,
                          const cv::Mat_<cv::Vec3f>& coords,
-                         int level = 0,
-                         vc::Sampling method = vc::Sampling::Trilinear);
+                         const vc::SampleParams& params);
 
-    // --- Dimensioned read API ---
-
-    // 0D: single point
-    uint8_t read0d(cv::Vec3f point, int level = 0,
-                   vc::Sampling method = vc::Sampling::Trilinear);
-
-    // 1D: line sample — origin + step direction, count samples
-    void read1d(cv::Mat_<uint8_t>& out,
-                cv::Vec3f origin, cv::Vec3f step, int count,
-                int level = 0, vc::Sampling method = vc::Sampling::Trilinear);
-
-    // 2D geometric: origin + two axis vectors define the sampling grid
-    void read2d(cv::Mat_<uint8_t>& out,
-                cv::Vec3f origin, cv::Vec3f axisU, cv::Vec3f axisV,
-                int w, int h, int level = 0,
-                vc::Sampling method = vc::Sampling::Trilinear);
-    int read2dBestEffort(cv::Mat_<uint8_t>& out,
-                         cv::Vec3f origin, cv::Vec3f axisU, cv::Vec3f axisV,
-                         int w, int h, int level = 0,
-                         vc::Sampling method = vc::Sampling::Trilinear);
-
-    // 2D pre-generated coords (QuadSurface / parametric)
-    void read2d(cv::Mat_<uint8_t>& out,
-                const cv::Mat_<cv::Vec3f>& coords,
-                int level = 0, vc::Sampling method = vc::Sampling::Trilinear);
-    int read2dBestEffort(cv::Mat_<uint8_t>& out,
-                         const cv::Mat_<cv::Vec3f>& coords,
-                         int level = 0, vc::Sampling method = vc::Sampling::Trilinear);
-
-    // 3D pre-generated coords + normals (composite along normals)
-    void read3d(cv::Mat_<uint8_t>& out,
-                const cv::Mat_<cv::Vec3f>& coords,
-                const cv::Mat_<cv::Vec3f>& normals,
-                int zStart, int zEnd, const CompositeParams& params,
-                int level = 0);
-    int read3dBestEffort(cv::Mat_<uint8_t>& out,
+    // Composite blocking (coords + normals)
+    void sampleComposite(cv::Mat_<uint8_t>& out,
                          const cv::Mat_<cv::Vec3f>& coords,
                          const cv::Mat_<cv::Vec3f>& normals,
-                         int zStart, int zEnd, const CompositeParams& params,
-                         int level = 0);
+                         const vc::SampleParams& params);
 
-    // 3D geometric: plane + normal direction for composite
-    void read3d(cv::Mat_<uint8_t>& out,
-                cv::Vec3f origin, cv::Vec3f axisU, cv::Vec3f axisV,
-                cv::Vec3f normal, int w, int h,
-                int zStart, int zEnd, const CompositeParams& params,
-                int level = 0);
-    int read3dBestEffort(cv::Mat_<uint8_t>& out,
-                         cv::Vec3f origin, cv::Vec3f axisU, cv::Vec3f axisV,
-                         cv::Vec3f normal, int w, int h,
-                         int zStart, int zEnd, const CompositeParams& params,
-                         int level = 0);
+    // Composite non-blocking (returns actual level used)
+    int sampleCompositeBestEffort(cv::Mat_<uint8_t>& out,
+                                  const cv::Mat_<cv::Vec3f>& coords,
+                                  const cv::Mat_<cv::Vec3f>& normals,
+                                  const vc::SampleParams& params);
+
+    // Multi-slice (OMP parallel, uint8)
+    void sampleMultiSlice(std::vector<cv::Mat_<uint8_t>>& out,
+                          const cv::Mat_<cv::Vec3f>& basePoints,
+                          const cv::Mat_<cv::Vec3f>& stepDirs,
+                          const std::vector<float>& offsets,
+                          const vc::SampleParams& params);
+
+    // Multi-slice (OMP parallel, uint16)
+    void sampleMultiSlice(std::vector<cv::Mat_<uint16_t>>& out,
+                          const cv::Mat_<cv::Vec3f>& basePoints,
+                          const cv::Mat_<cv::Vec3f>& stepDirs,
+                          const std::vector<float>& offsets,
+                          const vc::SampleParams& params);
+
+    // Multi-slice single-threaded (for use inside OMP regions, uint8)
+    void sampleMultiSliceST(std::vector<cv::Mat_<uint8_t>>& out,
+                            const cv::Mat_<cv::Vec3f>& basePoints,
+                            const cv::Mat_<cv::Vec3f>& stepDirs,
+                            const std::vector<float>& offsets,
+                            const vc::SampleParams& params);
+
+    // Multi-slice single-threaded (for use inside OMP regions, uint16)
+    void sampleMultiSliceST(std::vector<cv::Mat_<uint16_t>>& out,
+                            const cv::Mat_<cv::Vec3f>& basePoints,
+                            const cv::Mat_<cv::Vec3f>& stepDirs,
+                            const std::vector<float>& offsets,
+                            const vc::SampleParams& params);
+
+    // Block read (xtensor output, blocking)
+    void readBlock(xt::xtensor<uint8_t, 3, xt::layout_type::column_major>& out,
+                   const cv::Vec3i& offset,
+                   const vc::SampleParams& params);
+
+    void readBlock(xt::xtensor<uint16_t, 3, xt::layout_type::column_major>& out,
+                   const cv::Vec3i& offset,
+                   const vc::SampleParams& params);
+
+    // Compute volume gradients at native surface resolution.
+    cv::Mat_<cv::Vec3f> computeGradients(const cv::Mat_<cv::Vec3f>& rawPoints,
+                                         float dsScale, int level = 0);
 
     // Pin the coarsest pyramid level in the hot tier (never evicted).
     // Guarantees sampleBestEffort() always returns data immediately.
@@ -174,6 +180,15 @@ public:
 
     // Cancel all pending (not in-flight) async prefetch tasks.
     void cancelPendingPrefetch();
+
+    // --- Data bounds ---
+
+    // Return the bounding box of non-zero data (level-0 voxel coords).
+    // Computed lazily on first call via std::call_once.
+    const DataBounds& dataBounds() const;
+
+    // Scan the coarsest pyramid level to find non-zero data extent.
+    void computeDataBounds();
 
     // --- Query ---
     bool allChunksCached(const cv::Mat_<cv::Vec3f>& coords, int level) const;
@@ -199,6 +214,10 @@ protected:
     std::shared_ptr<vc::cache::DiskStore> pendingDiskStore_;
 
     void ensureTieredCache() const;
+
+    // Data bounds (lazy-computed)
+    mutable DataBounds dataBounds_;
+    mutable std::once_flag boundsOnce_;
 
     // Bounding box of coords in chunk index space (helper for allChunksCached/prefetch)
     struct ChunkBBox {

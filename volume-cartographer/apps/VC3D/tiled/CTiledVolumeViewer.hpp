@@ -247,6 +247,9 @@ private:
 
     void markActiveSegmentationDirty();
 
+    // Mark overlays dirty on the render controller AND notify external listeners
+    void invalidateOverlays();
+
     // Recompute and update the params hash on the render controller
     void updateParamsHash();
 
@@ -365,4 +368,7 @@ private:
     // For tiled viewer, panning is tracked via delta signals from the view
     QPoint _lastPanPos;
     bool _isPanning = false;
+
+    // Predictive prefetch state
+    QPointF _lastPanScenePos;
 };

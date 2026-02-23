@@ -1,5 +1,8 @@
 #include "vc/core/cache/IOPool.hpp"
 
+#include <cstdio>
+#include <exception>
+
 namespace vc::cache {
 
 IOPool::IOPool(int numThreads)
@@ -24,14 +27,20 @@ void IOPool::setCompletionCallback(CompletionCallback cb)
     onComplete_ = std::move(cb);
 }
 
+void IOPool::setCurrentEpoch(uint64_t epoch)
+{
+    currentEpoch_.store(epoch, std::memory_order_relaxed);
+}
+
 void IOPool::submit(const ChunkKey& key)
 {
     {
         std::lock_guard lock(mutex_);
-        // Deduplicate: skip if already queued
-        if (!queued_.insert(key).second) return;
+        // Deduplicate: skip if already in-flight or already queued
+        if (inFlightKeys_.count(key) || !queued_.insert(key).second) return;
         queue_.push(
-            Task{key, nextSeq_.fetch_add(1, std::memory_order_relaxed)});
+            Task{key, nextSeq_.fetch_add(1, std::memory_order_relaxed),
+                 currentEpoch_.load(std::memory_order_relaxed)});
     }
     cv_.notify_one();
 }
@@ -40,10 +49,12 @@ void IOPool::submit(const std::vector<ChunkKey>& keys)
 {
     {
         std::lock_guard lock(mutex_);
+        uint64_t epoch = currentEpoch_.load(std::memory_order_relaxed);
         for (auto& key : keys) {
-            if (queued_.insert(key).second) {
+            if (!inFlightKeys_.count(key) && queued_.insert(key).second) {
                 queue_.push(Task{
-                    key, nextSeq_.fetch_add(1, std::memory_order_relaxed)});
+                    key, nextSeq_.fetch_add(1, std::memory_order_relaxed),
+                    epoch});
             }
         }
     }
@@ -92,6 +103,7 @@ void IOPool::workerLoop()
             task = queue_.top();
             queue_.pop();
             queued_.erase(task.key);
+            inFlightKeys_.insert(task.key);
         }
 
         inFlight_.fetch_add(1, std::memory_order_relaxed);
@@ -107,14 +119,31 @@ void IOPool::workerLoop()
         if (fetchFn) {
             try {
                 data = fetchFn(task.key);
+            } catch (const std::exception& e) {
+                std::fprintf(stderr, "[IOPOOL] fetch exception for lvl=%d pos=(%d,%d,%d): %s\n",
+                             task.key.level, task.key.iz, task.key.iy, task.key.ix, e.what());
+                {
+                    std::lock_guard lock(mutex_);
+                    inFlightKeys_.erase(task.key);
+                }
+                inFlight_.fetch_sub(1, std::memory_order_relaxed);
+                continue;
             } catch (...) {
-                // Transient error — skip completion callback so key
-                // is NOT negative-cached and can be retried.
+                std::fprintf(stderr, "[IOPOOL] unknown fetch exception for lvl=%d pos=(%d,%d,%d)\n",
+                             task.key.level, task.key.iz, task.key.iy, task.key.ix);
+                {
+                    std::lock_guard lock(mutex_);
+                    inFlightKeys_.erase(task.key);
+                }
                 inFlight_.fetch_sub(1, std::memory_order_relaxed);
                 continue;
             }
         }
 
+        {
+            std::lock_guard lock(mutex_);
+            inFlightKeys_.erase(task.key);
+        }
         inFlight_.fetch_sub(1, std::memory_order_relaxed);
 
         // Notify completion

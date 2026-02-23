@@ -247,7 +247,15 @@ void ensureNormalsInward(QuadSurface* surface, const Volume* volume)
     cv::normalize(normal, normal);
 
     auto [w, h, d] = volume->shape();
-    cv::Vec3f volumeCenter(w * 0.5f, h * 0.5f, d * 0.5f);
+    const auto& db = volume->dataBounds();
+    cv::Vec3f volumeCenter;
+    if (db.valid) {
+        volumeCenter = cv::Vec3f((db.minX + db.maxX) * 0.5f,
+                                  (db.minY + db.maxY) * 0.5f,
+                                  (db.minZ + db.maxZ) * 0.5f);
+    } else {
+        volumeCenter = cv::Vec3f(w * 0.5f, h * 0.5f, d * 0.5f);
+    }
     cv::Vec3f toCenter = volumeCenter - p;
     toCenter[2] = 0.0f;
 
@@ -335,7 +343,7 @@ TracerGrowthResult runTracerGrowth(const SegmentationGrowthRequest& request,
 {
     TracerGrowthResult result;
 
-    if (!context.resumeSurface || !context.volume || !context.cache) {
+    if (!context.resumeSurface || !context.volume) {
         result.error = QStringLiteral("Missing context for tracer growth");
         return result;
     }
@@ -490,7 +498,7 @@ TracerGrowthResult runTracerGrowth(const SegmentationGrowthRequest& request,
         createRotatingBackup(context.resumeSurface, surface_path);
         QuadSurface* surface = tracer(dataset,
                                       1.0f,
-                                      context.cache,
+                                      context.volume->tieredCache(),
                                       context.level,
                                       origin,
                                       params,

@@ -1100,7 +1100,6 @@ bool SegmentationGrower::start(const VolumeContext& volumeContext,
     TracerGrowthContext ctx;
     ctx.resumeSurface = segmentationSurface.get();
     ctx.volume = growthVolume.get();
-    ctx.cache = growthVolume->tieredCache();
     ctx.level = 0;
     ctx.cacheRoot = cacheRootForVolumePkg(volumeContext.package);
     ctx.voxelSize = growthVolume->voxelSize();

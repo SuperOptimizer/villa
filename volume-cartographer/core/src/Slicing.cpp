@@ -15,7 +15,9 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <climits>
 #include <limits>
+#include <unordered_set>
 
 
 // ============================================================================
@@ -27,6 +29,13 @@ struct CacheParams {
     int czShift, cyShift, cxShift, czMask, cyMask, cxMask;
     int chunksZ, chunksY, chunksX;
 
+    // Chunk index bounds from logical data extent.
+    // Chunks outside [dbMinC*, dbMaxC*] are in zero-padded regions.
+    int dbMinCz = 0, dbMaxCz = INT_MAX;
+    int dbMinCy = 0, dbMaxCy = INT_MAX;
+    int dbMinCx = 0, dbMaxCx = INT_MAX;
+    bool dbValid = false;
+
     explicit CacheParams(vc::cache::TieredChunkCache* cache, int level) {
         auto cs = cache->chunkShape(level);
         cz = cs[0]; cy = cs[1]; cx = cs[2];
@@ -37,6 +46,20 @@ struct CacheParams {
         chunksZ = (sz + cz - 1) / cz;
         chunksY = (sy + cy - 1) / cy;
         chunksX = (sx + cx - 1) / cx;
+
+        // Compute chunk-level data bounds from level-0 bounds
+        auto db = cache->dataBounds();
+        if (db.valid) {
+            float scale = 1.0f / static_cast<float>(1 << level);
+            // Floor for min, ceil for max to be conservative
+            dbMinCx = static_cast<int>(std::floor(db.minX * scale)) >> cxShift;
+            dbMaxCx = static_cast<int>(std::ceil(db.maxX * scale)) >> cxShift;
+            dbMinCy = static_cast<int>(std::floor(db.minY * scale)) >> cyShift;
+            dbMaxCy = static_cast<int>(std::ceil(db.maxY * scale)) >> cyShift;
+            dbMinCz = static_cast<int>(std::floor(db.minZ * scale)) >> czShift;
+            dbMaxCz = static_cast<int>(std::ceil(db.maxZ * scale)) >> czShift;
+            dbValid = true;
+        }
     }
 
     static int log2_pow2(int v) {
@@ -75,6 +98,13 @@ struct ChunkSampler {
     }
 
     void updateChunk(int iz, int iy, int ix) {
+        // Quick reject: chunk is entirely in zero-padded region
+        if (p.dbValid && (iz < p.dbMinCz || iz > p.dbMaxCz ||
+                          iy < p.dbMinCy || iy > p.dbMaxCy ||
+                          ix < p.dbMinCx || ix > p.dbMaxCx)) {
+            data = nullptr;
+            return;
+        }
         // Check MRU slot first
         auto& m = slots[mru];
         if (m.iz == iz && m.iy == iy && m.ix == ix) {
@@ -147,15 +177,15 @@ struct ChunkSampler {
         float fy = vy - iy;
         float fx = vx - ix;
 
-        float c00 = (1 - fx) * c000 + fx * c001;
-        float c01 = (1 - fx) * c010 + fx * c011;
-        float c10 = (1 - fx) * c100 + fx * c101;
-        float c11 = (1 - fx) * c110 + fx * c111;
+        float c00 = std::fma(fx, c001 - c000, c000);
+        float c01 = std::fma(fx, c011 - c010, c010);
+        float c10 = std::fma(fx, c101 - c100, c100);
+        float c11 = std::fma(fx, c111 - c110, c110);
 
-        float c0 = (1 - fy) * c00 + fy * c01;
-        float c1 = (1 - fy) * c10 + fy * c11;
+        float c0 = std::fma(fy, c01 - c00, c00);
+        float c1 = std::fma(fy, c11 - c10, c10);
 
-        return (1 - fz) * c0 + fz * c1;
+        return std::fma(fz, c1 - c0, c0);
     }
 
     // Fast path: when all 8 trilinear corners are in the same chunk
@@ -197,15 +227,15 @@ struct ChunkSampler {
             float fy = vy - iy;
             float fx = vx - ix;
 
-            float c00 = (1 - fx) * c000 + fx * c001;
-            float c01 = (1 - fx) * c010 + fx * c011;
-            float c10 = (1 - fx) * c100 + fx * c101;
-            float c11 = (1 - fx) * c110 + fx * c111;
+            float c00 = std::fma(fx, c001 - c000, c000);
+            float c01 = std::fma(fx, c011 - c010, c010);
+            float c10 = std::fma(fx, c101 - c100, c100);
+            float c11 = std::fma(fx, c111 - c110, c110);
 
-            float c0 = (1 - fy) * c00 + fy * c01;
-            float c1 = (1 - fy) * c10 + fy * c11;
+            float c0 = std::fma(fy, c01 - c00, c00);
+            float c1 = std::fma(fy, c11 - c10, c10);
 
-            return (1 - fz) * c0 + fz * c1;
+            return std::fma(fz, c1 - c0, c0);
         }
 
         return sampleTrilinear(vz, vy, vx);
@@ -285,6 +315,10 @@ static void readVolumeImpl(
             int ciz = iz >> p.czShift;
             int ciy = iy >> p.cyShift;
             int cix = ix >> p.cxShift;
+            // Skip chunks in zero-padded regions
+            if (p.dbValid && (ciz < p.dbMinCz || ciz > p.dbMaxCz ||
+                              ciy < p.dbMinCy || ciy > p.dbMaxCy ||
+                              cix < p.dbMinCx || cix > p.dbMaxCx)) return;
             size_t idx = ciz * p.chunksY * p.chunksX + ciy * p.chunksX + cix;
             if (!needed[idx]) {
                 needed[idx] = 1;
@@ -326,7 +360,7 @@ static void readVolumeImpl(
                 for (int x = 0; x < w; x++) {
                     const cv::Vec3f& bc = coords(y, x);
                     float bz = bc[2], by = bc[1], bx = bc[0];
-                    if (!(bz >= 0 && by >= 0 && bx >= 0 && bz < p.sz && by < p.sy)) continue;
+                    if (!(bz >= 0 && by >= 0 && bx >= 0 && bz < p.sz && by < p.sy && bx < p.sx)) continue;
                     cv::Vec3f n = getNormal(y, x);
                     for (int l = 0; l < numLayers; l++) {
                         float off = layerOffsets[l];
@@ -625,7 +659,8 @@ void readCompositeFast(
     const cv::Mat_<cv::Vec3f>& normals,
     float zStep,
     int zStart, int zEnd,
-    const CompositeParams& params)
+    const CompositeParams& params,
+    vc::Sampling method)
 {
     CacheParams p(cache, level);
 
@@ -642,8 +677,20 @@ void readCompositeFast(
         return {1, 0, 0};
     };
 
-    readVolumeImpl<uint8_t, SampleMode::Nearest>(out, *cache, level, p, baseCoords,
-        getNormal, numLayers, zStep, zStart, &params);
+    switch (method) {
+        case vc::Sampling::Trilinear:
+            readVolumeImpl<uint8_t, SampleMode::Trilinear>(out, *cache, level, p, baseCoords,
+                getNormal, numLayers, zStep, zStart, &params);
+            break;
+        case vc::Sampling::Tricubic:
+            readVolumeImpl<uint8_t, SampleMode::Tricubic>(out, *cache, level, p, baseCoords,
+                getNormal, numLayers, zStep, zStart, &params);
+            break;
+        default:
+            readVolumeImpl<uint8_t, SampleMode::Nearest>(out, *cache, level, p, baseCoords,
+                getNormal, numLayers, zStep, zStart, &params);
+            break;
+    }
 }
 
 
@@ -822,15 +869,15 @@ static void readMultiSliceImpl(
                         float fy = vy - iy;
                         float fx = vx - ix;
 
-                        float c00 = (1-fx)*c000 + fx*c001;
-                        float c01 = (1-fx)*c010 + fx*c011;
-                        float c10 = (1-fx)*c100 + fx*c101;
-                        float c11 = (1-fx)*c110 + fx*c111;
+                        float c00 = std::fma(fx, c001 - c000, c000);
+                        float c01 = std::fma(fx, c011 - c010, c010);
+                        float c10 = std::fma(fx, c101 - c100, c100);
+                        float c11 = std::fma(fx, c111 - c110, c110);
 
-                        float c0 = (1-fy)*c00 + fy*c01;
-                        float c1 = (1-fy)*c10 + fy*c11;
+                        float c0 = std::fma(fy, c01 - c00, c00);
+                        float c1 = std::fma(fy, c11 - c10, c10);
 
-                        float v = (1-fz)*c0 + fz*c1;
+                        float v = std::fma(fz, c1 - c0, c0);
                         v = std::max(0.f, std::min(maxVal, v + 0.5f));
                         out[si](y, x) = static_cast<T>(v);
                     }
@@ -909,7 +956,7 @@ static void sampleTileSlicesImpl(
         std::vector<std::array<int,3>> neededChunks;
         neededChunks.reserve(16);
 
-        std::vector<uint64_t> seen;
+        std::unordered_set<uint64_t> seen;
         seen.reserve(16);
         auto markVoxel = [&](int iz, int iy, int ix) {
             if (iz < 0 || iy < 0 || ix < 0 || iz >= p.sz || iy >= p.sy || ix >= p.sx) return;
@@ -917,8 +964,7 @@ static void sampleTileSlicesImpl(
             int ciy = iy >> p.cyShift;
             int cix = ix >> p.cxShift;
             uint64_t key = (uint64_t(ciz) << 40) | (uint64_t(ciy) << 20) | uint64_t(cix);
-            for (auto k : seen) if (k == key) return;
-            seen.push_back(key);
+            if (!seen.insert(key).second) return;
             neededChunks.push_back({ciz, ciy, cix});
         };
 
@@ -1029,15 +1075,15 @@ static void sampleTileSlicesImpl(
                     float fy = vy - iy;
                     float fx = vx - ix;
 
-                    float c00 = (1-fx)*c000 + fx*c001;
-                    float c01 = (1-fx)*c010 + fx*c011;
-                    float c10 = (1-fx)*c100 + fx*c101;
-                    float c11 = (1-fx)*c110 + fx*c111;
+                    float c00 = std::fma(fx, c001 - c000, c000);
+                    float c01 = std::fma(fx, c011 - c010, c010);
+                    float c10 = std::fma(fx, c101 - c100, c100);
+                    float c11 = std::fma(fx, c111 - c110, c110);
 
-                    float c0 = (1-fy)*c00 + fy*c01;
-                    float c1 = (1-fy)*c10 + fy*c11;
+                    float c0 = std::fma(fy, c01 - c00, c00);
+                    float c1 = std::fma(fy, c11 - c10, c10);
 
-                    float v = (1-fz)*c0 + fz*c1;
+                    float v = std::fma(fz, c1 - c0, c0);
                     v = std::max(0.f, std::min(maxVal, v + 0.5f));
                     out[si](y, x) = static_cast<T>(v);
                 }

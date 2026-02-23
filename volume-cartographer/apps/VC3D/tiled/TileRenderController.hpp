@@ -83,6 +83,12 @@ public:
     void setOverlayCallback(std::function<void()> cb);
     void setZoomSettleCallback(std::function<void()> cb);
 
+signals:
+    // Emitted when drainResults() actually updated tile pixmaps.
+    // Connect to viewport()->update() to guarantee repaints during
+    // progressive refinement (chunk arrival while the view is idle).
+    void sceneNeedsUpdate();
+
 private slots:
     // Drain completed results from the render pool and update tile scene.
     void drainResults();

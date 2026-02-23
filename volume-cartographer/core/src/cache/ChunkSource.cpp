@@ -62,7 +62,9 @@ void FileSystemChunkSource::discoverLevels()
         nlohmann::json meta;
         try {
             f >> meta;
-        } catch (...) {
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "[CHUNK_SOURCE] Warning: failed to parse %s: %s\n",
+                         zarrayPath.c_str(), e.what());
             continue;
         }
 
@@ -264,7 +266,7 @@ std::vector<uint8_t> HttpChunkSource::fetch(const ChunkKey& key)
         curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
 
         if (res == CURLE_HTTP_RETURNED_ERROR &&
-            (httpCode == 404 || httpCode == 403)) {
+            (httpCode == 404 || httpCode == 403 || httpCode == 400)) {
             return {};  // chunk doesn't exist at source
         }
 

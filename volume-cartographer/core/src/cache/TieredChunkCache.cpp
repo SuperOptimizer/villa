@@ -4,14 +4,17 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 
 namespace vc::cache {
 
 static FILE* debugLog()
 {
-    static FILE* f = [] {
-        FILE* fp = std::fopen("/tmp/tiled_debug.log", "w");
+    static FILE* f = [] () -> FILE* {
+        const char* path = std::getenv("VC_CACHE_DEBUG_LOG");
+        if (!path || path[0] == '\0') return nullptr;
+        FILE* fp = std::fopen(path, "w");
         if (fp) std::setvbuf(fp, nullptr, _IOLBF, 0);  // line-buffered
         return fp;
     }();
@@ -91,6 +94,9 @@ TieredChunkCache::TieredChunkCache(
                 // Remember that this chunk doesn't exist so we never refetch
                 {
                     std::unique_lock lock(negativeMutex_);
+                    if (negativeCache_.size() > 500000) {
+                        negativeCache_.clear();
+                    }
                     negativeCache_.insert(key);
                 }
                 if (auto* log = debugLog())
@@ -139,9 +145,15 @@ TieredChunkCache::TieredChunkCache(
                 }
             }
 
-            // Notify caller (e.g., to trigger UI refresh)
-            if (chunkReadyCb_) {
-                chunkReadyCb_(key);
+            // Notify caller (e.g., to trigger UI refresh).
+            // Use atomic flag to debounce: only fire the callback if it
+            // hasn't been fired since the last time the consumer cleared it.
+            // This batches rapid chunk arrivals into a single notification.
+            if (!chunkArrivedFlag_.exchange(true, std::memory_order_acq_rel)) {
+                std::lock_guard cbLock(callbackMutex_);
+                if (chunkReadyCb_) {
+                    chunkReadyCb_(key);
+                }
             }
         });
 
@@ -231,6 +243,12 @@ ChunkDataPtr TieredChunkCache::getBlocking(const ChunkKey& key)
     hot = hotGet(key);
     if (hot) return hot;
 
+    // Re-check warm after acquiring lock
+    {
+        auto warm = warmGet(key);
+        if (warm) return promoteFromWarm(key, std::move(*warm));
+    }
+
     // Full promotion chain: cold → warm → hot, or ice → cold → warm → hot
     auto data = loadFull(key);
     if (!data) {
@@ -263,7 +281,8 @@ void TieredChunkCache::prefetch(const ChunkKey& key)
 void TieredChunkCache::prefetchRegion(
     int level, int iz0, int iy0, int ix0, int iz1, int iy1, int ix1)
 {
-    std::vector<ChunkKey> keys;
+    // Phase 1: Collect candidate keys not in hot or warm
+    std::vector<ChunkKey> candidates;
     int totalChecked = 0;
     for (int iz = iz0; iz <= iz1; iz++) {
         for (int iy = iy0; iy <= iy1; iy++) {
@@ -271,12 +290,20 @@ void TieredChunkCache::prefetchRegion(
                 totalChecked++;
                 ChunkKey key{level, iz, iy, ix};
                 if (!hotGet(key) && !warmGet(key).has_value()) {
-                    // Skip chunks known not to exist
-                    std::shared_lock lock(negativeMutex_);
-                    if (negativeCache_.count(key)) continue;
-                    lock.unlock();
-                    keys.push_back(key);
+                    candidates.push_back(key);
                 }
+            }
+        }
+    }
+
+    // Phase 2: Filter out negative-cached keys in a single lock acquisition
+    std::vector<ChunkKey> keys;
+    if (!candidates.empty()) {
+        keys.reserve(candidates.size());
+        std::shared_lock lock(negativeMutex_);
+        for (auto& key : candidates) {
+            if (!negativeCache_.count(key)) {
+                keys.push_back(key);
             }
         }
     }
@@ -294,6 +321,11 @@ void TieredChunkCache::prefetchRegion(
 void TieredChunkCache::cancelPendingPrefetch()
 {
     ioPool_.cancelPending();
+}
+
+void TieredChunkCache::setIOEpoch(uint64_t epoch)
+{
+    ioPool_.setCurrentEpoch(epoch);
 }
 
 // =============================================================================
@@ -338,11 +370,12 @@ void TieredChunkCache::pinLevel(
             }
         }
         for (auto& key : keys) {
-            if (!hotGet(key)) {
+            auto data = hotGet(key);
+            if (!data) {
                 ioPool_.submit(key);
             } else {
                 // Already in hot — just mark as pinned
-                hotPut(key, hotGet(key), /*pinned=*/true);
+                hotPut(key, std::move(data), /*pinned=*/true);
             }
         }
     }
@@ -360,7 +393,7 @@ void TieredChunkCache::clearMemory()
         hotBytes_.store(0, std::memory_order_relaxed);
     }
     {
-        std::lock_guard lock(warmMutex_);
+        std::unique_lock lock(warmMutex_);
         warm_.clear();
         warmBytes_ = 0;
     }
@@ -398,15 +431,64 @@ std::array<int, 3> TieredChunkCache::levelShape(int level) const
     return source_ ? source_->levelShape(level) : std::array<int, 3>{0, 0, 0};
 }
 
+void TieredChunkCache::setDataBounds(int minX, int maxX, int minY, int maxY, int minZ, int maxZ)
+{
+    dataBoundsL0_ = {minX, maxX, minY, maxY, minZ, maxZ, true};
+}
+
+TieredChunkCache::DataBoundsL0 TieredChunkCache::dataBounds() const
+{
+    return dataBoundsL0_;
+}
+
 bool TieredChunkCache::isNegativeCached(const ChunkKey& key) const
 {
     std::shared_lock lock(negativeMutex_);
     return negativeCache_.count(key) > 0;
 }
 
+bool TieredChunkCache::areAllCachedInRegion(
+    int level,
+    int iz0, int iy0, int ix0,
+    int iz1, int iy1, int ix1) const
+{
+    // Single shared-lock acquisition for hot tier
+    std::shared_lock hotLock(hotMutex_);
+    // Collect keys missing from hot
+    std::vector<ChunkKey> missingHot;
+    for (int iz = iz0; iz <= iz1; iz++) {
+        for (int iy = iy0; iy <= iy1; iy++) {
+            for (int ix = ix0; ix <= ix1; ix++) {
+                ChunkKey key{level, iz, iy, ix};
+                if (hot_.find(key) == hot_.end()) {
+                    missingHot.push_back(key);
+                }
+            }
+        }
+    }
+    hotLock.unlock();
+
+    if (missingHot.empty()) return true;
+
+    // Single shared-lock acquisition for negative cache
+    std::shared_lock negLock(negativeMutex_);
+    for (const auto& key : missingHot) {
+        if (negativeCache_.count(key) == 0) {
+            return false;
+        }
+    }
+    return true;
+}
+
 void TieredChunkCache::setChunkReadyCallback(ChunkReadyCallback cb)
 {
+    std::lock_guard lock(callbackMutex_);
     chunkReadyCb_ = std::move(cb);
+}
+
+void TieredChunkCache::clearChunkArrivedFlag()
+{
+    chunkArrivedFlag_.store(false, std::memory_order_release);
 }
 
 // =============================================================================
@@ -425,7 +507,7 @@ auto TieredChunkCache::stats() const -> Stats
     s.warmEvictions = statWarmEvictions_.load(std::memory_order_relaxed);
     s.hotBytes = hotBytes_.load(std::memory_order_relaxed);
     {
-        std::lock_guard lock(warmMutex_);
+        std::shared_lock lock(warmMutex_);
         s.warmBytes = warmBytes_;
     }
     s.ioPending = ioPool_.pendingCount();
@@ -477,9 +559,9 @@ void TieredChunkCache::hotPut(
             it->second.pinned = it->second.pinned || pinned;
             hotBytes_.fetch_sub(oldBytes, std::memory_order_relaxed);
         }
+        hotBytes_.fetch_add(bytes, std::memory_order_relaxed);
     }
 
-    hotBytes_.fetch_add(bytes, std::memory_order_relaxed);
     hotEvictIfNeeded();
 }
 
@@ -547,10 +629,12 @@ void TieredChunkCache::hotEvictIfNeeded()
 
 std::optional<CompressedChunk> TieredChunkCache::warmGet(const ChunkKey& key)
 {
-    std::lock_guard lock(warmMutex_);
+    std::shared_lock lock(warmMutex_);
     auto it = warm_.find(key);
     if (it == warm_.end()) return std::nullopt;
-    it->second.generation = warmGen_++;
+    // No generation update under shared_lock — the warmPut() generation is
+    // sufficient for LRU eviction ordering, and skipping it here avoids a
+    // data race (the generation field is not atomic).
     return it->second.chunk;  // copy while lock is held
 }
 
@@ -562,7 +646,7 @@ void TieredChunkCache::warmPut(
     size_t bytes = compressed.size();
 
     {
-        std::lock_guard lock(warmMutex_);
+        std::unique_lock lock(warmMutex_);
         auto it = warm_.find(key);
         if (it != warm_.end()) {
             // Update existing entry
@@ -587,7 +671,7 @@ void TieredChunkCache::warmEvictIfNeeded()
 {
     if (config_.warmMaxBytes == 0) return;
 
-    std::lock_guard lock(warmMutex_);
+    std::unique_lock lock(warmMutex_);
     if (warmBytes_ <= config_.warmMaxBytes) return;
 
     struct Candidate {
@@ -721,8 +805,11 @@ void TieredChunkCache::onIOComplete(
         }
     }
 
-    if (chunkReadyCb_) {
-        chunkReadyCb_(key);
+    {
+        std::lock_guard cbLock(callbackMutex_);
+        if (chunkReadyCb_) {
+            chunkReadyCb_(key);
+        }
     }
 }
 
@@ -735,6 +822,24 @@ void TieredChunkCache::loadNegativeCache()
     if (!diskStore_) return;
 
     auto path = diskStore_->root() / (config_.volumeId + ".negative");
+
+    // Check file age — skip if older than 7 days
+    {
+        std::error_code ec;
+        auto ftime = std::filesystem::last_write_time(path, ec);
+        if (ec) return;  // file doesn't exist or can't stat
+
+        auto sctp = std::chrono::file_clock::to_sys(ftime);
+        auto age = std::chrono::system_clock::now() - sctp;
+        constexpr auto maxAge = std::chrono::hours(7 * 24);
+        if (age > maxAge) {
+            std::fprintf(stderr,
+                "[TILED] Negative cache file older than 7 days, skipping load\n");
+            std::filesystem::remove(path, ec);
+            return;
+        }
+    }
+
     std::ifstream f(path, std::ios::binary);
     if (!f.is_open()) return;
 

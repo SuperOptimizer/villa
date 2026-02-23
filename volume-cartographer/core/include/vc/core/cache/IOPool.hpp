@@ -40,6 +40,9 @@ public:
     // Set the completion callback (called from worker thread).
     void setCompletionCallback(CompletionCallback cb);
 
+    // Set the current epoch. Tasks from the current epoch get higher priority.
+    void setCurrentEpoch(uint64_t epoch);
+
     // Submit a chunk for background fetching.
     // Deduplicates: if the key is already queued or in-flight, this is a no-op.
     void submit(const ChunkKey& key);
@@ -66,10 +69,13 @@ private:
         // so tiles can show coarse previews while fine data loads.
         // Within same level, FIFO order via sequence number.
         uint64_t seq = 0;
+        uint64_t epoch = 0;  // epoch when this task was submitted
 
         bool operator>(const Task& o) const
         {
             if (key.level != o.key.level) return key.level < o.key.level;
+            // Within same level, prefer newer epoch (higher = newer)
+            if (epoch != o.epoch) return epoch < o.epoch;
             return seq > o.seq;
         }
     };
@@ -79,8 +85,10 @@ private:
 
     // Priority queue: min-heap by (level, seq)
     std::priority_queue<Task, std::vector<Task>, std::greater<Task>> queue_;
-    std::unordered_set<ChunkKey, ChunkKeyHash> queued_;  // dedup set
+    std::unordered_set<ChunkKey, ChunkKeyHash> queued_;  // dedup set for queued tasks
+    std::unordered_set<ChunkKey, ChunkKeyHash> inFlightKeys_;  // keys currently being fetched
     std::atomic<uint64_t> nextSeq_{0};
+    std::atomic<uint64_t> currentEpoch_{0};
     mutable std::mutex mutex_;
     std::condition_variable cv_;
 

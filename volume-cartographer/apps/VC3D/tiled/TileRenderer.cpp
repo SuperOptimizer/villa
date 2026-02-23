@@ -40,6 +40,39 @@ TileRenderResult TileRenderer::renderTile(
         return result;
     }
 
+    // Quick reject: if the tile's world AABB doesn't intersect data bounds,
+    // skip the entire sampling pass (avoids cache lookups and prefetch requests).
+    const auto& db = volume->dataBounds();
+    if (db.valid) {
+        const cv::Vec3f& c00 = coords(0, 0);
+        const cv::Vec3f& c01 = coords(0, coords.cols - 1);
+        const cv::Vec3f& c10 = coords(coords.rows - 1, 0);
+        const cv::Vec3f& c11 = coords(coords.rows - 1, coords.cols - 1);
+
+        float tMinX = std::min({c00[0], c01[0], c10[0], c11[0]});
+        float tMaxX = std::max({c00[0], c01[0], c10[0], c11[0]});
+        float tMinY = std::min({c00[1], c01[1], c10[1], c11[1]});
+        float tMaxY = std::max({c00[1], c01[1], c10[1], c11[1]});
+        float tMinZ = std::min({c00[2], c01[2], c10[2], c11[2]});
+        float tMaxZ = std::max({c00[2], c01[2], c10[2], c11[2]});
+
+        // Conservative margin for interpolation + composite layers
+        float margin = 2.0f;
+        if (params.compositeSettings.enabled || params.compositeSettings.planeEnabled) {
+            margin += static_cast<float>(std::max({
+                params.compositeSettings.layersFront,
+                params.compositeSettings.layersBehind,
+                params.compositeSettings.planeLayersFront,
+                params.compositeSettings.planeLayersBehind}));
+        }
+
+        if (tMaxX < db.minX - margin || tMinX > db.maxX + margin ||
+            tMaxY < db.minY - margin || tMinY > db.maxY + margin ||
+            tMaxZ < db.minZ - margin || tMinZ > db.maxZ + margin) {
+            return result;
+        }
+    }
+
     // Sample volume data
     cv::Mat_<uint8_t> gray;
 
@@ -63,35 +96,41 @@ TileRenderResult TileRenderer::renderTile(
                       params.surfaceROI.y * params.scale,
                       params.zOff});
 
-        int z_start = params.compositeSettings.reverseDirection
-                          ? -params.compositeSettings.layersBehind
-                          : -params.compositeSettings.layersFront;
-        int z_end = params.compositeSettings.reverseDirection
-                        ? params.compositeSettings.layersFront
-                        : params.compositeSettings.layersBehind;
+        vc::SampleParams sp;
+        sp.level = params.dsScaleIdx;
+        sp.composite = params.compositeSettings.params;
+        sp.zStart = params.compositeSettings.reverseDirection
+                        ? -params.compositeSettings.layersBehind
+                        : -params.compositeSettings.layersFront;
+        sp.zEnd = params.compositeSettings.reverseDirection
+                      ? params.compositeSettings.layersFront
+                      : params.compositeSettings.layersBehind;
 
-        result.actualLevel = volume->read3dBestEffort(
-            gray, coords, normals, z_start, z_end,
-            params.compositeSettings.params, params.dsScaleIdx);
+        result.actualLevel = volume->sampleCompositeBestEffort(
+            gray, coords, normals, sp);
     } else if (usePlaneComposite) {
-        int z_start = params.compositeSettings.reverseDirection
-                          ? -params.compositeSettings.planeLayersBehind
-                          : -params.compositeSettings.planeLayersFront;
-        int z_end = params.compositeSettings.reverseDirection
-                        ? params.compositeSettings.planeLayersFront
-                        : params.compositeSettings.planeLayersBehind;
-
         cv::Vec3f planeNormal = plane->normal(cv::Vec3f(0, 0, 0));
         cv::Mat_<cv::Vec3f> normals(coords.size(), planeNormal);
 
-        result.actualLevel = volume->read3dBestEffort(
-            gray, coords, normals, z_start, z_end,
-            params.compositeSettings.params, params.dsScaleIdx);
+        vc::SampleParams sp;
+        sp.level = params.dsScaleIdx;
+        sp.composite = params.compositeSettings.params;
+        sp.zStart = params.compositeSettings.reverseDirection
+                        ? -params.compositeSettings.planeLayersBehind
+                        : -params.compositeSettings.planeLayersFront;
+        sp.zEnd = params.compositeSettings.reverseDirection
+                      ? params.compositeSettings.planeLayersFront
+                      : params.compositeSettings.planeLayersBehind;
+
+        result.actualLevel = volume->sampleCompositeBestEffort(
+            gray, coords, normals, sp);
     } else {
-        vc::Sampling method = params.useFastInterpolation
-            ? vc::Sampling::Nearest : vc::Sampling::Trilinear;
-        result.actualLevel = volume->read2dBestEffort(
-            gray, coords, params.dsScaleIdx, method);
+        vc::SampleParams sp;
+        sp.level = params.dsScaleIdx;
+        sp.method = (params.useFastInterpolation || params.dsScaleIdx >= 3)
+                        ? vc::Sampling::Nearest : vc::Sampling::Trilinear;
+
+        result.actualLevel = volume->sampleBestEffort(gray, coords, sp);
     }
 
     // Post-process
@@ -117,10 +156,16 @@ TileRenderResult TileRenderer::renderTile(
     if (!bgr.empty()) {
         cv::Mat rgb;
         cv::cvtColor(bgr, rgb, cv::COLOR_BGR2RGB);
+        // Transfer ownership of the cv::Mat buffer to QImage via cleanup callback.
+        // This avoids the extra deep copy — QImage will free the Mat when done.
+        auto* matPtr = new cv::Mat(std::move(rgb));
         result.image = QImage(
-            static_cast<const uint8_t*>(rgb.data),
-            rgb.cols, rgb.rows, rgb.step, QImage::Format_RGB888)
-            .copy();  // deep copy — detach from cv::Mat memory
+            static_cast<const uint8_t*>(matPtr->data),
+            matPtr->cols, matPtr->rows,
+            static_cast<qsizetype>(matPtr->step),
+            QImage::Format_RGB888,
+            [](void* p) { delete static_cast<cv::Mat*>(p); },
+            matPtr);
     }
     return result;
 }

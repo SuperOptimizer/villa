@@ -23,7 +23,7 @@ void readInterpolated3D(cv::Mat_<uint16_t> &out, vc::cache::TieredChunkCache* ca
 void readArea3D(xt::xtensor<uint8_t,3,xt::layout_type::column_major> &out, const cv::Vec3i& offset, vc::cache::TieredChunkCache* cache, int level);
 void readArea3D(xt::xtensor<uint16_t,3,xt::layout_type::column_major> &out, const cv::Vec3i& offset, vc::cache::TieredChunkCache* cache, int level);
 
-// Fast composite rendering - nearest neighbor only
+// Composite rendering with configurable interpolation.
 void readCompositeFast(
     cv::Mat_<uint8_t>& out,
     vc::cache::TieredChunkCache* cache,
@@ -32,7 +32,8 @@ void readCompositeFast(
     const cv::Mat_<cv::Vec3f>& normals,
     float zStep,
     int zStart, int zEnd,
-    const CompositeParams& params
+    const CompositeParams& params,
+    vc::Sampling method = vc::Sampling::Nearest
 );
 
 // Bulk multi-slice read with trilinear interpolation.

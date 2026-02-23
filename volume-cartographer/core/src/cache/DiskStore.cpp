@@ -1,6 +1,9 @@
 #include "vc/core/cache/DiskStore.hpp"
 
 #include <algorithm>
+#include <cerrno>
+#include <cstdio>
+#include <cstring>
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -11,6 +14,9 @@ DiskStore::DiskStore(Config config) : config_(std::move(config))
 {
     if (!config_.root.empty()) {
         std::filesystem::create_directories(config_.root);
+        if (std::filesystem::exists(config_.root)) {
+            initTotalBytes();
+        }
     }
 }
 
@@ -73,16 +79,19 @@ std::optional<std::vector<uint8_t>> DiskStore::get(
     size_t total = 0;
     while (total < fileSize) {
         ssize_t n = ::read(fd, buf.data() + total, fileSize - total);
-        if (n <= 0) {
+        if (n == 0 && total < fileSize) {
+            std::fprintf(stderr, "[DISK] get: truncated file %s (read %zu/%zu bytes)\n",
+                         path.c_str(), total, static_cast<size_t>(fileSize));
+            ::close(fd);
+            return std::nullopt;
+        }
+        if (n < 0) {
             ::close(fd);
             return std::nullopt;
         }
         total += static_cast<size_t>(n);
     }
     ::close(fd);
-
-    // Touch mtime for LRU (best effort, ignore failures)
-    ::utimensat(AT_FDCWD, path.c_str(), nullptr, 0);
 
     return buf;
 }
@@ -122,8 +131,13 @@ void DiskStore::put(
     while (written < size) {
         ssize_t n = ::write(fd, data + written, size - written);
         if (n <= 0) {
-            std::fprintf(stderr, "[DISK] put: write FAILED for %s errno=%d\n",
-                         tmpPath.c_str(), errno);
+            int err = errno;
+            if (err == ENOSPC) {
+                std::fprintf(stderr, "[DISK] put: DISK FULL writing %s\n", tmpPath.c_str());
+            } else {
+                std::fprintf(stderr, "[DISK] put: write FAILED for %s errno=%d (%s)\n",
+                             tmpPath.c_str(), err, strerror(err));
+            }
             ::close(fd);
             ::unlink(tmpPath.c_str());
             return;
@@ -138,6 +152,8 @@ void DiskStore::put(
         std::fprintf(stderr, "[DISK] put: rename FAILED %s -> %s: %s\n",
                      tmpPath.c_str(), path.c_str(), ec.message().c_str());
         ::unlink(tmpPath.c_str());
+    } else {
+        totalBytes_.fetch_add(size, std::memory_order_relaxed);
     }
 }
 
@@ -152,13 +168,36 @@ void DiskStore::remove(
     const std::string& volumeId,
     const ChunkKey& key)
 {
+    auto path = chunkPath(volumeId, key);
     std::error_code ec;
-    std::filesystem::remove(chunkPath(volumeId, key), ec);
+
+    // Get file size before removing so we can update the tracked total
+    auto sz = std::filesystem::file_size(path, ec);
+    if (ec) {
+        // File doesn't exist or can't stat — nothing to subtract
+        std::filesystem::remove(path, ec);
+        return;
+    }
+
+    std::filesystem::remove(path, ec);
+    if (!ec) {
+        auto prev = totalBytes_.load(std::memory_order_relaxed);
+        auto sub = static_cast<size_t>(sz);
+        // Clamp to avoid underflow
+        while (prev >= sub &&
+               !totalBytes_.compare_exchange_weak(
+                   prev, prev - sub, std::memory_order_relaxed))
+            ;
+    }
 }
 
 void DiskStore::evictToSize(size_t targetBytes)
 {
     if (config_.root.empty()) return;
+
+    // Fast path: if tracked total is already within budget, skip the scan
+    size_t tracked = totalBytes_.load(std::memory_order_relaxed);
+    if (tracked > 0 && tracked <= targetBytes) return;
 
     // Collect all chunk files with their sizes and modification times
     struct FileInfo {
@@ -185,6 +224,9 @@ void DiskStore::evictToSize(size_t targetBytes)
             {entry.path(), static_cast<size_t>(sz), entry.last_write_time()});
     }
 
+    // Sync tracked total with the scanned value
+    totalBytes_.store(totalSize, std::memory_order_relaxed);
+
     if (totalSize <= targetBytes) return;
 
     // Sort oldest first
@@ -201,12 +243,22 @@ void DiskStore::evictToSize(size_t targetBytes)
             totalSize -= fi.bytes;
         }
     }
+
+    // Update tracked total after eviction
+    totalBytes_.store(totalSize, std::memory_order_relaxed);
 }
 
 size_t DiskStore::totalBytes() const
 {
-    if (config_.root.empty() || !std::filesystem::exists(config_.root))
-        return 0;
+    return totalBytes_.load(std::memory_order_relaxed);
+}
+
+void DiskStore::initTotalBytes()
+{
+    if (config_.root.empty() || !std::filesystem::exists(config_.root)) {
+        totalBytes_.store(0, std::memory_order_relaxed);
+        return;
+    }
 
     size_t total = 0;
     std::error_code ec;
@@ -216,7 +268,7 @@ size_t DiskStore::totalBytes() const
             total += static_cast<size_t>(entry.file_size());
         }
     }
-    return total;
+    totalBytes_.store(total, std::memory_order_relaxed);
 }
 
 void DiskStore::clearVolume(const std::string& volumeId)
@@ -224,6 +276,8 @@ void DiskStore::clearVolume(const std::string& volumeId)
     auto volDir = config_.root / volumeId;
     std::error_code ec;
     std::filesystem::remove_all(volDir, ec);
+    // Re-scan since we can't easily know how much was in this volume
+    initTotalBytes();
 }
 
 void DiskStore::clearAll()
@@ -233,6 +287,7 @@ void DiskStore::clearAll()
     for (auto& entry : std::filesystem::directory_iterator(config_.root, ec)) {
         std::filesystem::remove_all(entry.path(), ec);
     }
+    totalBytes_.store(0, std::memory_order_relaxed);
 }
 
 }  // namespace vc::cache
