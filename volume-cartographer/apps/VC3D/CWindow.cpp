@@ -3729,8 +3729,6 @@ void CWindow::onAppendMaskPressed(void)
     cv::Mat_<uint8_t> img;
     std::vector<cv::Mat> existing_layers;
 
-    z5::Dataset* ds = currentVolume->zarrDataset(0);
-
     try {
         // Find the segmentation viewer and check if composite is enabled
         CVolumeViewer* segViewer = segmentationViewer();
@@ -3776,7 +3774,7 @@ void CWindow::onAppendMaskPressed(void)
                               << ", coords[end]: " << coords(coords.rows-5, coords.cols-5) << std::endl;
                 }
 
-                render_image_from_coords(coords, img, ds, chunk_cache);
+                render_image_from_coords(coords, img, currentVolume.get());
             }
             cv::normalize(img, img, 0, 255, cv::NORM_MINMAX, CV_8U);
 
@@ -3806,7 +3804,7 @@ void CWindow::onAppendMaskPressed(void)
                 img = segViewer->renderCompositeForSurface(surf, maskSize);
             } else {
                 // Original rendering
-                render_surface_image(surf.get(), mask, img, ds, chunk_cache, 1.0f);
+                render_surface_image(surf.get(), mask, img, currentVolume.get(), 0, 1.0f);
             }
             cv::normalize(img, img, 0, 255, cv::NORM_MINMAX, CV_8U);
 

@@ -1,3 +1,4 @@
+#include <iostream>
 #include <random>
 
 #include "vc/core/util/Slicing.hpp"
@@ -7,11 +8,11 @@
 
 #include <opencv2/imgproc.hpp>
 #include "vc/core/types/ChunkedTensor.hpp"
+#include <utils/zarr.hpp>
 #include "vc/core/util/StreamOperators.hpp"
 #include "vc/tracer/Tracer.hpp"
 
 
-#include "z5/factory.hxx"
 #include <nlohmann/json.hpp>
 #include <boost/program_options.hpp>
 
@@ -23,9 +24,9 @@
 #include <optional>
 #include <utility>
 #include <vector>
- 
+
 namespace po = boost::program_options;
-using shape = z5::types::ShapeType;
+using shape = std::vector<size_t>;
 
 
 using json = nlohmann::json;
@@ -125,7 +126,7 @@ bool check_existing_segments(const std::filesystem::path& tgt_dir, const cv::Vec
     return false;
 }
 
-static auto load_direction_fields(json const&params, ChunkCache<uint8_t> *chunk_cache, std::filesystem::path const &cache_root)
+static auto load_direction_fields(json const&params, std::filesystem::path const &cache_root)
 {
     std::vector<DirectionField> direction_fields;
     if (params.contains("direction_fields")) {
@@ -141,22 +142,21 @@ static auto load_direction_fields(json const&params, ChunkCache<uint8_t> *chunk_
             }
             int const ome_scale = direction_field["scale"];
             float scale_factor = std::pow(2, -ome_scale);
-            z5::filesystem::handle::Group dirs_group(zarr_path, z5::FileMode::FileMode::r);
-            std::vector<std::unique_ptr<z5::Dataset>> direction_dss;
+            std::vector<std::unique_ptr<vc::Zarr>> direction_dss;
             for (auto dim : std::string("xyz")) {
-                z5::filesystem::handle::Group dim_group(dirs_group, std::string(&dim, 1));
-                z5::filesystem::handle::Dataset dirs_ds_handle(dim_group, std::to_string(ome_scale), ".");
-                direction_dss.push_back(z5::filesystem::openDataset(dirs_ds_handle));
+                direction_dss.push_back(std::make_unique<vc::Zarr>(
+                    std::filesystem::path(zarr_path) / std::string(&dim, 1) / std::to_string(ome_scale)));
             }
-            std::cout << "direction field dataset shape " << direction_dss.front()->shape() << std::endl;
-            std::unique_ptr<z5::Dataset> maybe_weight_ds;
+            std::cout << "direction field dataset shape";
+            for (auto s : direction_dss.front()->shape()) std::cout << " " << s;
+            std::cout << std::endl;
+            std::unique_ptr<vc::Zarr> maybe_weight_ds;
             if (direction_field.contains("weight_zarr")) {
                 std::string const weight_zarr_path = direction_field["weight_zarr"];
-                z5::filesystem::handle::Group weight_group(weight_zarr_path);
-                z5::filesystem::handle::Dataset weight_ds_handle(weight_group, std::to_string(ome_scale), ".");
-                maybe_weight_ds = z5::filesystem::openDataset(weight_ds_handle);
+                maybe_weight_ds = std::make_unique<vc::Zarr>(
+                    std::filesystem::path(weight_zarr_path) / std::to_string(ome_scale));
             }
-            std::string const unique_id = std::to_string(std::hash<std::string>{}(dirs_group.path().string() + std::to_string(ome_scale)));
+            std::string const unique_id = std::to_string(std::hash<std::string>{}(zarr_path + std::to_string(ome_scale)));
             float weight = 1.0f;
             if (direction_field.contains("weight")) {
                 try {
@@ -168,8 +168,8 @@ static auto load_direction_fields(json const&params, ChunkCache<uint8_t> *chunk_
 
             direction_fields.emplace_back(
                 direction,
-                std::make_unique<Chunked3dVec3fFromUint8>(std::move(direction_dss), scale_factor, chunk_cache, cache_root, unique_id),
-                maybe_weight_ds ? std::make_unique<Chunked3dFloatFromUint8>(std::move(maybe_weight_ds), scale_factor, chunk_cache, cache_root, unique_id + "_conf") : std::unique_ptr<Chunked3dFloatFromUint8>(),
+                std::make_unique<Chunked3dVec3fFromUint8>(std::move(direction_dss), scale_factor, cache_root, unique_id),
+                maybe_weight_ds ? std::make_unique<Chunked3dFloatFromUint8>(std::move(maybe_weight_ds), scale_factor, cache_root, unique_id + "_conf") : std::unique_ptr<Chunked3dFloatFromUint8>(),
                 weight);
         }
     }
@@ -302,20 +302,20 @@ int main(int argc, char *argv[])
         set_space_tracing_use_cuda(true);
     }
 
-    z5::filesystem::handle::Group group(vol_path, z5::FileMode::FileMode::r);
-    z5::filesystem::handle::Dataset ds_handle(group, "0", json::parse(std::ifstream(vol_path/"0/.zarray")).value<std::string>("dimension_separator","."));
-    std::unique_ptr<z5::Dataset> ds = z5::filesystem::openDataset(ds_handle);
+    auto ds = std::make_unique<vc::Zarr>(vol_path / "0");
 
-    std::cout << "zarr dataset size for scale group 0 " << ds->shape() << std::endl;
-    std::cout << "chunk shape shape " << ds->chunking().blockShape() << std::endl;
-
-    ChunkCache<uint8_t> chunk_cache(params.value("cache_size", 1e9));
+    std::cout << "zarr dataset size for scale group 0";
+    for (auto s : ds->shape()) std::cout << " " << s;
+    std::cout << std::endl;
+    std::cout << "chunk shape";
+    for (auto s : ds->chunks()) std::cout << " " << s;
+    std::cout << std::endl;
 
     passTroughComputor pass;
-    Chunked3d<uint8_t,passTroughComputor> tensor(pass, ds.get(), &chunk_cache);
+    Chunked3d<uint8_t,passTroughComputor> tensor(pass, ds.get());
     CachedChunked3dInterpolator<uint8_t,passTroughComputor> interpolator(tensor);
 
-    auto chunk_size = ds->chunking().blockShape();
+    auto chunk_size = ds->chunks();
 
     srand(clock());
 
@@ -341,7 +341,7 @@ int main(int argc, char *argv[])
     std::cout << "min_area_cm: " << min_area_cm << std::endl;
     std::cout << "tgt_overlap_count: " << tgt_overlap_count << std::endl;
 
-    auto direction_fields = load_direction_fields(params, &chunk_cache, cache_root);
+    auto direction_fields = load_direction_fields(params, cache_root);
 
     std::unordered_map<std::string,QuadSurface*> surfs;
     std::vector<QuadSurface*> surfs_v;
@@ -488,9 +488,9 @@ int main(int argc, char *argv[])
             int max_attempts = 1000;
             
             while(count < max_attempts && !succ) {
-                origin = {static_cast<double>(128 + (rand() % (ds->shape(2)-384))),
-                         static_cast<double>(128 + (rand() % (ds->shape(1)-384))),
-                         static_cast<double>(128 + (rand() % (ds->shape(0)-384)))};
+                origin = {static_cast<double>(128 + (rand() % (ds->shape()[2]-384))),
+                         static_cast<double>(128 + (rand() % (ds->shape()[1]-384))),
+                         static_cast<double>(128 + (rand() % (ds->shape()[0]-384)))};
 
                 count++;
                 auto chunk_id = chunk_size;
@@ -498,7 +498,7 @@ int main(int argc, char *argv[])
                 chunk_id[1] = origin[1]/chunk_id[1];
                 chunk_id[2] = origin[0]/chunk_id[2];
 
-                if (!ds->chunkExists(chunk_id))
+                if (!ds->chunkExists(chunk_id[0], chunk_id[1], chunk_id[2]))
                     continue;
 
                 cv::Vec3d dir = {static_cast<double>((rand() % 1024) - 512),
@@ -1367,7 +1367,7 @@ int main(int argc, char *argv[])
         return EXIT_SUCCESS;
     }
 
-    QuadSurface *surf = tracer(ds.get(), 1.0, &chunk_cache, origin, params, cache_root, voxelsize, direction_fields, resume_surf.get(), seg_dir, meta_params, corrections);
+    QuadSurface *surf = tracer(ds.get(), 1.0, origin, params, cache_root, voxelsize, direction_fields, resume_surf.get(), seg_dir, meta_params, corrections);
 
     double area_cm2 = (*surf->meta)["area_cm2"].get<double>();
     if (area_cm2 < min_area_cm) {

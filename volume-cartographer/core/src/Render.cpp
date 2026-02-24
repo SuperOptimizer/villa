@@ -1,4 +1,6 @@
 #include "vc/core/types/VolumePkg.hpp"
+#include "vc/core/types/Volume.hpp"
+#include "vc/core/types/SampleParams.hpp"
 #include "vc/core/util/QuadSurface.hpp"
 #include "vc/core/util/Slicing.hpp"
 #include <opencv2/imgproc.hpp>
@@ -73,29 +75,31 @@ void render_binary_mask(QuadSurface* surf,
     }
 }
 
+// ============================================================================
+// Volume-based API (uses Volume::sample / TieredChunkCache)
+// ============================================================================
+
 void render_image_from_coords(const cv::Mat_<cv::Vec3f>& coords,
                               cv::Mat_<uint8_t>& img,
-                              z5::Dataset* ds,
-                              ChunkCache<uint8_t>* cache) {
-    if (!ds || !cache) {
-        throw std::runtime_error("Dataset or cache is null in render_image_from_coords");
+                              Volume* volume,
+                              int level) {
+    if (!volume) {
+        throw std::runtime_error("Volume is null in render_image_from_coords");
     }
 
-    readInterpolated3D(img, ds, coords, cache);
-    std::cout << "render_image_from_coords: completed" << std::endl;
+    vc::SampleParams sp;
+    sp.level = level;
+    volume->sample(img, coords, sp);
 }
 
-// Render surface - generates both mask and image
 void render_surface_image(QuadSurface* surf,
                          cv::Mat_<uint8_t>& mask,
                          cv::Mat_<uint8_t>& img,
-                         z5::Dataset* ds,
-                         ChunkCache<uint8_t>* cache,
+                         Volume* volume,
+                         int level,
                          float scale) {
 
     cv::Mat_<cv::Vec3f> coords;
     render_binary_mask(surf, mask, coords, scale);
-    render_image_from_coords(coords, img, ds, cache);
-
-    std::cout << "render_surface_image: completed" << std::endl;
+    render_image_from_coords(coords, img, volume, level);
 }

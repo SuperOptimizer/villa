@@ -1,15 +1,12 @@
+// Zarr + ChunkCache based slicing functions (z5-independent).
+// Used by vc_render_tifxyz for direct dataset sampling without TieredChunkCache.
+
 #include "vc/core/util/Slicing.hpp"
+#include "vc/core/util/ChunkCache.hpp"
 #include "vc/core/util/Compositing.hpp"
-
-#include <xtensor/containers/xarray.hpp>
-#include <xtensor/containers/xtensor.hpp>
-#include <xtensor/generators/xbuilder.hpp>
-
-#include "z5/dataset.hxx"
-#include "z5/multiarray/xtensor_access.hxx"
+#include <utils/zarr.hpp>
 
 #include <opencv2/core.hpp>
-#include <opencv2/calib3d.hpp>
 
 #include <algorithm>
 #include <array>
@@ -27,8 +24,8 @@ struct CacheParams {
     int czShift, cyShift, cxShift, czMask, cyMask, cxMask;
     int chunksZ, chunksY, chunksX;
 
-    explicit CacheParams(z5::Dataset* ds) {
-        const auto& cs = ds->defaultChunkShape();
+    explicit CacheParams(vc::Zarr* ds) {
+        const auto& cs = ds->chunks();
         cz = static_cast<int>(cs[0]);
         cy = static_cast<int>(cs[1]);
         cx = static_cast<int>(cs[2]);
@@ -65,13 +62,13 @@ struct ChunkSampler {
 
     const CacheParams<T>& p;
     ChunkCache<T>& cache;
-    z5::Dataset* ds;
+    vc::Zarr* ds;
     Slot slots[kSlots];
     int mru = 0;  // most-recently-used slot index
     const T* data = nullptr;  // current data pointer
     size_t s0 = 0, s1 = 0;   // strides (s2 is always 1, eliminated)
 
-    ChunkSampler(const CacheParams<T>& p_, ChunkCache<T>& cache_, z5::Dataset* ds_)
+    ChunkSampler(const CacheParams<T>& p_, ChunkCache<T>& cache_, vc::Zarr* ds_)
         : p(p_), cache(cache_), ds(ds_)
     {
         s0 = static_cast<size_t>(p.cy) * p.cx;
@@ -226,7 +223,7 @@ enum class SampleMode { Nearest, Trilinear };
 template<typename T, SampleMode Mode, typename NormalFn>
 static void readVolumeImpl(
     cv::Mat_<T>& out,
-    z5::Dataset* ds,
+    vc::Zarr* ds,
     ChunkCache<T>& cache,
     const CacheParams<T>& p,
     const cv::Mat_<cv::Vec3f>& coords,
@@ -445,114 +442,12 @@ static void readVolumeImpl(
 
 
 // ============================================================================
-// readArea3DImpl
+// readCompositeFast — Zarr + ChunkCache version
 // ============================================================================
-
-template<typename T>
-static void readArea3DImpl(xt::xtensor<T, 3, xt::layout_type::column_major>& out, const cv::Vec3i& offset, z5::Dataset* ds, ChunkCache<T>* cache) {
-
-    CacheParams<T> p(ds);
-
-    cv::Vec3i size = {(int)out.shape()[0], (int)out.shape()[1], (int)out.shape()[2]};
-    cv::Vec3i to = offset + size;
-
-    // Step 1: List all required chunks
-    std::vector<cv::Vec3i> chunks_to_process;
-    cv::Vec3i start_chunk = {offset[0] / p.cz, offset[1] / p.cy, offset[2] / p.cx};
-    cv::Vec3i end_chunk = {(to[0] - 1) / p.cz, (to[1] - 1) / p.cy, (to[2] - 1) / p.cx};
-
-    for (int cz = start_chunk[0]; cz <= end_chunk[0]; ++cz) {
-        for (int cy = start_chunk[1]; cy <= end_chunk[1]; ++cy) {
-            for (int cx = start_chunk[2]; cx <= end_chunk[2]; ++cx) {
-                chunks_to_process.push_back({cz, cy, cx});
-            }
-        }
-    }
-
-    // Step 2 & 3: Load and copy chunks (no inner OMP — called from parallel tile loop)
-    for (const auto& idx : chunks_to_process) {
-        int cz = idx[0], cy = idx[1], cx = idx[2];
-        auto chunkPtr = cache->get(ds, cz, cy, cx);
-        xt::xarray<T>* chunk = chunkPtr.get();
-
-        cv::Vec3i chunk_offset = {p.cz * cz, p.cy * cy, p.cx * cx};
-
-        cv::Vec3i copy_from_start = {
-            std::max(offset[0], chunk_offset[0]),
-            std::max(offset[1], chunk_offset[1]),
-            std::max(offset[2], chunk_offset[2])
-        };
-
-        cv::Vec3i copy_from_end = {
-            std::min(to[0], chunk_offset[0] + p.cz),
-            std::min(to[1], chunk_offset[1] + p.cy),
-            std::min(to[2], chunk_offset[2] + p.cx)
-        };
-
-        if (chunk) {
-            for (int z = copy_from_start[0]; z < copy_from_end[0]; ++z) {
-                for (int y = copy_from_start[1]; y < copy_from_end[1]; ++y) {
-                    for (int x = copy_from_start[2]; x < copy_from_end[2]; ++x) {
-                        int lz = z - chunk_offset[0];
-                        int ly = y - chunk_offset[1];
-                        int lx = x - chunk_offset[2];
-                        out(z - offset[0], y - offset[1], x - offset[2]) = (*chunk)(lz, ly, lx);
-                    }
-                }
-            }
-        } else {
-            for (int z = copy_from_start[0]; z < copy_from_end[0]; ++z) {
-                for (int y = copy_from_start[1]; y < copy_from_end[1]; ++y) {
-                    for (int x = copy_from_start[2]; x < copy_from_end[2]; ++x) {
-                        out(z - offset[0], y - offset[1], x - offset[2]) = 0;
-                    }
-                }
-            }
-        }
-    }
-}
-
-void readArea3D(xt::xtensor<uint8_t, 3, xt::layout_type::column_major>& out, const cv::Vec3i& offset, z5::Dataset* ds, ChunkCache<uint8_t>* cache) {
-    readArea3DImpl(out, offset, ds, cache);
-}
-
-void readArea3D(xt::xtensor<uint16_t, 3, xt::layout_type::column_major>& out, const cv::Vec3i& offset, z5::Dataset* ds, ChunkCache<uint16_t>* cache) {
-    readArea3DImpl(out, offset, ds, cache);
-}
-
-
-// ============================================================================
-// Public API — thin wrappers around readVolumeImpl
-// ============================================================================
-
-template<typename T>
-static void readInterpolated3DImpl(cv::Mat_<T>& out, z5::Dataset* ds,
-                                   const cv::Mat_<cv::Vec3f>& coords, ChunkCache<T>* cache, bool nearest_neighbor) {
-    CacheParams<T> p(ds);
-
-    if (nearest_neighbor) {
-        readVolumeImpl<T, SampleMode::Nearest>(out, ds, *cache, p, coords,
-            [](int, int) -> cv::Vec3f { return {}; }, 1, 0.f, 0, nullptr);
-    } else {
-        readVolumeImpl<T, SampleMode::Trilinear>(out, ds, *cache, p, coords,
-            [](int, int) -> cv::Vec3f { return {}; }, 1, 0.f, 0, nullptr);
-    }
-}
-
-void readInterpolated3D(cv::Mat_<uint8_t>& out, z5::Dataset* ds,
-                        const cv::Mat_<cv::Vec3f>& coords, ChunkCache<uint8_t>* cache, bool nearest_neighbor) {
-    readInterpolated3DImpl(out, ds, coords, cache, nearest_neighbor);
-}
-
-void readInterpolated3D(cv::Mat_<uint16_t>& out, z5::Dataset* ds,
-                        const cv::Mat_<cv::Vec3f>& coords, ChunkCache<uint16_t>* cache, bool nearest_neighbor) {
-    readInterpolated3DImpl(out, ds, coords, cache, nearest_neighbor);
-}
-
 
 void readCompositeFast(
     cv::Mat_<uint8_t>& out,
-    z5::Dataset* ds,
+    vc::Zarr* ds,
     const cv::Mat_<cv::Vec3f>& baseCoords,
     const cv::Mat_<cv::Vec3f>& normals,
     float zStep,
@@ -587,7 +482,7 @@ void readCompositeFast(
 template<typename T>
 static void readMultiSliceImpl(
     std::vector<cv::Mat_<T>>& out,
-    z5::Dataset* ds,
+    vc::Zarr* ds,
     ChunkCache<T>& cache,
     const cv::Mat_<cv::Vec3f>& basePoints,
     const cv::Mat_<cv::Vec3f>& stepDirs,
@@ -605,8 +500,6 @@ static void readMultiSliceImpl(
     if (numSlices == 0) return;
 
     // Phase 1: Discover needed chunks and prefetch in parallel.
-    // This converts random I/O stalls during OMP sampling into a
-    // concentrated upfront I/O burst.
     {
         const size_t totalChunks = static_cast<size_t>(p.chunksZ) * p.chunksY * p.chunksX;
         std::vector<uint8_t> needed(totalChunks, 0);
@@ -678,9 +571,6 @@ static void readMultiSliceImpl(
     }
 
     // Phase 2: Sample (all chunks for this band already cached).
-    // Optimization: for each pixel, check if ALL slice samples fall within a
-    // single chunk. If so, skip per-sample bounds/chunk checks entirely.
-
     constexpr float maxVal = std::is_same_v<T, uint16_t> ? 65535.f : 255.f;
     const float firstOff = offsets[0];
     const float lastOff = offsets[numSlices - 1];
@@ -690,8 +580,6 @@ static void readMultiSliceImpl(
 
     #pragma omp parallel
     {
-        // 2-slot sampler: sequential slice pattern only needs current chunk +
-        // occasionally one more for boundary crossings
         ChunkSampler<T, 2> sampler(p, cache, ds);
         const size_t ls0 = sampler.s0, ls1 = sampler.s1;
 
@@ -737,8 +625,7 @@ static void readMultiSliceImpl(
                     (ixMin >> lcxShift) == (ixMax >> lcxShift);
 
                 if (singleChunk) {
-                    // Fast path: all slices in one chunk. Load chunk once,
-                    // then pure trilinear math with no checks.
+                    // Fast path: all slices in one chunk
                     int ciz = izMin >> lczShift;
                     int ciy = iyMin >> lcyShift;
                     int cix = ixMin >> lcxShift;
@@ -806,7 +693,7 @@ static void readMultiSliceImpl(
 
 void readMultiSlice(
     std::vector<cv::Mat_<uint8_t>>& out,
-    z5::Dataset* ds,
+    vc::Zarr* ds,
     ChunkCache<uint8_t>* cache,
     const cv::Mat_<cv::Vec3f>& basePoints,
     const cv::Mat_<cv::Vec3f>& stepDirs,
@@ -817,7 +704,7 @@ void readMultiSlice(
 
 void readMultiSlice(
     std::vector<cv::Mat_<uint16_t>>& out,
-    z5::Dataset* ds,
+    vc::Zarr* ds,
     ChunkCache<uint16_t>* cache,
     const cv::Mat_<cv::Vec3f>& basePoints,
     const cv::Mat_<cv::Vec3f>& stepDirs,
@@ -830,13 +717,12 @@ void readMultiSlice(
 // ============================================================================
 // sampleTileSlices — single-threaded per-tile multi-slice sampler
 // Called from within an OMP thread; no internal OMP parallelism.
-// Same trilinear math as readMultiSliceImpl Phase 2.
 // ============================================================================
 
 template<typename T>
 static void sampleTileSlicesImpl(
     std::vector<cv::Mat_<T>>& out,
-    z5::Dataset* ds,
+    vc::Zarr* ds,
     ChunkCache<T>& cache,
     const cv::Mat_<cv::Vec3f>& basePoints,
     const cv::Mat_<cv::Vec3f>& stepDirs,
@@ -854,13 +740,10 @@ static void sampleTileSlicesImpl(
     if (numSlices == 0) return;
 
     // Phase 1: Discover needed chunks and prefetch serially.
-    // A 128x128 tile typically touches only ~4-8 chunks, so collect into
-    // a compact list rather than scanning the full chunk grid (~39M entries).
     {
         std::vector<std::array<int,3>> neededChunks;
         neededChunks.reserve(16);
 
-        // Small local set: track seen chunks by packing (ciz,ciy,cix) into uint64
         std::vector<uint64_t> seen;
         seen.reserve(16);
         auto markVoxel = [&](int iz, int iy, int ix) {
@@ -1015,7 +898,7 @@ static void sampleTileSlicesImpl(
 
 void sampleTileSlices(
     std::vector<cv::Mat_<uint8_t>>& out,
-    z5::Dataset* ds,
+    vc::Zarr* ds,
     ChunkCache<uint8_t>* cache,
     const cv::Mat_<cv::Vec3f>& basePoints,
     const cv::Mat_<cv::Vec3f>& stepDirs,
@@ -1026,128 +909,11 @@ void sampleTileSlices(
 
 void sampleTileSlices(
     std::vector<cv::Mat_<uint16_t>>& out,
-    z5::Dataset* ds,
+    vc::Zarr* ds,
     ChunkCache<uint16_t>* cache,
     const cv::Mat_<cv::Vec3f>& basePoints,
     const cv::Mat_<cv::Vec3f>& stepDirs,
     const std::vector<float>& offsets)
 {
     sampleTileSlicesImpl(out, ds, *cache, basePoints, stepDirs, offsets);
-}
-
-
-cv::Mat_<cv::Vec3f> computeVolumeGradientsNative(
-    z5::Dataset* ds,
-    const cv::Mat_<cv::Vec3f>& rawPoints,
-    float dsScale)
-{
-    const int h = rawPoints.rows;
-    const int w = rawPoints.cols;
-    cv::Mat_<cv::Vec3f> gradients(h, w, cv::Vec3f(0, 0, 1));
-
-    if (h == 0 || w == 0) return gradients;
-
-    const auto volShape = ds->shape();
-    const int volZ = static_cast<int>(volShape[0]);
-    const int volY = static_cast<int>(volShape[1]);
-    const int volX = static_cast<int>(volShape[2]);
-
-    // Step 1: Find bounding box of all valid coordinates
-    float minX = std::numeric_limits<float>::max();
-    float minY = std::numeric_limits<float>::max();
-    float minZ = std::numeric_limits<float>::max();
-    float maxX = std::numeric_limits<float>::lowest();
-    float maxY = std::numeric_limits<float>::lowest();
-    float maxZ = std::numeric_limits<float>::lowest();
-
-    for (int y = 0; y < h; ++y) {
-        for (int x = 0; x < w; ++x) {
-            const cv::Vec3f& c = rawPoints(y, x);
-            if (c[0] == -1.f) continue;
-
-            const float cx = c[0] * dsScale;
-            const float cy = c[1] * dsScale;
-            const float cz = c[2] * dsScale;
-
-            minX = std::min(minX, cx);
-            minY = std::min(minY, cy);
-            minZ = std::min(minZ, cz);
-            maxX = std::max(maxX, cx);
-            maxY = std::max(maxY, cy);
-            maxZ = std::max(maxZ, cz);
-        }
-    }
-
-    if (minX > maxX) return gradients;
-
-    const int pad = 2;
-    const int bboxX0 = std::max(0, static_cast<int>(std::floor(minX)) - pad);
-    const int bboxY0 = std::max(0, static_cast<int>(std::floor(minY)) - pad);
-    const int bboxZ0 = std::max(0, static_cast<int>(std::floor(minZ)) - pad);
-    const int bboxX1 = std::min(volX, static_cast<int>(std::ceil(maxX)) + pad + 1);
-    const int bboxY1 = std::min(volY, static_cast<int>(std::ceil(maxY)) + pad + 1);
-    const int bboxZ1 = std::min(volZ, static_cast<int>(std::ceil(maxZ)) + pad + 1);
-
-    const size_t localW = static_cast<size_t>(bboxX1 - bboxX0);
-    const size_t localH = static_cast<size_t>(bboxY1 - bboxY0);
-    const size_t localD = static_cast<size_t>(bboxZ1 - bboxZ0);
-
-    if (localW == 0 || localH == 0 || localD == 0) return gradients;
-
-    // Step 2: Batch read the volume data for the bounding box
-    xt::xarray<uint8_t> localVolume = xt::empty<uint8_t>({localD, localH, localW});
-    z5::types::ShapeType off = {static_cast<size_t>(bboxZ0), static_cast<size_t>(bboxY0), static_cast<size_t>(bboxX0)};
-    z5::multiarray::readSubarray<uint8_t>(*ds, localVolume, off.begin());
-
-    auto sampleLocal = [&](float gx, float gy, float gz) -> float {
-        const int lx = static_cast<int>(std::round(gx)) - bboxX0;
-        const int ly = static_cast<int>(std::round(gy)) - bboxY0;
-        const int lz = static_cast<int>(std::round(gz)) - bboxZ0;
-
-        if (lx < 0 || ly < 0 || lz < 0 ||
-            lx >= static_cast<int>(localW) ||
-            ly >= static_cast<int>(localH) ||
-            lz >= static_cast<int>(localD)) {
-            return 0.0f;
-        }
-        return static_cast<float>(localVolume(static_cast<size_t>(lz), static_cast<size_t>(ly), static_cast<size_t>(lx)));
-    };
-
-    // Step 3: Compute gradients in parallel at each raw grid point
-    #pragma omp parallel for collapse(2)
-    for (int y = 0; y < h; ++y) {
-        for (int x = 0; x < w; ++x) {
-            const cv::Vec3f& c = rawPoints(y, x);
-
-            if (c[0] == -1.f) {
-                gradients(y, x) = cv::Vec3f(0, 0, 1);
-                continue;
-            }
-
-            const float cx = c[0] * dsScale;
-            const float cy = c[1] * dsScale;
-            const float cz = c[2] * dsScale;
-
-            const float v_xp = sampleLocal(cx + 1, cy, cz);
-            const float v_xm = sampleLocal(cx - 1, cy, cz);
-            const float v_yp = sampleLocal(cx, cy + 1, cz);
-            const float v_ym = sampleLocal(cx, cy - 1, cz);
-            const float v_zp = sampleLocal(cx, cy, cz + 1);
-            const float v_zm = sampleLocal(cx, cy, cz - 1);
-
-            float gx = (v_xp - v_xm) / 2.0f;
-            float gy = (v_yp - v_ym) / 2.0f;
-            float gz = (v_zp - v_zm) / 2.0f;
-
-            const float len2 = gx*gx + gy*gy + gz*gz;
-            if (len2 > 1e-12f) {
-                const float len = std::sqrt(len2);
-                gradients(y, x) = cv::Vec3f(-gx/len, -gy/len, -gz/len);
-            } else {
-                gradients(y, x) = cv::Vec3f(0, 0, 1);
-            }
-        }
-    }
-
-    return gradients;
 }

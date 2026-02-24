@@ -844,11 +844,10 @@ std::optional<cv::Vec3f> SegmentationPushPullTool::computeAlphaTarget(const cv::
         datasetIndex = std::clamp(datasetIndex, 0, static_cast<int>(scaleCount) - 1);
     }
 
-    z5::Dataset* dataset = volume->zarrDataset(datasetIndex);
-    if (!dataset) {
-        dataset = volume->zarrDataset(0);
+    if (!volume->vcDataset(datasetIndex)) {
+        datasetIndex = 0;
     }
-    if (!dataset) {
+    if (!volume->vcDataset(datasetIndex)) {
         if (outUnavailable) {
             *outUnavailable = true;
         }
@@ -859,8 +858,6 @@ std::optional<cv::Vec3f> SegmentationPushPullTool::computeAlphaTarget(const cv::
     if (!std::isfinite(scale) || scale <= 0.0f) {
         scale = 1.0f;
     }
-
-    ChunkCache<uint8_t>* cache = viewer->chunkCachePtr();
 
     AlphaPushPullConfig cfg = sanitizeConfig(_alphaConfig);
 
@@ -878,7 +875,6 @@ std::optional<cv::Vec3f> SegmentationPushPullTool::computeAlphaTarget(const cv::
     PlaneSurface plane(centerWorld, orientedNormal);
     cv::Mat_<cv::Vec3f> coords;
     plane.gen(&coords, nullptr, patchSize, cv::Vec3f(0, 0, 0), scale, cv::Vec3f(0, 0, 0));
-    coords *= scale;
 
     const cv::Point2i centerIndex(radius, radius);
     const float range = std::max(cfg.high - cfg.low, kAlphaMinRange);
@@ -892,8 +888,8 @@ std::optional<cv::Vec3f> SegmentationPushPullTool::computeAlphaTarget(const cv::
 
     for (float offset = start; offset <= stop + 1e-4f; offset += step) {
         cv::Mat_<uint8_t> slice;
-        cv::Mat_<cv::Vec3f> offsetMat(patchSize, orientedNormal * (offset * scale));
-        readInterpolated3D(slice, dataset, coords + offsetMat, cache);
+        cv::Mat_<cv::Vec3f> offsetMat(patchSize, orientedNormal * offset);
+        readInterpolated3D(slice, volume->tieredCache(), datasetIndex, coords + offsetMat);
         if (slice.empty()) {
             continue;
         }

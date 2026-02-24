@@ -710,8 +710,7 @@ bool SegmentationGrower::start(const VolumeContext& volumeContext,
                 try {
                     sdtVolume = volumeContext.package->volume(sdtVolumeId);
                     if (sdtVolume) {
-                        sdtContext.binaryDataset = sdtVolume->zarrDataset(0);
-                        sdtContext.cache = _context.chunkCache;
+                        sdtContext.binaryDataset = sdtVolume->vcDataset(0);
                         sdtContextPtr = &sdtContext;
                         qCInfo(lcSegGrowth) << "Linear+Fit: SDT refinement using volume"
                                             << QString::fromStdString(sdtVolumeId);
@@ -739,8 +738,7 @@ bool SegmentationGrower::start(const VolumeContext& volumeContext,
                         try {
                             sdtVolume = volumeContext.package->volume(sdtVolumeId);
                             if (sdtVolume) {
-                                sdtContext.binaryDataset = sdtVolume->zarrDataset(0);
-                                sdtContext.cache = _context.chunkCache;
+                                sdtContext.binaryDataset = sdtVolume->vcDataset(0);
                                 sdtContextPtr = &sdtContext;
                                 qCInfo(lcSegGrowth) << "SDT refinement enabled with volume"
                                                     << QString::fromStdString(sdtVolumeId);
@@ -792,8 +790,7 @@ bool SegmentationGrower::start(const VolumeContext& volumeContext,
                 try {
                     skeletonVolume = volumeContext.package->volume(skeletonVolumeId);
                     if (skeletonVolume) {
-                        skeletonContext.binaryDataset = skeletonVolume->zarrDataset(0);
-                        skeletonContext.cache = _context.chunkCache;
+                        skeletonContext.binaryDataset = skeletonVolume->vcDataset(0);
                         skeletonContextPtr = &skeletonContext;
                         qCInfo(lcSegGrowth) << "Skeleton Path: using volume"
                                             << QString::fromStdString(skeletonVolumeId);
@@ -1100,7 +1097,6 @@ bool SegmentationGrower::start(const VolumeContext& volumeContext,
     TracerGrowthContext ctx;
     ctx.resumeSurface = segmentationSurface.get();
     ctx.volume = growthVolume.get();
-    ctx.cache = _context.chunkCache;
     ctx.cacheRoot = cacheRootForVolumePkg(volumeContext.package);
     ctx.voxelSize = growthVolume->voxelSize();
     ctx.normalGridPath = volumeContext.normalGridPath;

@@ -1,14 +1,5 @@
 #include <nlohmann/json.hpp>
 
-#include <xtensor/containers/xarray.hpp>
-#include <xtensor/io/xio.hpp>
-#include <xtensor/views/xview.hpp>
-
-#include "z5/factory.hxx"
-#include "z5/filesystem/handle.hxx"
-#include "z5/multiarray/xtensor_access.hxx"
-#include "z5/attributes.hxx"
-
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/core.hpp>
 
@@ -16,32 +7,32 @@
 #include "vc/core/util/Surface.hpp"
 #include "vc/core/util/PlaneSurface.hpp"
 #include "vc/core/util/StreamOperators.hpp"
+#include <utils/zarr.hpp>
+#include "vc/core/cache/SimpleCacheFactory.hpp"
+
+using shape = std::vector<size_t>;
 
 
-using shape = z5::types::ShapeType;
-using namespace xt::placeholders;
 
-
-
-shape chunkId(const std::unique_ptr<z5::Dataset> &ds, shape coord)
+shape chunkId(const vc::Zarr &ds, shape coord)
 {
-    shape div = ds->chunking().blockShape();
+    auto div = ds.chunks();
     shape id = coord;
     for(int i=0;i<id.size();i++)
         id[i] /= div[i];
     return id;
 }
 
-shape idCoord(const std::unique_ptr<z5::Dataset> &ds, shape id)
+shape idCoord(const vc::Zarr &ds, shape id)
 {
-    shape mul = ds->chunking().blockShape();
+    auto mul = ds.chunks();
     shape coord = id;
     for(int i=0;i<coord.size();i++)
         coord[i] *= mul[i];
     return coord;
 }
 
-void timed_plane_slice(Surface &plane, z5::Dataset *ds, int size, ChunkCache<uint8_t> *cache, std::string msg, bool nearest_neighbor)
+void timed_plane_slice(Surface &plane, vc::cache::TieredChunkCache *cache, int size, std::string msg, bool nearest_neighbor)
 {
     cv::Mat_<cv::Vec3f> coords;
     cv::Mat_<cv::Vec3f> normals;
@@ -52,7 +43,7 @@ void timed_plane_slice(Surface &plane, z5::Dataset *ds, int size, ChunkCache<uin
     auto end = std::chrono::high_resolution_clock::now();
     std::cout << std::chrono::duration<double>(end-start).count() << "s gen_coords() " << msg << std::endl;
     start = std::chrono::high_resolution_clock::now();
-    readInterpolated3D(img, ds, coords, cache, nearest_neighbor);
+    readInterpolated3D(img, cache, 0, coords, nearest_neighbor);
     end = std::chrono::high_resolution_clock::now();
     std::cout << std::chrono::duration<double>(end-start).count() << "s slicing  " << size*size/1024.0/1024.0/std::chrono::duration<double>(end-start).count() << "MiB/s " << msg << std::endl;
 }
@@ -61,16 +52,12 @@ void timed_plane_slice(Surface &plane, z5::Dataset *ds, int size, ChunkCache<uin
 int main(int argc, char *argv[])
 {
   assert(argc == 2 || argc == 3);
-  // z5::filesystem::handle::File f(argv[1]);
-  z5::filesystem::handle::Group group(argv[1], z5::FileMode::FileMode::r);
-  z5::filesystem::handle::Dataset ds_handle(group, "1", "/");
-  std::unique_ptr<z5::Dataset> ds = z5::filesystem::openDataset(ds_handle);
+  vc::Zarr ds(std::filesystem::path(argv[1]) / "1");
 
    bool nearest_neighbor =  (argc == 3 && strncmp(argv[2],"nearest",7) == 0);
 
-  std::cout << "ds shape " << ds->shape() << std::endl;
-  std::cout << "ds shape via chunk " << ds->chunking().shape() << std::endl;
-  std::cout << "chunk shape shape " << ds->chunking().blockShape() << std::endl;
+  std::cout << "ds shape " << ds.shape() << std::endl;
+  std::cout << "chunk shape " << ds.chunks() << std::endl;
   if (nearest_neighbor) {
     std::cout << "doing nearest neighbor interpolation" << std::endl;
   }
@@ -98,35 +85,20 @@ int main(int argc, char *argv[])
   // gen_plane.gen_coords(coords, 1000, 1000);
   // gen_grid.gen(&coords, &normals, {1000, 1000}, gen_grid.pointer(), 1.0, {0,0,0});
 
-    ChunkCache<uint8_t> chunk_cache(10*10e9);
-
-  // auto start = std::chrono::high_resolution_clock::now();
-  // readInterpolated3D(img,ds.get(),coords, &chunk_cache);
-  // auto end = std::chrono::high_resolution_clock::now();
-  // std::cout << std::chrono::duration<double>(end-start).count() << "s cold" << std::endl;
-  
-  // cv::imwrite("plane.tif", img);
-  
-//   for(int r=0;r<10;r++) {
-//     start = std::chrono::high_resolution_clock::now();
-//     readInterpolated3D(img,ds.get(),coords, &chunk_cache);
-//     end = std::chrono::high_resolution_clock::now();
-//     std::cout << std::chrono::duration<double>(end-start).count() << "s cached" << std::endl;
-//   }
-//
+    auto tieredCache = vc::cache::createSimpleTieredCache(&ds, size_t(100e9), std::filesystem::path(argv[1]) / "1");
 
   const int size = 1024;
 
   std::cout << "testing different slice directions / caching" << std::endl;
   for(int r=0;r<3;r++) {
-      timed_plane_slice(plane_x, ds.get(), size, &chunk_cache, "yz cold", nearest_neighbor);
-      timed_plane_slice(plane_x, ds.get(), size, &chunk_cache, "yz", nearest_neighbor);
-      timed_plane_slice(plane_y, ds.get(), size, &chunk_cache, "xz cold", nearest_neighbor);
-      timed_plane_slice(plane_y, ds.get(), size, &chunk_cache, "xz", nearest_neighbor);
-      timed_plane_slice(plane_z, ds.get(), size, &chunk_cache, "xy cold", nearest_neighbor);
-      timed_plane_slice(plane_z, ds.get(), size, &chunk_cache, "xy", nearest_neighbor);
-      timed_plane_slice(gen_plane, ds.get(), size, &chunk_cache, "diag cold", nearest_neighbor);
-      timed_plane_slice(gen_plane, ds.get(), size, &chunk_cache, "diag", nearest_neighbor);
+      timed_plane_slice(plane_x, tieredCache.get(), size, "yz cold", nearest_neighbor);
+      timed_plane_slice(plane_x, tieredCache.get(), size, "yz", nearest_neighbor);
+      timed_plane_slice(plane_y, tieredCache.get(), size, "xz cold", nearest_neighbor);
+      timed_plane_slice(plane_y, tieredCache.get(), size, "xz", nearest_neighbor);
+      timed_plane_slice(plane_z, tieredCache.get(), size, "xy cold", nearest_neighbor);
+      timed_plane_slice(plane_z, tieredCache.get(), size, "xy", nearest_neighbor);
+      timed_plane_slice(gen_plane, tieredCache.get(), size, "diag cold", nearest_neighbor);
+      timed_plane_slice(gen_plane, tieredCache.get(), size, "diag", nearest_neighbor);
   }
 
 
@@ -142,7 +114,7 @@ int main(int argc, char *argv[])
 
         plane_s.gen(&coords, &normals, {size, size}, plane_s.pointer(), 1.0, {0,0,0});
 
-        readInterpolated3D(img, ds.get(), coords, &chunk_cache);
+        readInterpolated3D(img, tieredCache.get(), 0, coords);
     }
 
     auto end = std::chrono::high_resolution_clock::now();
@@ -161,7 +133,7 @@ int main(int argc, char *argv[])
 
           plane_s.gen(&coords, &normals, {size, size}, plane_s.pointer(), 1.0, {0,0,0});
 
-          readInterpolated3D(img, ds.get(), coords, &chunk_cache);
+          readInterpolated3D(img, tieredCache.get(), 0, coords);
       }
 
       auto end = std::chrono::high_resolution_clock::now();

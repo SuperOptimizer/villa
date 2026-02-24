@@ -352,13 +352,13 @@ void CVolumeViewer::recalcScales()
         _ds_sd_idx = std::max(0, std::min(_ds_sd_idx, (int)volume->numScales() - 1));
 
         int chosen = _ds_sd_idx;
-        while (chosen < static_cast<int>(volume->numScales()) && !volume->zarrDataset(chosen)) {
+        while (chosen < static_cast<int>(volume->numScales()) && !volume->vcDataset(chosen)) {
             ++chosen;
         }
 
         if (chosen >= static_cast<int>(volume->numScales())) {
             chosen = _ds_sd_idx;
-            while (chosen >= 0 && !volume->zarrDataset(chosen)) {
+            while (chosen >= 0 && !volume->vcDataset(chosen)) {
                 --chosen;
             }
         }

@@ -17,7 +17,6 @@
 
 class QuadSurface;
 class Volume;
-template <typename T> class ChunkCache;
 
 enum class SegmentationGrowthMethod {
     Tracer = 0,
@@ -199,7 +198,6 @@ struct SegmentationGrowthRequest {
 struct TracerGrowthContext {
     QuadSurface* resumeSurface{nullptr};
     class Volume* volume{nullptr};
-    class ChunkCache<uint8_t>* cache{nullptr};
     QString cacheRoot;
     double voxelSize{1.0};
     QString normalGridPath;

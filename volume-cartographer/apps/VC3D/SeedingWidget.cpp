@@ -547,8 +547,8 @@ void SeedingWidget::computeDistanceTransform()
         }
     }
     
-    // Read the slice data using the volume's dataset
-    readInterpolated3D(sliceData, currentVolume->zarrDataset(0), coords, chunkCache);
+    // Read the slice data using the volume's tiered cache
+    readInterpolated3D(sliceData, currentVolume->tieredCache(), 0, coords);
     
     // Threshold the slice to create a binary image for distance transform
     cv::Mat binaryImage;
@@ -635,7 +635,7 @@ void SeedingWidget::findPeaksAlongRay(
         coord(0, 0) = point;
         
         cv::Mat_<uint8_t> intensity(1, 1);
-        readInterpolated3D(intensity, currentVolume->zarrDataset(0), coord, chunkCache);
+        readInterpolated3D(intensity, currentVolume->tieredCache(), 0, coord);
         
         // Store intensity and position
         intensities.push_back(intensity(0, 0));
@@ -1086,7 +1086,7 @@ void SeedingWidget::findPeaksAlongPath(const PathPrimitive& path)
             
             // Read the intensity value at this 3D point
             cv::Mat_<uint8_t> intensity(1, 1);
-            readInterpolated3D(intensity, currentVolume->zarrDataset(0), coord, chunkCache);
+            readInterpolated3D(intensity, currentVolume->tieredCache(), 0, coord);
             
             intensities.push_back(intensity(0, 0));
             positions.push_back(pt);
@@ -1289,7 +1289,7 @@ void SeedingWidget::findPeaksAlongPathToCollection(const PathPrimitive& path, co
             cv::Mat_<cv::Vec3f> coord(1, 1);
             coord(0, 0) = pt;
             cv::Mat_<uint8_t> intensity(1, 1);
-            readInterpolated3D(intensity, currentVolume->zarrDataset(0), coord, chunkCache);
+            readInterpolated3D(intensity, currentVolume->tieredCache(), 0, coord);
             intensities.push_back(intensity(0, 0));
             positions.push_back(pt);
         }

@@ -1,0 +1,369 @@
+#include "vc/core/cache/ChunkSource.hpp"
+
+#include <algorithm>
+#include <atomic>
+#include <cstdio>
+#include <cstring>
+#include <fcntl.h>
+#include <stdexcept>
+#include <fstream>
+#include <mutex>
+#include <nlohmann/json.hpp>
+#include <sys/stat.h>
+#include <unistd.h>
+
+namespace vc::cache {
+
+// =============================================================================
+// FileSystemChunkSource
+// =============================================================================
+
+FileSystemChunkSource::FileSystemChunkSource(
+    const std::filesystem::path& zarrRoot,
+    const std::string& delimiter)
+    : root_(zarrRoot), delimiter_(delimiter)
+{
+    discoverLevels();
+}
+
+FileSystemChunkSource::FileSystemChunkSource(
+    const std::filesystem::path& zarrRoot,
+    const std::string& delimiter,
+    std::vector<LevelMeta> levels)
+    : root_(zarrRoot), delimiter_(delimiter), levels_(std::move(levels))
+{
+}
+
+void FileSystemChunkSource::discoverLevels()
+{
+    // Discover pyramid levels by scanning for numbered subdirectories
+    // with .zarray metadata files.
+    std::vector<int> levelNums;
+    for (auto& entry : std::filesystem::directory_iterator(root_)) {
+        if (!entry.is_directory()) continue;
+        auto name = entry.path().filename().string();
+        // Check if directory name is a number
+        bool isNum = !name.empty() &&
+                     std::all_of(name.begin(), name.end(), ::isdigit);
+        if (isNum) {
+            levelNums.push_back(std::stoi(name));
+        }
+    }
+    std::sort(levelNums.begin(), levelNums.end());
+
+    levels_.clear();
+    for (int lvl : levelNums) {
+        auto zarrayPath = root_ / std::to_string(lvl) / ".zarray";
+        if (!std::filesystem::exists(zarrayPath)) continue;
+
+        std::ifstream f(zarrayPath);
+        if (!f.is_open()) continue;
+
+        nlohmann::json meta;
+        try {
+            f >> meta;
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "[CHUNK_SOURCE] Warning: failed to parse %s: %s\n",
+                         zarrayPath.c_str(), e.what());
+            continue;
+        }
+
+        LevelMeta lm{};
+        if (meta.contains("shape") && meta["shape"].is_array()) {
+            auto& s = meta["shape"];
+            if (s.size() >= 3) {
+                lm.shape = {s[0].get<int>(), s[1].get<int>(), s[2].get<int>()};
+            }
+        }
+        if (meta.contains("chunks") && meta["chunks"].is_array()) {
+            auto& c = meta["chunks"];
+            if (c.size() >= 3) {
+                lm.chunkShape = {
+                    c[0].get<int>(), c[1].get<int>(), c[2].get<int>()};
+            }
+        }
+        levels_.push_back(lm);
+    }
+}
+
+std::filesystem::path FileSystemChunkSource::chunkPath(
+    const ChunkKey& key) const
+{
+    // zarr v2: <root>/<level>/<iz>.<iy>.<ix>
+    std::string name;
+    name.reserve(32);
+    name += std::to_string(key.iz);
+    name += delimiter_;
+    name += std::to_string(key.iy);
+    name += delimiter_;
+    name += std::to_string(key.ix);
+    return root_ / std::to_string(key.level) / name;
+}
+
+std::vector<uint8_t> FileSystemChunkSource::fetch(const ChunkKey& key)
+{
+    auto path = chunkPath(key);
+
+    // Log first few fetches and all failures for diagnostics
+    static std::atomic<int> fetchCount{0};
+    int n = fetchCount.fetch_add(1, std::memory_order_relaxed);
+    if (n < 5) {
+        std::fprintf(stderr, "[TILED] ChunkSource::fetch #%d: lvl=%d (%d,%d,%d) path=%s\n",
+                     n, key.level, key.iz, key.iy, key.ix, path.c_str());
+    }
+
+    // Use POSIX I/O for performance (matches existing ChunkCache pattern)
+    int fd = ::open(path.c_str(), O_RDONLY | O_NOATIME);
+    if (fd < 0) {
+        fd = ::open(path.c_str(), O_RDONLY);
+        if (fd < 0) {
+            if (n < 5) {
+                std::fprintf(stderr, "[TILED] ChunkSource::fetch: FAILED to open %s (errno=%d)\n",
+                             path.c_str(), errno);
+            }
+            return {};
+        }
+    }
+
+    struct stat sb;
+    if (::fstat(fd, &sb) != 0) {
+        ::close(fd);
+        return {};
+    }
+
+    auto fileSize = static_cast<size_t>(sb.st_size);
+    if (fileSize == 0) {
+        ::close(fd);
+        return {};
+    }
+
+    std::vector<uint8_t> buf(fileSize);
+    size_t total = 0;
+    while (total < fileSize) {
+        ssize_t n = ::read(fd, buf.data() + total, fileSize - total);
+        if (n <= 0) {
+            ::close(fd);
+            return {};
+        }
+        total += static_cast<size_t>(n);
+    }
+    ::close(fd);
+    return buf;
+}
+
+bool FileSystemChunkSource::exists(const ChunkKey& key) const
+{
+    return std::filesystem::exists(chunkPath(key));
+}
+
+int FileSystemChunkSource::numLevels() const
+{
+    return static_cast<int>(levels_.size());
+}
+
+std::array<int, 3> FileSystemChunkSource::chunkShape(int level) const
+{
+    if (level < 0 || level >= static_cast<int>(levels_.size()))
+        return {0, 0, 0};
+    return levels_[level].chunkShape;
+}
+
+std::array<int, 3> FileSystemChunkSource::levelShape(int level) const
+{
+    if (level < 0 || level >= static_cast<int>(levels_.size()))
+        return {0, 0, 0};
+    return levels_[level].shape;
+}
+
+// =============================================================================
+// HttpChunkSource
+// =============================================================================
+
+#ifdef VC_USE_CURL
+#include <curl/curl.h>
+
+static size_t curlWriteCallback(
+    char* ptr, size_t size, size_t nmemb, void* userdata)
+{
+    auto* vec = static_cast<std::vector<uint8_t>*>(userdata);
+    size_t bytes = size * nmemb;
+    vec->insert(vec->end(), ptr, ptr + bytes);
+    return bytes;
+}
+#endif
+
+HttpChunkSource::HttpChunkSource(
+    const std::string& baseUrl,
+    const std::string& delimiter,
+    std::vector<LevelMeta> levels,
+    HttpAuth auth)
+    : baseUrl_(baseUrl), delimiter_(delimiter), levels_(std::move(levels)), auth_(std::move(auth))
+{
+    // Remove trailing slash from base URL
+    while (!baseUrl_.empty() && baseUrl_.back() == '/') {
+        baseUrl_.pop_back();
+    }
+
+#ifdef VC_USE_CURL
+    static std::once_flag curlOnce;
+    std::call_once(curlOnce, [] { curl_global_init(CURL_GLOBAL_DEFAULT); });
+#endif
+}
+
+HttpChunkSource::~HttpChunkSource() = default;
+
+std::string HttpChunkSource::chunkUrl(const ChunkKey& key) const
+{
+    std::string url;
+    url.reserve(baseUrl_.size() + 32);
+    url += baseUrl_;
+    url += '/';
+    url += std::to_string(key.level);
+    url += '/';
+    url += std::to_string(key.iz);
+    url += delimiter_;
+    url += std::to_string(key.iy);
+    url += delimiter_;
+    url += std::to_string(key.ix);
+    return url;
+}
+
+std::vector<uint8_t> HttpChunkSource::fetch(const ChunkKey& key)
+{
+#ifdef VC_USE_CURL
+    // Thread-local CURL handle: reuses TCP+TLS connections across requests
+    // on the same IOPool worker thread.
+    thread_local CURL* curl = [] {
+        CURL* c = curl_easy_init();
+        if (c) {
+            // One-time options that survive curl_easy_reset()
+            curl_easy_setopt(c, CURLOPT_NOSIGNAL, 1L);
+        }
+        return c;
+    }();
+    if (!curl) return {};
+
+    // Reset clears per-request state but keeps the connection alive
+    curl_easy_reset(curl);
+
+    std::string url = chunkUrl(key);
+    std::vector<uint8_t> response;
+
+    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curlWriteCallback);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
+    curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+    curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1L);
+
+    struct curl_slist* headers = nullptr;
+    std::string userpwd;
+    if (auth_.awsSigv4) {
+        std::string sigv4 = "aws:amz:" + auth_.region + ":s3";
+        curl_easy_setopt(curl, CURLOPT_AWS_SIGV4, sigv4.c_str());
+        userpwd = auth_.accessKey + ":" + auth_.secretKey;
+        curl_easy_setopt(curl, CURLOPT_USERPWD, userpwd.c_str());
+        if (!auth_.sessionToken.empty()) {
+            std::string hdr = "x-amz-security-token: " + auth_.sessionToken;
+            headers = curl_slist_append(headers, hdr.c_str());
+            curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+        }
+    }
+
+    CURLcode res = curl_easy_perform(curl);
+    if (headers) curl_slist_free_all(headers);
+
+    if (res != CURLE_OK) {
+        long httpCode = 0;
+        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
+
+        if (res == CURLE_HTTP_RETURNED_ERROR &&
+            (httpCode == 404 || httpCode == 403 || httpCode == 400)) {
+            return {};  // chunk doesn't exist at source
+        }
+
+        // Transient error — throw so IOPool skips negative caching.
+        // Include URL and HTTP code for diagnostics.
+        char msg[512];
+        std::snprintf(msg, sizeof(msg),
+                      "HTTP fetch failed: %s (curl=%d http=%ld) url=%s",
+                      curl_easy_strerror(res), static_cast<int>(res),
+                      httpCode, url.c_str());
+        throw std::runtime_error(msg);
+    }
+    return response;
+#else
+    (void)key;
+    return {};
+#endif
+}
+
+bool HttpChunkSource::exists(const ChunkKey& key) const
+{
+#ifdef VC_USE_CURL
+    // Thread-local CURL handle for HEAD requests (shares connection pool)
+    thread_local CURL* curl = [] {
+        CURL* c = curl_easy_init();
+        if (c) {
+            curl_easy_setopt(c, CURLOPT_NOSIGNAL, 1L);
+        }
+        return c;
+    }();
+    if (!curl) return false;
+
+    curl_easy_reset(curl);
+
+    std::string url = chunkUrl(key);
+
+    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(curl, CURLOPT_NOBODY, 1L);  // HEAD request
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10L);
+    curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+    curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1L);
+
+    struct curl_slist* existsHeaders = nullptr;
+    std::string existsUserpwd;
+    if (auth_.awsSigv4) {
+        std::string sigv4 = "aws:amz:" + auth_.region + ":s3";
+        curl_easy_setopt(curl, CURLOPT_AWS_SIGV4, sigv4.c_str());
+        existsUserpwd = auth_.accessKey + ":" + auth_.secretKey;
+        curl_easy_setopt(curl, CURLOPT_USERPWD, existsUserpwd.c_str());
+        if (!auth_.sessionToken.empty()) {
+            std::string hdr = "x-amz-security-token: " + auth_.sessionToken;
+            existsHeaders = curl_slist_append(existsHeaders, hdr.c_str());
+            curl_easy_setopt(curl, CURLOPT_HTTPHEADER, existsHeaders);
+        }
+    }
+
+    CURLcode res = curl_easy_perform(curl);
+    if (existsHeaders) curl_slist_free_all(existsHeaders);
+
+    return res == CURLE_OK;
+#else
+    (void)key;
+    return false;
+#endif
+}
+
+int HttpChunkSource::numLevels() const
+{
+    return static_cast<int>(levels_.size());
+}
+
+std::array<int, 3> HttpChunkSource::chunkShape(int level) const
+{
+    if (level < 0 || level >= static_cast<int>(levels_.size()))
+        return {0, 0, 0};
+    return levels_[level].chunkShape;
+}
+
+std::array<int, 3> HttpChunkSource::levelShape(int level) const
+{
+    if (level < 0 || level >= static_cast<int>(levels_.size()))
+        return {0, 0, 0};
+    return levels_[level].shape;
+}
+
+}  // namespace vc::cache

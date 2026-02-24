@@ -22,14 +22,9 @@
 
 #include <ceres/ceres.h>
 
-#include <xtensor/containers/xarray.hpp>
-#include "z5/factory.hxx"
-#include "z5/filesystem/handle.hxx"
-#include "z5/common.hxx"
-#include "z5/multiarray/xtensor_access.hxx"
+#include "vc/core/types/VcDataset.hpp"
 
 #include "vc/ui/VCCollection.hpp"
-#include "vc/core/util/Slicing.hpp"
 #include "vc/core/util/GridStore.hpp"
 
 #include "discrete.hpp"
@@ -177,13 +172,8 @@ int main(int argc, char** argv) {
     }
     std::cout << "Found umbilicus point at: " << *umbilicus_point << std::endl;
 
-    // Load volume data using z5 and ChunkedTensor
-    z5::filesystem::handle::Group group_handle(volume_path);
-    std::unique_ptr<z5::Dataset> ds = z5::openDataset(group_handle, dataset_name);
-    if (!ds) {
-        std::cerr << "Error: Could not open dataset '" << dataset_name << "' in volume '" << volume_path << "'." << std::endl;
-        return 1;
-    }
+    // Load volume data using VcDataset
+    auto ds = std::make_unique<vc::VcDataset>(volume_path / dataset_name);
     auto shape = ds->shape();
     std::cout << "Volume shape: (" << shape[0] << ", " << shape[1] << ", " << shape[2] << ")" << std::endl;
 
@@ -196,14 +186,13 @@ int main(int argc, char** argv) {
 
     cv::Mat slice_mat(shape[1], shape[2], CV_8U);
     std::vector<size_t> slice_shape = {1, shape[1], shape[2]};
-    xt::xtensor<uint8_t, 3, xt::layout_type::column_major> slice_data = xt::zeros<uint8_t>(slice_shape);
-    cv::Vec3i offset = {z_slice, 0, 0};
-    ChunkCache<uint8_t> cache(4llu*1024*1024*1024);
-    readArea3D(slice_data, offset, ds.get(), &cache);
-    
-    for (int y = 0; y < shape[1]; ++y) {
-        for (int x = 0; x < shape[2]; ++x) {
-            slice_mat.at<uint8_t>(y, x) = slice_data(0, y, x);
+    std::vector<uint8_t> slice_data(shape[1] * shape[2], 0);
+    std::vector<size_t> offset_vec = {(size_t)z_slice, 0, 0};
+    ds->readRegion(offset_vec, slice_shape, slice_data.data());
+
+    for (int y = 0; y < (int)shape[1]; ++y) {
+        for (int x = 0; x < (int)shape[2]; ++x) {
+            slice_mat.at<uint8_t>(y, x) = slice_data[y * shape[2] + x];
         }
     }
     auto end_slice_extraction = std::chrono::high_resolution_clock::now();

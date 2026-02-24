@@ -2,15 +2,9 @@
 
 #include "vc/core/util/Slicing.hpp"
 #include "vc/core/util/HashFunctions.hpp"
+#include <utils/zarr.hpp>
 
 #include <opencv2/core.hpp>
-#include "z5/dataset.hxx"
-
-#include <xtensor/containers/xtensor.hpp>
-#include <xtensor/containers/xadapt.hpp>
-#include <xtensor/views/xview.hpp>
-
-#include "z5/multiarray/xtensor_access.hxx"
 
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -18,13 +12,61 @@
 #include <sys/mman.h>
 #include <cerrno>
 #include <cstring>
+#include <fstream>
+#include <iomanip>
+#include <set>
+#include <shared_mutex>
 #include <sstream>
+#include <thread>
+#include <unordered_map>
+#include <deque>
 
 #ifndef CCI_TLS_MAX // Max number for ChunkedCachedInterpolator
 #define CCI_TLS_MAX 256
 #endif
 
+// Simple row-major (C-order) 3D array replacing xt::xtensor<T,3,...>
+template <typename T>
+class Array3D {
+public:
+    Array3D() : _d0(0), _d1(0), _d2(0) {}
 
+    Array3D(size_t d0, size_t d1, size_t d2)
+        : _d0(d0), _d1(d1), _d2(d2), _data(d0 * d1 * d2) {}
+
+    Array3D(size_t d0, size_t d1, size_t d2, T fill_val)
+        : _d0(d0), _d1(d1), _d2(d2), _data(d0 * d1 * d2, fill_val) {}
+
+    T& operator()(size_t z, size_t y, size_t x) {
+        return _data[z * _d1 * _d2 + y * _d2 + x];
+    }
+    const T& operator()(size_t z, size_t y, size_t x) const {
+        return _data[z * _d1 * _d2 + y * _d2 + x];
+    }
+
+    T* data() { return _data.data(); }
+    const T* data() const { return _data.data(); }
+    size_t size() const { return _data.size(); }
+
+    std::array<size_t, 3> shape() const { return {_d0, _d1, _d2}; }
+
+    void fill(T val) { std::fill(_data.begin(), _data.end(), val); }
+
+    // Copy a sub-region [z0,z1) x [y0,y1) x [x0,x1) into a new Array3D
+    Array3D sub(size_t z0, size_t z1, size_t y0, size_t y1, size_t x0, size_t x1) const {
+        size_t nz = z1 - z0, ny = y1 - y0, nx = x1 - x0;
+        Array3D out(nz, ny, nx);
+        for (size_t z = 0; z < nz; ++z)
+            for (size_t y = 0; y < ny; ++y)
+                for (size_t x = 0; x < nx; ++x)
+                    out(z, y, x) = (*this)(z + z0, y + y0, x + x0);
+        return out;
+    }
+
+private:
+    size_t _d0, _d1, _d2;
+    std::vector<T> _data;
+};
 
 struct passTroughComputor
 {
@@ -36,7 +78,7 @@ struct passTroughComputor
     {
         int low = int(BORDER);
         int high = int(BORDER)+int(CHUNK_SIZE);
-        small = view(large, xt::range(low,high),xt::range(low,high),xt::range(low,high));
+        small = large.sub(low, high, low, high, low, high);
     }
 };
 
@@ -54,13 +96,58 @@ static std::string tmp_name_proc_thread()
     return ss.str();
 }
 
+// Read a 3D region from a VcDataset into an Array3D, clamping to dataset bounds.
+// offset is in ZYX order and may be negative.
+template <typename T>
+static void readArea3DFromDataset(Array3D<T>& out, const cv::Vec3i& offset, vc::Zarr* ds)
+{
+    if (!ds) return;
+
+    const auto& ds_shape = ds->shape(); // z,y,x
+    auto arr_shape = out.shape(); // {d0,d1,d2} = {z,y,x}
+
+    // Clamp the read region to dataset bounds
+    int oz = offset[0], oy = offset[1], ox = offset[2];
+    int sz = static_cast<int>(arr_shape[0]);
+    int sy = static_cast<int>(arr_shape[1]);
+    int sx = static_cast<int>(arr_shape[2]);
+
+    int rz0 = std::max(0, oz);
+    int ry0 = std::max(0, oy);
+    int rx0 = std::max(0, ox);
+    int rz1 = std::min(static_cast<int>(ds_shape[0]), oz + sz);
+    int ry1 = std::min(static_cast<int>(ds_shape[1]), oy + sy);
+    int rx1 = std::min(static_cast<int>(ds_shape[2]), ox + sx);
+
+    if (rz1 <= rz0 || ry1 <= ry0 || rx1 <= rx0) return;
+
+    size_t read_z = static_cast<size_t>(rz1 - rz0);
+    size_t read_y = static_cast<size_t>(ry1 - ry0);
+    size_t read_x = static_cast<size_t>(rx1 - rx0);
+
+    // Read into a temporary C-order buffer
+    std::vector<T> buf(read_z * read_y * read_x);
+    std::vector<size_t> read_offset = {static_cast<size_t>(rz0), static_cast<size_t>(ry0), static_cast<size_t>(rx0)};
+    std::vector<size_t> read_shape = {read_z, read_y, read_x};
+    ds->readRegion(read_offset, read_shape, buf.data());
+
+    // Copy into the output array at the correct offset
+    int dz = rz0 - oz;
+    int dy = ry0 - oy;
+    int dx = rx0 - ox;
+    for (size_t z = 0; z < read_z; ++z)
+        for (size_t y = 0; y < read_y; ++y)
+            for (size_t x = 0; x < read_x; ++x)
+                out(z + dz, y + dy, x + dx) = buf[z * read_y * read_x + y * read_x + x];
+}
+
 //chunked 3d tensor for on-demand computation from a zarr dataset ... could as some point be file backed ...
 template <typename T, typename C>
 class Chunked3d {
 public:
-    using CHUNKT = xt::xtensor<T,3,xt::layout_type::column_major>;
+    using CHUNKT = Array3D<T>;
 
-    Chunked3d(C &compute_f, z5::Dataset *ds, ChunkCache<T> *cache) : _compute_f(compute_f), _ds(ds), _cache(cache)
+    Chunked3d(C &compute_f, vc::Zarr *ds) : _compute_f(compute_f), _ds(ds)
     {
         _border = compute_f.BORDER;
     };
@@ -69,26 +156,26 @@ public:
         if (!_persistent)
             remove_all(_cache_dir);
     };
-    Chunked3d(C &compute_f, z5::Dataset *ds, ChunkCache<T> *cache, const std::filesystem::path &cache_root) : _compute_f(compute_f), _ds(ds), _cache(cache)
+    Chunked3d(C &compute_f, vc::Zarr *ds, const std::filesystem::path &cache_root) : _compute_f(compute_f), _ds(ds)
     {
         _border = compute_f.BORDER;
-        
+
         if (_ds)
             _shape = {static_cast<int>(_ds->shape()[0]), static_cast<int>(_ds->shape()[1]), static_cast<int>(_ds->shape()[2])};
-        
+
         if (cache_root.empty())
             return;
 
         if (!_compute_f.UNIQUE_ID_STRING.size())
-            throw std::runtime_error("requested fs cache for compute function without identifier");        
-        
+            throw std::runtime_error("requested fs cache for compute function without identifier");
+
         std::filesystem::path root = cache_root/_compute_f.UNIQUE_ID_STRING;
-        
+
         std::filesystem::create_directories(root);
-        
+
         if (!_ds)
             _persistent = false;
-        
+
         //create cache dir while others are competing to do the same
         for(int r=0;r<1000 && _cache_dir.empty();r++) {
             std::set<std::string> paths;
@@ -118,21 +205,21 @@ public:
                             continue;
                         }
                     }
-                
+
                 if (!_cache_dir.empty())
                     continue;
             }
-            
+
             //try generating our own cache dir atomically
             std::filesystem::path tmp_dir = cache_root/tmp_name_proc_thread();
             std::filesystem::create_directories(tmp_dir);
-            
+
             if (_persistent) {
                 nlohmann::json meta;
                 meta["dataset_source_path"] = std::filesystem::canonical(ds->path()).string();
                 std::ofstream o(tmp_dir/"meta.json");
                 o << std::setw(4) << meta << std::endl;
-                
+
                 std::filesystem::path tgt_path;
                 for(int i=0;i<1000;i++) {
                     tgt_path = root/std::to_string(i);
@@ -152,15 +239,16 @@ public:
                 _cache_dir = tmp_dir;
             }
         }
-        
+
         if (_cache_dir.empty())
             throw std::runtime_error("could not create cache dir - maybe too many caches in cache root (max 1000!)");
-        
+
     };
     size_t calc_off(const cv::Vec3i &p)
     {
         auto s = C::CHUNK_SIZE;
-        return p[0] + p[1]*s + p[2]*s*s;
+        // Row-major (C-order): z * sy * sx + y * sx + x
+        return p[0] * s * s + p[1] * s + p[2];
     }
     T &operator()(const cv::Vec3i &p)
     {
@@ -256,25 +344,23 @@ public:
         }
         T *chunk = (T*)mmap(NULL, len_bytes, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
         close(fd);
-        
+
         cv::Vec3i offset =
         {static_cast<int>(id[0]*s-_border),
             static_cast<int>(id[1]*s-_border),
             static_cast<int>(id[2]*s-_border)};
 
-        CHUNKT small = xt::empty<T>({s,s,s});
+        CHUNKT small(s, s, s);
         CHUNKT large;
         if (_ds) {
-            large = xt::empty<T>({s+2*_border,s+2*_border,s+2*_border});
-            large = xt::full_like(large, C::FILL_V);
-
-            readArea3D(large, offset, _ds, _cache);
+            large = CHUNKT(s+2*_border, s+2*_border, s+2*_border, static_cast<T>(C::FILL_V));
+            readArea3DFromDataset(large, offset, _ds);
         }
 
         _compute_f.template compute<CHUNKT,T>(large, small, offset);
 
-        for(int i=0;i<len;i++)
-            chunk[i] = (&small(0,0,0))[i];
+        for(size_t i=0;i<len;i++)
+            chunk[i] = small.data()[i];
 
         _mutex.lock();
         if (!_chunks.count(id)) {
@@ -302,19 +388,17 @@ public:
     T *cache_chunk_safe_alloc(const cv::Vec3i &id)
     {
         auto s = C::CHUNK_SIZE;
-        CHUNKT small = xt::empty<T>({s,s,s});
+        CHUNKT small(s, s, s);
 
         cv::Vec3i offset =
         {static_cast<int>(id[0]*s-_border),
             static_cast<int>(id[1]*s-_border),
             static_cast<int>(id[2]*s-_border)};
-            
+
         CHUNKT large;
         if (_ds) {
-            large = xt::empty<T>({s+2*_border,s+2*_border,s+2*_border});
-            large = xt::full_like(large, C::FILL_V);
-            
-            readArea3D(large, offset, _ds, _cache);
+            large = CHUNKT(s+2*_border, s+2*_border, s+2*_border, static_cast<T>(C::FILL_V));
+            readArea3DFromDataset(large, offset, _ds);
         }
 
         _compute_f.template compute<CHUNKT,T>(large, small, offset);
@@ -324,7 +408,7 @@ public:
         _mutex.lock();
         if (!_chunks.count(id)) {
             chunk = (T*)malloc(s*s*s*sizeof(T));
-            memcpy(chunk, &small(0,0,0), s*s*s*sizeof(T));
+            memcpy(chunk, small.data(), s*s*s*sizeof(T));
             _chunks[id] = chunk;
         }
         else {
@@ -339,38 +423,6 @@ public:
         return chunk;
     }
 
-    // T *cache_chunk_safe_alloc(const cv::Vec3i &id)
-    // {
-    //     auto s = C::CHUNK_SIZE;
-    //     CHUNKT large = xt::empty<T>({s+2*_border,s+2*_border,s+2*_border});
-    //     large = xt::full_like(large, C::FILL_V);
-    //     CHUNKT small = xt::empty<T>({s,s,s});
-    //
-    //     cv::Vec3i offset =
-    //     {id[0]*s-_border,
-    //         id[1]*s-_border,
-    //         id[2]*s-_border};
-    //
-    //     readArea3D(large, offset, _ds, _cache);
-    //
-    //     _compute_f.template compute<CHUNKT,T>(large, small);
-    //
-    //     _mutex.lock();
-    //     if (!_chunks.count(id))
-    //         _chunks[id] = small;
-    //     else {
-    //         #pragma omp atomic
-    //         chunk_compute_collisions++;
-    //         delete small;
-    //         small = _chunks[id];
-    //     }
-    //     #pragma omp atomic
-    //     chunk_compute_total++;
-    //     _mutex.unlock();
-    //
-    //     return small;
-    // }
-
     T *cache_chunk_safe(const cv::Vec3i &id)
     {
         if (_cache_dir.empty())
@@ -381,24 +433,6 @@ public:
 
     T *cache_chunk(const cv::Vec3i &id) {
         return cache_chunk_safe(id);
-        // auto s = C::CHUNK_SIZE;
-        // CHUNKT large = xt::empty<T>({s+2*_border,s+2*_border,s+2*_border});
-        // large = xt::full_like(large, C::FILL_V);
-        // CHUNKT *small = new CHUNKT();
-        // *small = xt::empty<T>({s,s,s});
-        //
-        // cv::Vec3i offset =
-        // {id[0]*s-_border,
-        //     id[1]*s-_border,
-        //     id[2]*s-_border};
-        //
-        //     readArea3D(large, offset, _ds, _cache);
-        //
-        //     _compute_f.template compute<CHUNKT,T>(large, *small);
-        //
-        //     _chunks[id] = small;
-        //
-        // return small;
     }
 
     T *chunk(const cv::Vec3i &id) {
@@ -421,14 +455,13 @@ public:
 
         return chunk;
     }
-    
+
     std::vector<int> shape() {
         return _shape;
     }
 
     std::unordered_map<cv::Vec3i,T*,vec3i_hash> _chunks;
-    z5::Dataset *_ds;
-    ChunkCache<T> *_cache;
+    vc::Zarr *_ds;
     size_t _border;
     C &_compute_f;
     std::shared_mutex _mutex;
@@ -484,7 +517,7 @@ public:
     }
 
     T& safe_at(const cv::Vec3i &p)
-    {        
+    {
         auto s = C::CHUNK_SIZE;
 
         if (_corner[0] == -1)
@@ -504,13 +537,6 @@ public:
         #pragma omp atomic
         total++;
 
-        // size_t pos_xt = &_chunk->operator()(p[0]-_corner[0],p[1]-_corner[1],p[2]-_corner[2]) - &_chunk->operator()(0,0,0);
-        // if (pos_xt != _ar.calc_off({p[0]-_corner[0],p[1]-_corner[1],p[2]-_corner[2]})) {
-        //     std::cout << pos_xt << cv::Vec3i({p[0]-_corner[0],p[1]-_corner[1],p[2]-_corner[2]}) << _ar.calc_off({p[0]-_corner[0],p[1]-_corner[1],p[2]-_corner[2]}) << std::endl;
-        //     throw std::runtime_error("fix calc_off!");
-        // }
-
-        // return _chunk->operator()(p[0]-_corner[0],p[1]-_corner[1],p[2]-_corner[2]);
         return _chunk[_ar.calc_off({p[0]-_corner[0],p[1]-_corner[1],p[2]-_corner[2]})];
     }
 
@@ -564,7 +590,7 @@ public:
     template <typename V>
     inline void Evaluate(const V& z, const V& y, const V& x, V* out) const
     {
-        // ---- 1. get *this* thread’s private accessor ------------------------
+        // ---- 1. get *this* thread's private accessor ------------------------
         Acc& a = local_accessor();
 
         // ---- 2. fast trilinear interpolation --------------------
@@ -654,9 +680,9 @@ private:
 
 struct Chunked3dFloatFromUint8
 {
-    Chunked3dFloatFromUint8(std::unique_ptr<z5::Dataset> &&ds, float scale, ChunkCache<uint8_t> *cache, std::string const &cache_root, std::string const &unique_id) :
+    Chunked3dFloatFromUint8(std::unique_ptr<vc::Zarr> &&ds, float scale, std::string const &cache_root, std::string const &unique_id) :
         _passthrough{unique_id},
-        _x(_passthrough, ds.get(), cache, cache_root),
+        _x(_passthrough, ds.get(), cache_root),
         _scale(scale),  // multiplying by this maps indices of the 'canonical' volume to indices of our dataset
         _ds(std::move(ds))  // take ownership of the dataset, as Chunked3d accesses it through a bare pointer
     {
@@ -679,18 +705,18 @@ struct Chunked3dFloatFromUint8
     passTroughComputor _passthrough;
     Chunked3d<uint8_t, passTroughComputor> _x;
     float _scale;
-    std::unique_ptr<z5::Dataset> _ds;
+    std::unique_ptr<vc::Zarr> _ds;
 };
 
 struct Chunked3dVec3fFromUint8
 {
-    Chunked3dVec3fFromUint8(std::vector<std::unique_ptr<z5::Dataset>> &&dss, float scale, ChunkCache<uint8_t> *cache, std::string const &cache_root, std::string const &unique_id) :
+    Chunked3dVec3fFromUint8(std::vector<std::unique_ptr<vc::Zarr>> &&dss, float scale, std::string const &cache_root, std::string const &unique_id) :
         _passthrough_x{unique_id + "_x"},
         _passthrough_y{unique_id + "_y"},
         _passthrough_z{unique_id + "_z"},
-        _x(_passthrough_x, dss[0].get(), cache, cache_root),
-        _y(_passthrough_y, dss[1].get(), cache, cache_root),
-        _z(_passthrough_z, dss[2].get(), cache, cache_root),
+        _x(_passthrough_x, dss[0].get(), cache_root),
+        _y(_passthrough_y, dss[1].get(), cache_root),
+        _z(_passthrough_z, dss[2].get(), cache_root),
         _scale(scale),  // multiplying by this maps indices of the 'canonical' volume to indices of our three volumes
         _dss(std::move(dss))  // take ownership of the datasets here, as Chunked3d accesses them through a bare pointer
     {
@@ -715,5 +741,5 @@ struct Chunked3dVec3fFromUint8
     passTroughComputor _passthrough_x, _passthrough_y, _passthrough_z;
     Chunked3d<uint8_t, passTroughComputor> _x, _y, _z;
     float _scale;
-    std::vector<std::unique_ptr<z5::Dataset>> _dss;
+    std::vector<std::unique_ptr<vc::Zarr>> _dss;
 };

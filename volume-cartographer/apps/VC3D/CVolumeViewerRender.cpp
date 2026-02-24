@@ -16,6 +16,7 @@
 #include "vc/ui/VCCollection.hpp"
 
 #include "vc/core/types/VolumePkg.hpp"
+#include "vc/core/types/VcDataset.hpp"
 #include "vc/core/util/Surface.hpp"
 #include "vc/core/util/QuadSurface.hpp"
 #include "vc/core/util/PlaneSurface.hpp"
@@ -54,7 +55,7 @@ void CVolumeViewer::renderVisible(bool force)
         return;
 
     recalcScales();
-    if (!volume->zarrDataset(_ds_sd_idx)) {
+    if (!volume->vcDataset(_ds_sd_idx)) {
         // Avoid showing stale image from previous volume when selected scale is unavailable.
         if (fBaseImageItem) {
             fBaseImageItem->setPixmap(QPixmap());
@@ -124,13 +125,13 @@ cv::Mat_<uint8_t> CVolumeViewer::render_composite(const cv::Rect &roi) {
 
     readCompositeFast(
         img,
-        volume->zarrDataset(_ds_sd_idx),
-        base_coords * _ds_scale,
+        volume->tieredCache(),
+        _ds_sd_idx,
+        base_coords,
         lightingNormals,
-        _ds_scale,
+        1.0f,
         z_start, z_end,
-        _compositeSettings.params,
-        *cache
+        _compositeSettings.params
     );
 
     postprocessComposite(img, _compositeSettings);
@@ -214,8 +215,6 @@ cv::Mat CVolumeViewer::render_area(const cv::Rect &roi)
 
     cv::Mat baseColor;
 
-    z5::Dataset* baseDataset = volume ? volume->zarrDataset(_ds_sd_idx) : nullptr;
-
     // Check if this is a plane surface that should use plane composite rendering
     PlaneSurface* plane = dynamic_cast<PlaneSurface*>(surf.get());
     const bool usePlaneComposite = (plane != nullptr && _compositeSettings.planeEnabled &&
@@ -228,10 +227,10 @@ cv::Mat CVolumeViewer::render_area(const cv::Rect &roi)
         baseGray = render_composite_plane(roi, coords, plane->normal(cv::Vec3f(0, 0, 0)));
     } else {
         generateViewCoords(coords, roi, surf);
-        if (!baseDataset) {
+        if (!volume->vcDataset(_ds_sd_idx)) {
             return cv::Mat();
         }
-        readInterpolated3D(baseGray, baseDataset, coords * _ds_scale, cache, _useFastInterpolation);
+        readInterpolated3D(baseGray, volume->tieredCache(), _ds_sd_idx, coords, _useFastInterpolation);
     }
 
     if (baseGray.empty()) {
@@ -291,12 +290,12 @@ cv::Mat CVolumeViewer::render_area(const cv::Rect &roi)
             if (_overlayVolume->numScales() > 0) {
                 overlayIdx = std::min<int>(_ds_sd_idx, static_cast<int>(_overlayVolume->numScales()) - 1);
                 int chosenIdx = overlayIdx;
-                while (chosenIdx < static_cast<int>(_overlayVolume->numScales()) && !_overlayVolume->zarrDataset(chosenIdx)) {
+                while (chosenIdx < static_cast<int>(_overlayVolume->numScales()) && !_overlayVolume->vcDataset(chosenIdx)) {
                     ++chosenIdx;
                 }
                 if (chosenIdx >= static_cast<int>(_overlayVolume->numScales())) {
                     chosenIdx = overlayIdx;
-                    while (chosenIdx >= 0 && !_overlayVolume->zarrDataset(chosenIdx)) {
+                    while (chosenIdx >= 0 && !_overlayVolume->vcDataset(chosenIdx)) {
                         --chosenIdx;
                     }
                 }
@@ -308,9 +307,8 @@ cv::Mat CVolumeViewer::render_area(const cv::Rect &roi)
             }
 
             cv::Mat_<uint8_t> overlayValues;
-            z5::Dataset* overlayDataset = _overlayVolume->zarrDataset(overlayIdx);
-            if (overlayDataset) {
-                readInterpolated3D(overlayValues, overlayDataset, coords * overlayScale, cache, /*nearest_neighbor=*/true);
+            if (_overlayVolume->vcDataset(overlayIdx)) {
+                readInterpolated3D(overlayValues, _overlayVolume->tieredCache(), overlayIdx, coords, /*nearest_neighbor=*/true);
             }
 
             if (!overlayValues.empty()) {
@@ -610,7 +608,7 @@ cv::Mat_<cv::Vec3f> CVolumeViewer::getVolumeGradientNormals(
     if (_cachedNativeVolumeGradients.empty() || _cachedGradientsSurf.lock() != surf) {
         const cv::Mat_<cv::Vec3f>* rawPts = quadSurf->rawPointsPtr();
         _cachedNativeVolumeGradients = computeVolumeGradientsNative(
-            volume->zarrDataset(_ds_sd_idx), *rawPts, _ds_scale);
+            volume->vcDataset(_ds_sd_idx), *rawPts, _ds_scale);
         _cachedGradientsSurf = surf;
     }
 
@@ -666,7 +664,7 @@ cv::Mat_<uint8_t> CVolumeViewer::render_composite_plane(const cv::Rect &roi, con
 {
     cv::Mat_<uint8_t> img;
 
-    if (coords.empty() || !volume || !volume->zarrDataset(_ds_sd_idx)) {
+    if (coords.empty() || !volume || !volume->vcDataset(_ds_sd_idx)) {
         return img;
     }
 
@@ -680,13 +678,13 @@ cv::Mat_<uint8_t> CVolumeViewer::render_composite_plane(const cv::Rect &roi, con
 
     readCompositeFast(
         img,
-        volume->zarrDataset(_ds_sd_idx),
-        coords * _ds_scale,
+        volume->tieredCache(),
+        _ds_sd_idx,
+        coords,
         normals,
-        _ds_scale,
+        1.0f,
         z_start, z_end,
-        _compositeSettings.params,
-        *cache
+        _compositeSettings.params
     );
 
     return img;

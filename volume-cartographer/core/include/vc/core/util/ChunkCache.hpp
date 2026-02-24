@@ -1,25 +1,57 @@
 #pragma once
 
-#include <xtensor/containers/xarray.hpp>
-
+#include <array>
 #include <atomic>
+#include <cstdint>
 #include <memory>
+#include <mutex>
+#include <shared_mutex>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
-#include <cstdint>
-#include <mutex>
-#include <shared_mutex>
 
 // Forward declaration
-namespace z5 { class Dataset; }
+namespace vc { class Zarr; }
+
+/**
+ * @brief Simple row-major 3D array for chunk data storage.
+ *
+ * Replaces xt::xarray<T> in the cache. Independent of ChunkedTensor.hpp's
+ * Array3D to avoid circular dependencies.
+ */
+template<typename T>
+class ChunkArray3D
+{
+public:
+    ChunkArray3D() : d0_(0), d1_(0), d2_(0) {}
+
+    ChunkArray3D(size_t d0, size_t d1, size_t d2)
+        : d0_(d0), d1_(d1), d2_(d2), data_(d0 * d1 * d2) {}
+
+    T& operator()(size_t z, size_t y, size_t x) {
+        return data_[z * d1_ * d2_ + y * d2_ + x];
+    }
+    const T& operator()(size_t z, size_t y, size_t x) const {
+        return data_[z * d1_ * d2_ + y * d2_ + x];
+    }
+
+    T* data() { return data_.data(); }
+    const T* data() const { return data_.data(); }
+    size_t size() const { return data_.size(); }
+
+    std::array<size_t, 3> shape() const { return {d0_, d1_, d2_}; }
+
+private:
+    size_t d0_, d1_, d2_;
+    std::vector<T> data_;
+};
 
 /**
  * @brief Thread-safe chunk cache with shared_ptr lifetime management
  *
  * @tparam T Data type of cached chunks (uint8_t or uint16_t)
  *
- * Supports caching chunks from multiple z5::Dataset instances simultaneously.
+ * Supports caching chunks from multiple VcDataset instances simultaneously.
  * Chunks are stored as shared_ptr so eviction removes from the cache but
  * doesn't free memory until all readers are done.
  *
@@ -30,7 +62,7 @@ template<typename T>
 class ChunkCache
 {
 public:
-    using ChunkPtr = std::shared_ptr<xt::xarray<T>>;
+    using ChunkPtr = std::shared_ptr<ChunkArray3D<T>>;
 
     explicit ChunkCache(size_t maxBytes = 0);
     ~ChunkCache();
@@ -57,22 +89,22 @@ public:
 
     /**
      * @brief Get a chunk, loading from disk if needed.
-     * Returns shared_ptr — caller holds the chunk alive even if evicted.
+     * Returns shared_ptr -- caller holds the chunk alive even if evicted.
      */
-    ChunkPtr get(z5::Dataset* ds, int iz, int iy, int ix);
+    ChunkPtr get(vc::Zarr* ds, int iz, int iy, int ix);
 
     /**
      * @brief Check if chunk is cached without loading.
      */
-    ChunkPtr getIfCached(z5::Dataset* ds, int iz, int iy, int ix) const;
+    ChunkPtr getIfCached(vc::Zarr* ds, int iz, int iy, int ix) const;
 
-    void prefetch(z5::Dataset* ds, int minIz, int minIy, int minIx, int maxIz, int maxIy, int maxIx);
+    void prefetch(vc::Zarr* ds, int minIz, int minIy, int minIx, int maxIz, int maxIy, int maxIx);
     void clear();
     void flush();
 
 private:
     struct ChunkKey {
-        z5::Dataset* ds;
+        vc::Zarr* ds;
         int iz, iy, ix;
         bool operator==(const ChunkKey& o) const {
             return ds == o.ds && iz == o.iz && iy == o.iy && ix == o.ix;
@@ -109,7 +141,7 @@ private:
 
     size_t lockIndex(const ChunkKey& k) const { return ChunkKeyHash()(k) % kLockPoolSize; }
 
-    ChunkPtr loadChunk(z5::Dataset* ds, int iz, int iy, int ix);
+    ChunkPtr loadChunk(vc::Zarr* ds, int iz, int iy, int ix);
     void evictIfNeeded();
 
     // Stats counters

@@ -13,7 +13,7 @@
 #include <opencv2/ximgproc.hpp>
 #include "vc/core/util/QuadSurface.hpp"
 #include "vc/core/util/Slicing.hpp"
-#include <xtensor/containers/xtensor.hpp>
+#include "vc/core/types/VcDataset.hpp"
 
 Q_DECLARE_LOGGING_CATEGORY(lcSegGrowth)
 
@@ -36,44 +36,59 @@ SDTChunk* getOrComputeSDTChunk(SDTContext& ctx, const cv::Vec3f& worldPt) {
 
     // Load binary data from zarr
     cv::Vec3i size(cs, cs, cs);
-    xt::xtensor<uint8_t, 3, xt::layout_type::column_major> binaryData(
-        std::array<size_t, 3>{(size_t)cs, (size_t)cs, (size_t)cs});
-    binaryData.fill(0);
+    // Column-major layout: binaryData[x + y*cs + z*cs*cs] corresponds to (x,y,z)
+    const size_t voxels = static_cast<size_t>(cs) * cs * cs;
+    std::vector<uint8_t> binaryData(voxels, 0);
 
     // Clamp to dataset bounds
-    auto shape = ctx.binaryDataset->shape();
+    auto dsShape = ctx.binaryDataset->shape();
     cv::Vec3i clampedOrigin(
         std::max(0, origin[0]),
         std::max(0, origin[1]),
         std::max(0, origin[2])
     );
     cv::Vec3i clampedEnd(
-        std::min((int)shape[2], origin[0] + cs),
-        std::min((int)shape[1], origin[1] + cs),
-        std::min((int)shape[0], origin[2] + cs)
+        std::min((int)dsShape[2], origin[0] + cs),
+        std::min((int)dsShape[1], origin[1] + cs),
+        std::min((int)dsShape[0], origin[2] + cs)
     );
     cv::Vec3i readSize = clampedEnd - clampedOrigin;
 
     if (readSize[0] > 0 && readSize[1] > 0 && readSize[2] > 0) {
         // Zarr volumes are [z,y,x]; translate from world XYZ to ZYX for reading.
-        cv::Vec3i clampedOriginZYX(clampedOrigin[2], clampedOrigin[1], clampedOrigin[0]);
-        cv::Vec3i readSizeZYX(readSize[2], readSize[1], readSize[0]);
-        xt::xtensor<uint8_t, 3, xt::layout_type::column_major> readBuf(
-            std::array<size_t, 3>{(size_t)readSizeZYX[0], (size_t)readSizeZYX[1], (size_t)readSizeZYX[2]});
-        readArea3D(readBuf, clampedOriginZYX, ctx.binaryDataset, ctx.cache);
+        std::vector<size_t> regionOffset = {
+            static_cast<size_t>(clampedOrigin[2]),
+            static_cast<size_t>(clampedOrigin[1]),
+            static_cast<size_t>(clampedOrigin[0])
+        };
+        std::vector<size_t> regionShape = {
+            static_cast<size_t>(readSize[2]),
+            static_cast<size_t>(readSize[1]),
+            static_cast<size_t>(readSize[0])
+        };
+        // readRegion returns row-major (C order): readBuf[z*sY*sX + y*sX + x]
+        std::vector<uint8_t> readBuf(
+            static_cast<size_t>(readSize[0]) * readSize[1] * readSize[2]);
+        ctx.binaryDataset->readRegion(regionOffset, regionShape, readBuf.data());
 
-        // Copy into binaryData at correct offset
+        // Copy into binaryData at correct offset (column-major: idx = x + y*cs + z*cs*cs)
         cv::Vec3i offset = clampedOrigin - origin;
-        for (int z = 0; z < readSize[2]; z++) {
-            for (int y = 0; y < readSize[1]; y++) {
-                for (int x = 0; x < readSize[0]; x++) {
-                    binaryData(x + offset[0], y + offset[1], z + offset[2]) = readBuf(z, y, x);
+        const int sX = readSize[0], sY = readSize[1], sZ = readSize[2];
+        for (int z = 0; z < sZ; z++) {
+            for (int y = 0; y < sY; y++) {
+                for (int x = 0; x < sX; x++) {
+                    size_t dstIdx = static_cast<size_t>(x + offset[0]) +
+                                   static_cast<size_t>(y + offset[1]) * cs +
+                                   static_cast<size_t>(z + offset[2]) * cs * cs;
+                    size_t srcIdx = static_cast<size_t>(z) * sY * sX +
+                                   static_cast<size_t>(y) * sX +
+                                   static_cast<size_t>(x);
+                    binaryData[dstIdx] = readBuf[srcIdx];
                 }
             }
         }
     }
 
-    const size_t voxels = static_cast<size_t>(cs) * cs * cs;
     uint8_t* sdtSource = binaryData.data();
     std::vector<uint8_t> componentMask;
 
@@ -373,23 +388,34 @@ uint8_t* getOrLoadBinaryChunk(SkeletonPathContext& ctx, const cv::Vec3i& origin,
 
     if (readSize[0] > 0 && readSize[1] > 0 && readSize[2] > 0) {
         // Zarr volumes are [z,y,x]; translate from world XYZ to ZYX for reading.
-        cv::Vec3i clampedOriginZYX(clampedOrigin[2], clampedOrigin[1], clampedOrigin[0]);
-        cv::Vec3i readSizeZYX(readSize[2], readSize[1], readSize[0]);
-        xt::xtensor<uint8_t, 3, xt::layout_type::column_major> readBuf(
-            std::array<size_t, 3>{static_cast<size_t>(readSizeZYX[0]),
-                                  static_cast<size_t>(readSizeZYX[1]),
-                                  static_cast<size_t>(readSizeZYX[2])});
-        readArea3D(readBuf, clampedOriginZYX, ctx.binaryDataset, ctx.cache);
+        std::vector<size_t> regionOffset = {
+            static_cast<size_t>(clampedOrigin[2]),
+            static_cast<size_t>(clampedOrigin[1]),
+            static_cast<size_t>(clampedOrigin[0])
+        };
+        std::vector<size_t> regionShape = {
+            static_cast<size_t>(readSize[2]),
+            static_cast<size_t>(readSize[1]),
+            static_cast<size_t>(readSize[0])
+        };
+        // readRegion returns row-major (C order): readBuf[z*sY*sX + y*sX + x]
+        const int sX = readSize[0], sY = readSize[1], sZ = readSize[2];
+        std::vector<uint8_t> readBuf(
+            static_cast<size_t>(sX) * sY * sZ);
+        ctx.binaryDataset->readRegion(regionOffset, regionShape, readBuf.data());
 
-        // Copy into chunk at correct offset
+        // Copy into chunk at correct offset (column-major: idx = x + y*sizeX + z*sizeX*sizeY)
         cv::Vec3i offset = clampedOrigin - origin;
-        for (int z = 0; z < readSize[2]; z++) {
-            for (int y = 0; y < readSize[1]; y++) {
-                for (int x = 0; x < readSize[0]; x++) {
+        for (int z = 0; z < sZ; z++) {
+            for (int y = 0; y < sY; y++) {
+                for (int x = 0; x < sX; x++) {
                     size_t dstIdx = static_cast<size_t>(x + offset[0]) +
                                    static_cast<size_t>(y + offset[1]) * size[0] +
                                    static_cast<size_t>(z + offset[2]) * size[0] * size[1];
-                    chunk[dstIdx] = readBuf(z, y, x);
+                    size_t srcIdx = static_cast<size_t>(z) * sY * sX +
+                                   static_cast<size_t>(y) * sX +
+                                   static_cast<size_t>(x);
+                    chunk[dstIdx] = readBuf[srcIdx];
                 }
             }
         }

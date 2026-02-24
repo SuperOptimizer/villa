@@ -149,7 +149,7 @@ void CVolumeViewer::renderIntersections()
         return;
 
     recalcScales();
-    if (!volume->zarrDataset(_ds_sd_idx)) {
+    if (!volume->vcDataset(_ds_sd_idx)) {
         return;
     }
 

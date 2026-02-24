@@ -42,9 +42,11 @@ include(VCSanitizers)
 
 include_directories(core/include)
 
+add_subdirectory(utils)
 add_subdirectory(misc)
 add_subdirectory(libs/OpenABF)
 add_subdirectory(core)
+add_subdirectory(qt_utils)
 add_subdirectory(apps)
 
 if(VC_BUILD_TESTS)
@@ -52,6 +54,8 @@ if(VC_BUILD_TESTS)
     add_subdirectory(core/test)
 endif()
 
-include(VCPackageConfig)
-include(VCInstall)
-include(Packing)
+if(VC_INSTALL_LIBS OR VC_INSTALL_APPS OR VC_INSTALL_UTILS)
+    include(VCPackageConfig)
+    include(VCInstall)
+    include(Packing)
+endif()
