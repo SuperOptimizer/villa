@@ -42,6 +42,7 @@ include(VCSanitizers)
 
 include_directories(core/include)
 
+add_subdirectory(utils)
 add_subdirectory(misc)
 add_subdirectory(libs/OpenABF)
 add_subdirectory(core)
