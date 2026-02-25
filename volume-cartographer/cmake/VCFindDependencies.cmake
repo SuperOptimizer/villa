@@ -2,65 +2,23 @@
 include(FetchContent)
 
 
-set(BUILD_Z5PY OFF CACHE BOOL "Disable Python bits for z5" FORCE)
-set(WITH_BLOSC ON  CACHE BOOL "Enable Blosc in z5"        FORCE)
-
-# ---- xtl / xsimd / xtensor from source (before z5, which needs them) --------
-set(XTENSOR_USE_XSIMD 1)
-
-FetchContent_Declare(
-    xtl
-    GIT_REPOSITORY https://github.com/xtensor-stack/xtl.git
-    GIT_TAG        0.8.1
-)
-FetchContent_Declare(
-    xsimd
-    GIT_REPOSITORY https://github.com/xtensor-stack/xsimd.git
-    GIT_TAG        13.2.0
-)
-FetchContent_Declare(
-    xtensor
-    GIT_REPOSITORY https://github.com/xtensor-stack/xtensor.git
-    GIT_TAG        0.27.1
-)
-FetchContent_MakeAvailable(xtl xsimd xtensor)
-
-# xtensor sets cxx_std_20 INTERFACE which can downgrade our C++23; upgrade it
-set_property(TARGET xtensor PROPERTY INTERFACE_COMPILE_FEATURES cxx_std_23)
-
-# Mark xtensor-stack headers as SYSTEM to suppress warnings from -Weverything
-# This requires getting the interface include dirs and re-adding them as SYSTEM
-foreach(_target xtl xsimd xtensor)
-    get_target_property(_inc_dirs ${_target} INTERFACE_INCLUDE_DIRECTORIES)
-    if(_inc_dirs)
-        set_target_properties(${_target} PROPERTIES INTERFACE_INCLUDE_DIRECTORIES "")
-        target_include_directories(${_target} SYSTEM INTERFACE ${_inc_dirs})
-    endif()
-endforeach()
-
-# Point z5's find_package(xtensor) (and transitive deps) at FetchContent builds
-set(xtl_DIR     "${FETCHCONTENT_BASE_DIR}/xtl-build"     CACHE PATH "" FORCE)
-set(xsimd_DIR   "${FETCHCONTENT_BASE_DIR}/xsimd-build"   CACHE PATH "" FORCE)
-set(xtensor_DIR "${FETCHCONTENT_BASE_DIR}/xtensor-build" CACHE PATH "" FORCE)
-
-
-FetchContent_Declare(
-    z5
-    GIT_REPOSITORY https://github.com/constantinpape/z5.git
-    GIT_TAG        2.0.20
-)
-FetchContent_MakeAvailable(z5)
-
-# z5's CMakeLists uses include_directories() which doesn't propagate;
-# link xtensor onto the z5 INTERFACE target so consumers get the headers.
-target_link_libraries(z5 INTERFACE xtensor)
-
-# Mark z5 headers as SYSTEM to suppress warnings
-get_target_property(_z5_inc_dirs z5 INTERFACE_INCLUDE_DIRECTORIES)
-if(_z5_inc_dirs)
-    set_target_properties(z5 PROPERTIES INTERFACE_INCLUDE_DIRECTORIES "")
-    target_include_directories(z5 SYSTEM INTERFACE ${_z5_inc_dirs})
+# ---- Blosc (required for zarr chunk compression) ----------------------------
+find_path(BLOSC_INCLUDE_DIR blosc.h)
+find_library(BLOSC_LIBRARY NAMES blosc)
+if(NOT BLOSC_INCLUDE_DIR OR NOT BLOSC_LIBRARY)
+    message(FATAL_ERROR "blosc not found (need blosc.h and libblosc)")
 endif()
+add_library(Blosc::blosc UNKNOWN IMPORTED)
+set_target_properties(Blosc::blosc PROPERTIES
+    IMPORTED_LOCATION "${BLOSC_LIBRARY}"
+    INTERFACE_INCLUDE_DIRECTORIES "${BLOSC_INCLUDE_DIR}")
+message(STATUS "Blosc: ${BLOSC_LIBRARY}")
+
+# ---- zlib (gzip/zlib compression) -------------------------------------------
+find_package(ZLIB REQUIRED)
+
+# ---- zstd -------------------------------------------------------------------
+find_package(zstd REQUIRED)
 
 # ---- Qt (apps / utils) -------------------------------------------------------
 find_package(Qt6 QUIET REQUIRED COMPONENTS Widgets Gui Core Network)
@@ -126,10 +84,10 @@ if (VC_USE_OPENMP)
     else()
         find_package(OpenMP REQUIRED)
     endif()
-    set(XTENSOR_USE_OPENMP 1)
+
 else()
     message(STATUS "OpenMP support disabled")
-    set(XTENSOR_USE_OPENMP 0)
+
     include_directories(${CMAKE_SOURCE_DIR}/core/openmp_stub)
     add_library(openmp_stub INTERFACE)
     add_library(OpenMP::OpenMP_CXX ALIAS openmp_stub)
@@ -138,7 +96,59 @@ else()
     install(TARGETS openmp_stub EXPORT "${targets_export_name}")
 endif()
 
-# ---- xtensor/xsimd (already fetched above, before z5) -----------------------
+# ---- LZ4 (zarr lz4 codec) ---------------------------------------------------
+find_path(LZ4_INCLUDE_DIR lz4.h)
+find_library(LZ4_LIBRARY NAMES lz4)
+if(NOT LZ4_INCLUDE_DIR OR NOT LZ4_LIBRARY)
+    message(FATAL_ERROR "lz4 not found (need lz4.h and liblz4)")
+endif()
+add_library(LZ4::lz4 UNKNOWN IMPORTED)
+set_target_properties(LZ4::lz4 PROPERTIES
+    IMPORTED_LOCATION "${LZ4_LIBRARY}"
+    INTERFACE_INCLUDE_DIRECTORIES "${LZ4_INCLUDE_DIR}")
+message(STATUS "LZ4: ${LZ4_LIBRARY}")
+
+# ---- BZip2 (zarr bz2 codec) -------------------------------------------------
+find_package(BZip2 REQUIRED)
+
+# ---- LZMA (zarr lzma codec) -------------------------------------------------
+find_path(LZMA_INCLUDE_DIR lzma.h)
+find_library(LZMA_LIBRARY NAMES lzma)
+if(NOT LZMA_INCLUDE_DIR OR NOT LZMA_LIBRARY)
+    message(FATAL_ERROR "lzma not found (need lzma.h and liblzma)")
+endif()
+add_library(LZMA::lzma UNKNOWN IMPORTED)
+set_target_properties(LZMA::lzma PROPERTIES
+    IMPORTED_LOCATION "${LZMA_LIBRARY}"
+    INTERFACE_INCLUDE_DIRECTORIES "${LZMA_INCLUDE_DIR}")
+message(STATUS "LZMA: ${LZMA_LIBRARY}")
+
+# ---- FFmpeg (optional, for zarr video codecs) --------------------------------
+option(VC_WITH_VIDEO_CODECS "Enable H264/H265/AV1 zarr video codecs (requires FFmpeg)" OFF)
+if(VC_WITH_VIDEO_CODECS)
+    find_path(AVCODEC_INCLUDE_DIR libavcodec/avcodec.h)
+    find_library(AVCODEC_LIBRARY NAMES avcodec)
+    find_path(AVUTIL_INCLUDE_DIR libavutil/avutil.h)
+    find_library(AVUTIL_LIBRARY NAMES avutil)
+    find_path(SWSCALE_INCLUDE_DIR libswscale/swscale.h)
+    find_library(SWSCALE_LIBRARY NAMES swscale)
+    if(NOT AVCODEC_LIBRARY OR NOT AVUTIL_LIBRARY OR NOT SWSCALE_LIBRARY)
+        message(FATAL_ERROR "FFmpeg not found but VC_WITH_VIDEO_CODECS=ON. Need libavcodec, libavutil, libswscale.")
+    endif()
+    add_library(FFmpeg::avcodec UNKNOWN IMPORTED)
+    set_target_properties(FFmpeg::avcodec PROPERTIES
+        IMPORTED_LOCATION "${AVCODEC_LIBRARY}"
+        INTERFACE_INCLUDE_DIRECTORIES "${AVCODEC_INCLUDE_DIR}")
+    add_library(FFmpeg::avutil UNKNOWN IMPORTED)
+    set_target_properties(FFmpeg::avutil PROPERTIES
+        IMPORTED_LOCATION "${AVUTIL_LIBRARY}"
+        INTERFACE_INCLUDE_DIRECTORIES "${AVUTIL_INCLUDE_DIR}")
+    add_library(FFmpeg::swscale UNKNOWN IMPORTED)
+    set_target_properties(FFmpeg::swscale PROPERTIES
+        IMPORTED_LOCATION "${SWSCALE_LIBRARY}"
+        INTERFACE_INCLUDE_DIRECTORIES "${SWSCALE_INCLUDE_DIR}")
+    message(STATUS "FFmpeg: avcodec=${AVCODEC_LIBRARY} avutil=${AVUTIL_LIBRARY} swscale=${SWSCALE_LIBRARY}")
+endif()
 
 # ---- nlohmann/json -----------------------------------------------------------
 FetchContent_Declare(

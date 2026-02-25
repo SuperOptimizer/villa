@@ -12,8 +12,8 @@ namespace fs = std::filesystem;
 void generate_mask(QuadSurface* surf,
                             cv::Mat_<uint8_t>& mask,
                             cv::Mat_<uint8_t>& img,
-                            z5::Dataset* ds_high = nullptr,
-                            z5::Dataset* ds_low = nullptr,
+                            zarr::Zarr* ds_high = nullptr,
+                            zarr::Zarr* ds_low = nullptr,
                             ChunkCache<uint8_t>* cache = nullptr) {
     cv::Mat_<cv::Vec3f> points = surf->rawPoints();
     cv::Mat_<uint8_t> rawMask = surf->validMask();

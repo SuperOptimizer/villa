@@ -1,10 +1,6 @@
 #include "vc/core/util/ChunkCache.hpp"
 
-#include <xtensor/containers/xarray.hpp>
-#include <xtensor/generators/xbuilder.hpp>
-
-#include "z5/dataset.hxx"
-#include "z5/types/types.hxx"
+#include "vc/core/types/Zarr.hpp"
 
 #include <algorithm>
 #include <fcntl.h>
@@ -41,34 +37,16 @@ static bool readChunkFileRaw(const char* path, std::vector<char>& buffer)
 }
 
 // Chunk path helper — caches the base path string and delimiter to avoid
-// repeated z5::Dataset virtual calls and fs::path construction.
+// repeated zarr::Zarr virtual calls and fs::path construction.
 struct ChunkPathBuilder {
     std::string basePath;
     std::string delimiter;
-    bool isZarr;
     // Reusable string buffer for path construction
     std::string pathBuf;
 
-    explicit ChunkPathBuilder(z5::Dataset& ds) {
+    explicit ChunkPathBuilder(zarr::Zarr& ds) {
         basePath = ds.path().string();
-        isZarr = ds.isZarr();
-        // Extract delimiter by probing a known chunk path
-        if (isZarr) {
-            z5::types::ShapeType probe = {0, 0, 1};
-            std::filesystem::path p;
-            ds.chunkPath(probe, p);
-            // Path is basePath + "/" + "0" + delim + "0" + delim + "1"
-            // Extract delimiter from the suffix
-            std::string suffix = p.string().substr(basePath.size() + 1);
-            // suffix is "0<delim>0<delim>1"
-            size_t pos = suffix.find_first_not_of("0123456789");
-            if (pos != std::string::npos) {
-                size_t end = suffix.find_first_of("0123456789", pos);
-                delimiter = suffix.substr(pos, end - pos);
-            } else {
-                delimiter = ".";
-            }
-        }
+        delimiter = ds.dimensionSeparator();
     }
 
     const char* build(size_t iz, size_t iy, size_t ix) {
@@ -76,20 +54,11 @@ struct ChunkPathBuilder {
         pathBuf.reserve(basePath.size() + 20);
         pathBuf.append(basePath);
         pathBuf.push_back('/');
-        if (isZarr) {
-            appendUint(iz);
-            pathBuf.append(delimiter);
-            appendUint(iy);
-            pathBuf.append(delimiter);
-            appendUint(ix);
-        } else {
-            // N5: reversed axis order
-            appendUint(ix);
-            pathBuf.push_back('/');
-            appendUint(iy);
-            pathBuf.push_back('/');
-            appendUint(iz);
-        }
+        appendUint(iz);
+        pathBuf.append(delimiter);
+        appendUint(iy);
+        pathBuf.append(delimiter);
+        appendUint(ix);
         return pathBuf.c_str();
     }
 
@@ -104,12 +73,17 @@ private:
     }
 };
 
-// Helper to read a chunk from disk via z5::Dataset.
-// Uses direct POSIX I/O to bypass z5's redundant filesystem checks,
+// Helper to read a chunk from disk via zarr::Zarr.
+// Uses direct POSIX I/O to bypass redundant filesystem checks,
 // with thread-local buffer reuse and kernel readahead hints.
+//
+// TODO: Sharded zarr arrays store chunks inside shard files, so direct file
+// access via ChunkPathBuilder won't find them. When wiring up the Zarr adapter
+// to use ZarrArray internally, add a sharded code path that calls
+// ZarrArray::read_chunk() instead of readChunkFileRaw().
 template<typename T>
-static std::shared_ptr<xt::xarray<T>> readChunkFromSource(
-    z5::Dataset& ds, size_t iz, size_t iy, size_t ix,
+static std::shared_ptr<vc::Tensor<T>> readChunkFromSource(
+    zarr::Zarr& ds, size_t iz, size_t iy, size_t ix,
     ChunkPathBuilder& pathBuilder, std::vector<char>& compressedBuf)
 {
     const char* path = pathBuilder.build(iz, iy, ix);
@@ -117,23 +91,23 @@ static std::shared_ptr<xt::xarray<T>> readChunkFromSource(
     if (!readChunkFileRaw(path, compressedBuf))
         return nullptr;  // chunk doesn't exist or read failed
 
-    const auto& maxChunkShape = ds.defaultChunkShape();
-    const std::size_t maxChunkSize = ds.defaultChunkSize();
+    const auto& maxChunkShape = ds.chunkShape();
+    const std::size_t maxChunkSize = ds.chunkSize();
 
-    auto out = std::make_shared<xt::xarray<T>>(xt::empty<T>(maxChunkShape));
+    auto out = std::make_shared<vc::Tensor<T>>(vc::empty<T>(maxChunkShape));
 
-    if (ds.getDtype() == z5::types::Datatype::uint8) {
+    if (ds.dtype() == zarr::Dtype::uint8) {
         if constexpr (std::is_same_v<T, uint8_t>) {
             ds.decompress(compressedBuf, out->data(), maxChunkSize);
         } else {
             throw std::runtime_error("Cannot read uint8 dataset into uint16 array");
         }
     }
-    else if (ds.getDtype() == z5::types::Datatype::uint16) {
+    else if (ds.dtype() == zarr::Dtype::uint16) {
         if constexpr (std::is_same_v<T, uint16_t>) {
             ds.decompress(compressedBuf, out->data(), maxChunkSize);
         } else if constexpr (std::is_same_v<T, uint8_t>) {
-            xt::xarray<uint16_t> tmp = xt::empty<uint16_t>(maxChunkShape);
+            auto tmp = vc::empty<uint16_t>(maxChunkShape);
             ds.decompress(compressedBuf, tmp.data(), maxChunkSize);
 
             uint8_t* p8 = out->data();
@@ -148,10 +122,10 @@ static std::shared_ptr<xt::xarray<T>> readChunkFromSource(
 
 // Backward-compatible overload (allocates fresh buffer each call)
 template<typename T>
-static std::shared_ptr<xt::xarray<T>> readChunkFromSource(z5::Dataset& ds, size_t iz, size_t iy, size_t ix)
+static std::shared_ptr<vc::Tensor<T>> readChunkFromSource(zarr::Zarr& ds, size_t iz, size_t iy, size_t ix)
 {
     thread_local ChunkPathBuilder* tlPathBuilder = nullptr;
-    thread_local z5::Dataset* tlDs = nullptr;
+    thread_local zarr::Zarr* tlDs = nullptr;
     thread_local std::vector<char> tlBuffer;
 
     // Lazily create/update thread-local path builder
@@ -182,7 +156,7 @@ void ChunkCache<T>::setMaxBytes(size_t maxBytes)
 }
 
 template<typename T>
-auto ChunkCache<T>::get(z5::Dataset* ds, int iz, int iy, int ix) -> ChunkPtr
+auto ChunkCache<T>::get(zarr::Zarr* ds, int iz, int iy, int ix) -> ChunkPtr
 {
     ChunkKey key{ds, iz, iy, ix};
 
@@ -250,7 +224,7 @@ auto ChunkCache<T>::get(z5::Dataset* ds, int iz, int iy, int ix) -> ChunkPtr
 }
 
 template<typename T>
-auto ChunkCache<T>::getIfCached(z5::Dataset* ds, int iz, int iy, int ix) const -> ChunkPtr
+auto ChunkCache<T>::getIfCached(zarr::Zarr* ds, int iz, int iy, int ix) const -> ChunkPtr
 {
     ChunkKey key{ds, iz, iy, ix};
     std::shared_lock<std::shared_mutex> rlock(_mapMutex);
@@ -263,7 +237,7 @@ auto ChunkCache<T>::getIfCached(z5::Dataset* ds, int iz, int iy, int ix) const -
 }
 
 template<typename T>
-void ChunkCache<T>::prefetch(z5::Dataset* ds, int minIz, int minIy, int minIx, int maxIz, int maxIy, int maxIx)
+void ChunkCache<T>::prefetch(zarr::Zarr* ds, int minIz, int minIy, int minIx, int maxIz, int maxIy, int maxIx)
 {
     #pragma omp parallel for collapse(3) schedule(dynamic, 1)
     for (int ix = minIx; ix <= maxIx; ix++) {
@@ -375,7 +349,7 @@ void ChunkCache<T>::resetStats()
 }
 
 template<typename T>
-auto ChunkCache<T>::loadChunk(z5::Dataset* ds, int iz, int iy, int ix) -> ChunkPtr
+auto ChunkCache<T>::loadChunk(zarr::Zarr* ds, int iz, int iy, int ix) -> ChunkPtr
 {
     if (!ds) return nullptr;
     try {

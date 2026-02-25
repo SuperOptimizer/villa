@@ -22,7 +22,7 @@
 #       libxcb-util-dev libxcb-xinerama0-dev libxcb-xkb-dev \
 #       libxkbcommon-dev libxkbcommon-x11-dev libgl-dev libegl-dev \
 #       libfontconfig1-dev libfreetype-dev libharfbuzz-dev \
-#       libdbus-1-dev libicu-dev
+#       libdbus-1-dev libicu-dev libavahi-client-dev
 #
 # Usage:
 #   ./scripts/fromscratch.sh [PREFIX]
@@ -1092,7 +1092,7 @@ build_opencv() {
     cd "$BUILDDIR/opencv"
     cmake "$OPENCV_SRC" -G Ninja "${CMAKE_COMMON[@]}" \
         -DOPENCV_EXTRA_MODULES_PATH="$OPENCV_CONTRIB/modules" \
-        -DBUILD_LIST=core,imgcodecs,imgproc,calib3d,photo,videoio,ximgproc \
+        -DBUILD_LIST=core,imgcodecs,imgproc,calib3d,photo,video,videoio,ximgproc \
         -DBUILD_EXAMPLES=OFF \
         -DBUILD_TESTS=OFF \
         -DBUILD_PERF_TESTS=OFF \

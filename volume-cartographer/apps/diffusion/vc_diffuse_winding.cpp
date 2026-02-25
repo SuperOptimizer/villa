@@ -22,11 +22,8 @@
 
 #include <ceres/ceres.h>
 
-#include <xtensor/containers/xarray.hpp>
-#include "z5/factory.hxx"
-#include "z5/filesystem/handle.hxx"
-#include "z5/common.hxx"
-#include "z5/multiarray/xtensor_access.hxx"
+#include "vc/core/types/Zarr.hpp"
+#include "vc/core/types/Tensor.hpp"
 
 #include "vc/ui/VCCollection.hpp"
 #include "vc/core/util/Slicing.hpp"
@@ -177,9 +174,8 @@ int main(int argc, char** argv) {
     }
     std::cout << "Found umbilicus point at: " << *umbilicus_point << std::endl;
 
-    // Load volume data using z5 and ChunkedTensor
-    z5::filesystem::handle::Group group_handle(volume_path);
-    std::unique_ptr<z5::Dataset> ds = z5::openDataset(group_handle, dataset_name);
+    // Load volume data using zarr
+    std::unique_ptr<zarr::Zarr> ds = zarr::openDataset(volume_path, dataset_name);
     if (!ds) {
         std::cerr << "Error: Could not open dataset '" << dataset_name << "' in volume '" << volume_path << "'." << std::endl;
         return 1;
@@ -196,7 +192,7 @@ int main(int argc, char** argv) {
 
     cv::Mat slice_mat(shape[1], shape[2], CV_8U);
     std::vector<size_t> slice_shape = {1, shape[1], shape[2]};
-    xt::xtensor<uint8_t, 3, xt::layout_type::column_major> slice_data = xt::zeros<uint8_t>(slice_shape);
+    vc::Tensor<uint8_t> slice_data = vc::zeros<uint8_t>(slice_shape, vc::Layout::ColumnMajor);
     cv::Vec3i offset = {z_slice, 0, 0};
     ChunkCache<uint8_t> cache(4llu*1024*1024*1024);
     readArea3D(slice_data, offset, ds.get(), &cache);

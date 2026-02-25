@@ -1,12 +1,7 @@
 #include "vc/core/util/Slicing.hpp"
 #include "vc/core/util/Compositing.hpp"
 
-#include <xtensor/containers/xarray.hpp>
-#include <xtensor/containers/xtensor.hpp>
-#include <xtensor/generators/xbuilder.hpp>
-
-#include "z5/dataset.hxx"
-#include "z5/multiarray/xtensor_access.hxx"
+#include "vc/core/types/Zarr.hpp"
 
 #include <opencv2/core.hpp>
 #include <opencv2/calib3d.hpp>
@@ -27,8 +22,8 @@ struct CacheParams {
     int czShift, cyShift, cxShift, czMask, cyMask, cxMask;
     int chunksZ, chunksY, chunksX;
 
-    explicit CacheParams(z5::Dataset* ds) {
-        const auto& cs = ds->defaultChunkShape();
+    explicit CacheParams(zarr::Zarr* ds) {
+        const auto& cs = ds->chunkShape();
         cz = static_cast<int>(cs[0]);
         cy = static_cast<int>(cs[1]);
         cx = static_cast<int>(cs[2]);
@@ -65,13 +60,13 @@ struct ChunkSampler {
 
     const CacheParams<T>& p;
     ChunkCache<T>& cache;
-    z5::Dataset* ds;
+    zarr::Zarr* ds;
     Slot slots[kSlots];
     int mru = 0;  // most-recently-used slot index
     const T* data = nullptr;  // current data pointer
     size_t s0 = 0, s1 = 0;   // strides (s2 is always 1, eliminated)
 
-    ChunkSampler(const CacheParams<T>& p_, ChunkCache<T>& cache_, z5::Dataset* ds_)
+    ChunkSampler(const CacheParams<T>& p_, ChunkCache<T>& cache_, zarr::Zarr* ds_)
         : p(p_), cache(cache_), ds(ds_)
     {
         s0 = static_cast<size_t>(p.cy) * p.cx;
@@ -226,7 +221,7 @@ enum class SampleMode { Nearest, Trilinear };
 template<typename T, SampleMode Mode, typename NormalFn>
 static void readVolumeImpl(
     cv::Mat_<T>& out,
-    z5::Dataset* ds,
+    zarr::Zarr* ds,
     ChunkCache<T>& cache,
     const CacheParams<T>& p,
     const cv::Mat_<cv::Vec3f>& coords,
@@ -449,7 +444,7 @@ static void readVolumeImpl(
 // ============================================================================
 
 template<typename T>
-static void readArea3DImpl(xt::xtensor<T, 3, xt::layout_type::column_major>& out, const cv::Vec3i& offset, z5::Dataset* ds, ChunkCache<T>* cache) {
+static void readArea3DImpl(vc::Tensor<T>& out, const cv::Vec3i& offset, zarr::Zarr* ds, ChunkCache<T>* cache) {
 
     CacheParams<T> p(ds);
 
@@ -473,7 +468,7 @@ static void readArea3DImpl(xt::xtensor<T, 3, xt::layout_type::column_major>& out
     for (const auto& idx : chunks_to_process) {
         int cz = idx[0], cy = idx[1], cx = idx[2];
         auto chunkPtr = cache->get(ds, cz, cy, cx);
-        xt::xarray<T>* chunk = chunkPtr.get();
+        vc::Tensor<T>* chunk = chunkPtr.get();
 
         cv::Vec3i chunk_offset = {p.cz * cz, p.cy * cy, p.cx * cx};
 
@@ -512,11 +507,11 @@ static void readArea3DImpl(xt::xtensor<T, 3, xt::layout_type::column_major>& out
     }
 }
 
-void readArea3D(xt::xtensor<uint8_t, 3, xt::layout_type::column_major>& out, const cv::Vec3i& offset, z5::Dataset* ds, ChunkCache<uint8_t>* cache) {
+void readArea3D(vc::Tensor<uint8_t>& out, const cv::Vec3i& offset, zarr::Zarr* ds, ChunkCache<uint8_t>* cache) {
     readArea3DImpl(out, offset, ds, cache);
 }
 
-void readArea3D(xt::xtensor<uint16_t, 3, xt::layout_type::column_major>& out, const cv::Vec3i& offset, z5::Dataset* ds, ChunkCache<uint16_t>* cache) {
+void readArea3D(vc::Tensor<uint16_t>& out, const cv::Vec3i& offset, zarr::Zarr* ds, ChunkCache<uint16_t>* cache) {
     readArea3DImpl(out, offset, ds, cache);
 }
 
@@ -526,7 +521,7 @@ void readArea3D(xt::xtensor<uint16_t, 3, xt::layout_type::column_major>& out, co
 // ============================================================================
 
 template<typename T>
-static void readInterpolated3DImpl(cv::Mat_<T>& out, z5::Dataset* ds,
+static void readInterpolated3DImpl(cv::Mat_<T>& out, zarr::Zarr* ds,
                                    const cv::Mat_<cv::Vec3f>& coords, ChunkCache<T>* cache, bool nearest_neighbor) {
     CacheParams<T> p(ds);
 
@@ -539,12 +534,12 @@ static void readInterpolated3DImpl(cv::Mat_<T>& out, z5::Dataset* ds,
     }
 }
 
-void readInterpolated3D(cv::Mat_<uint8_t>& out, z5::Dataset* ds,
+void readInterpolated3D(cv::Mat_<uint8_t>& out, zarr::Zarr* ds,
                         const cv::Mat_<cv::Vec3f>& coords, ChunkCache<uint8_t>* cache, bool nearest_neighbor) {
     readInterpolated3DImpl(out, ds, coords, cache, nearest_neighbor);
 }
 
-void readInterpolated3D(cv::Mat_<uint16_t>& out, z5::Dataset* ds,
+void readInterpolated3D(cv::Mat_<uint16_t>& out, zarr::Zarr* ds,
                         const cv::Mat_<cv::Vec3f>& coords, ChunkCache<uint16_t>* cache, bool nearest_neighbor) {
     readInterpolated3DImpl(out, ds, coords, cache, nearest_neighbor);
 }
@@ -552,7 +547,7 @@ void readInterpolated3D(cv::Mat_<uint16_t>& out, z5::Dataset* ds,
 
 void readCompositeFast(
     cv::Mat_<uint8_t>& out,
-    z5::Dataset* ds,
+    zarr::Zarr* ds,
     const cv::Mat_<cv::Vec3f>& baseCoords,
     const cv::Mat_<cv::Vec3f>& normals,
     float zStep,
@@ -587,7 +582,7 @@ void readCompositeFast(
 template<typename T>
 static void readMultiSliceImpl(
     std::vector<cv::Mat_<T>>& out,
-    z5::Dataset* ds,
+    zarr::Zarr* ds,
     ChunkCache<T>& cache,
     const cv::Mat_<cv::Vec3f>& basePoints,
     const cv::Mat_<cv::Vec3f>& stepDirs,
@@ -806,7 +801,7 @@ static void readMultiSliceImpl(
 
 void readMultiSlice(
     std::vector<cv::Mat_<uint8_t>>& out,
-    z5::Dataset* ds,
+    zarr::Zarr* ds,
     ChunkCache<uint8_t>* cache,
     const cv::Mat_<cv::Vec3f>& basePoints,
     const cv::Mat_<cv::Vec3f>& stepDirs,
@@ -817,7 +812,7 @@ void readMultiSlice(
 
 void readMultiSlice(
     std::vector<cv::Mat_<uint16_t>>& out,
-    z5::Dataset* ds,
+    zarr::Zarr* ds,
     ChunkCache<uint16_t>* cache,
     const cv::Mat_<cv::Vec3f>& basePoints,
     const cv::Mat_<cv::Vec3f>& stepDirs,
@@ -836,7 +831,7 @@ void readMultiSlice(
 template<typename T>
 static void sampleTileSlicesImpl(
     std::vector<cv::Mat_<T>>& out,
-    z5::Dataset* ds,
+    zarr::Zarr* ds,
     ChunkCache<T>& cache,
     const cv::Mat_<cv::Vec3f>& basePoints,
     const cv::Mat_<cv::Vec3f>& stepDirs,
@@ -1015,7 +1010,7 @@ static void sampleTileSlicesImpl(
 
 void sampleTileSlices(
     std::vector<cv::Mat_<uint8_t>>& out,
-    z5::Dataset* ds,
+    zarr::Zarr* ds,
     ChunkCache<uint8_t>* cache,
     const cv::Mat_<cv::Vec3f>& basePoints,
     const cv::Mat_<cv::Vec3f>& stepDirs,
@@ -1026,7 +1021,7 @@ void sampleTileSlices(
 
 void sampleTileSlices(
     std::vector<cv::Mat_<uint16_t>>& out,
-    z5::Dataset* ds,
+    zarr::Zarr* ds,
     ChunkCache<uint16_t>* cache,
     const cv::Mat_<cv::Vec3f>& basePoints,
     const cv::Mat_<cv::Vec3f>& stepDirs,
@@ -1037,7 +1032,7 @@ void sampleTileSlices(
 
 
 cv::Mat_<cv::Vec3f> computeVolumeGradientsNative(
-    z5::Dataset* ds,
+    zarr::Zarr* ds,
     const cv::Mat_<cv::Vec3f>& rawPoints,
     float dsScale)
 {
@@ -1095,9 +1090,9 @@ cv::Mat_<cv::Vec3f> computeVolumeGradientsNative(
     if (localW == 0 || localH == 0 || localD == 0) return gradients;
 
     // Step 2: Batch read the volume data for the bounding box
-    xt::xarray<uint8_t> localVolume = xt::empty<uint8_t>({localD, localH, localW});
-    z5::types::ShapeType off = {static_cast<size_t>(bboxZ0), static_cast<size_t>(bboxY0), static_cast<size_t>(bboxX0)};
-    z5::multiarray::readSubarray<uint8_t>(*ds, localVolume, off.begin());
+    vc::Tensor<uint8_t> localVolume({localD, localH, localW});
+    zarr::Shape off = {static_cast<size_t>(bboxZ0), static_cast<size_t>(bboxY0), static_cast<size_t>(bboxX0)};
+    zarr::readSubarray(*ds, localVolume, off);
 
     auto sampleLocal = [&](float gx, float gy, float gz) -> float {
         const int lx = static_cast<int>(std::round(gx)) - bboxX0;

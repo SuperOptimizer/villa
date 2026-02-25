@@ -17,12 +17,7 @@
 #include "vc/tracer/CostFunctions.hpp"
 #include "vc/core/util/HashFunctions.hpp"
 
-#include "z5/factory.hxx"
-#include "z5/filesystem/handle.hxx"
-#include "z5/dataset.hxx"
-
-#include <xtensor/views/xview.hpp>
-#include <xtensor/containers/xtensor.hpp>
+#include "vc/core/types/Zarr.hpp"
 #include "edt.hpp"
 
 #include <iostream>
@@ -696,7 +691,7 @@ struct Vec3iEqual {
 };
 
 struct SDTContext {
-    z5::Dataset* dataset = nullptr;
+    zarr::Zarr* dataset = nullptr;
     ChunkCache<uint8_t>* cache = nullptr;
     int chunk_size = 64;
     float threshold = 1.0f;
@@ -730,8 +725,7 @@ static SDTChunk* get_or_compute_sdt_chunk(SDTContext& ctx, const cv::Vec3f& worl
 
     const int cs = ctx.chunk_size;
     const cv::Vec3i size(cs, cs, cs);
-    xt::xtensor<uint8_t, 3, xt::layout_type::column_major> binary_data(
-        std::array<size_t, 3>{static_cast<size_t>(cs), static_cast<size_t>(cs), static_cast<size_t>(cs)});
+    vc::Tensor<uint8_t> binary_data({static_cast<size_t>(cs), static_cast<size_t>(cs), static_cast<size_t>(cs)}, vc::Layout::ColumnMajor);
     binary_data.fill(0);
 
     auto shape = ctx.dataset->shape(); // z,y,x
@@ -748,10 +742,9 @@ static SDTChunk* get_or_compute_sdt_chunk(SDTContext& ctx, const cv::Vec3f& worl
     if (read_size[0] > 0 && read_size[1] > 0 && read_size[2] > 0) {
         cv::Vec3i clamped_origin_zyx(clamped_origin[2], clamped_origin[1], clamped_origin[0]);
         cv::Vec3i read_size_zyx(read_size[2], read_size[1], read_size[0]);
-        xt::xtensor<uint8_t, 3, xt::layout_type::column_major> read_buf(
-            std::array<size_t, 3>{static_cast<size_t>(read_size_zyx[0]),
+        vc::Tensor<uint8_t> read_buf({static_cast<size_t>(read_size_zyx[0]),
                                   static_cast<size_t>(read_size_zyx[1]),
-                                  static_cast<size_t>(read_size_zyx[2])});
+                                  static_cast<size_t>(read_size_zyx[2])}, vc::Layout::ColumnMajor);
         readArea3D(read_buf, clamped_origin_zyx, ctx.dataset, ctx.cache);
 
         const cv::Vec3i offset = clamped_origin - origin;
@@ -2691,8 +2684,8 @@ static void _dist_iteration(T &from, T &to, int s)
 template <typename T, typename E>
 static T distance_transform(const T &chunk, int steps, int size)
 {
-    T c1 = xt::empty<E>(chunk.shape());
-    T c2 = xt::empty<E>(chunk.shape());
+    T c1 = vc::empty<E>(chunk.shape(), chunk.layout());
+    T c2 = vc::empty<E>(chunk.shape(), chunk.layout());
 
     c1 = chunk;
 
@@ -2722,7 +2715,7 @@ struct thresholdedDistance
     const std::string UNIQUE_ID_STRING = "dqk247q6vz_"+std::to_string(BORDER)+"_"+std::to_string(CHUNK_SIZE)+"_"+std::to_string(FILL_V)+"_"+std::to_string(TH);
     template <typename T, typename E> void compute(const T &large, T &small, const cv::Vec3i &offset_large)
     {
-        T outer = xt::empty<E>(large.shape());
+        T outer = vc::empty<E>(large.shape(), large.layout());
 
         int s = CHUNK_SIZE+2*BORDER;
         E magic = -1;
@@ -2745,7 +2738,7 @@ struct thresholdedDistance
         int low = int(BORDER);
         int high = int(BORDER)+int(CHUNK_SIZE);
 
-        auto crop_outer = view(outer, xt::range(low,high),xt::range(low,high),xt::range(low,high));
+        auto crop_outer = vc::view(outer, {vc::range(low,high),vc::range(low,high),vc::range(low,high)});
 
         small = crop_outer;
     }
@@ -2753,7 +2746,7 @@ struct thresholdedDistance
 };
 
 
-QuadSurface *tracer(z5::Dataset *ds, float scale, ChunkCache<uint8_t> *cache, cv::Vec3f origin, const nlohmann::json &params, const std::string &cache_root, float voxelsize, std::vector<DirectionField> const &direction_fields, QuadSurface* resume_surf, const std::filesystem::path& tgt_path, const nlohmann::json& meta_params, const VCCollection &corrections)
+QuadSurface *tracer(zarr::Zarr *ds, float scale, ChunkCache<uint8_t> *cache, cv::Vec3f origin, const nlohmann::json &params, const std::string &cache_root, float voxelsize, std::vector<DirectionField> const &direction_fields, QuadSurface* resume_surf, const std::filesystem::path& tgt_path, const nlohmann::json& meta_params, const VCCollection &corrections)
 {
     std::unique_ptr<NeuralTracerConnection> neural_tracer;
     int pre_neural_gens = 0, neural_batch_size = 1;
@@ -2839,10 +2832,7 @@ QuadSurface *tracer(z5::Dataset *ds, float scale, ChunkCache<uint8_t> *cache, cv
 
             // Assert the direction-field was aligned by vc_ngrids --align-normals.
             try {
-                z5::filesystem::handle::File rootFile(zarr_root);
-                z5::filesystem::handle::Group root(rootFile, "");
-                nlohmann::json attrs;
-                z5::filesystem::readAttributes(root, attrs);
+                nlohmann::json attrs = zarr::readAttributes(zarr_root);
                 const bool aligned = attrs.value("align_normals", false);
                 if (!aligned) {
                     throw std::runtime_error("normal3d_zarr_path is not marked aligned (missing attrs.align_normals=true); run vc_ngrids --align-normals");
@@ -2857,10 +2847,7 @@ QuadSurface *tracer(z5::Dataset *ds, float scale, ChunkCache<uint8_t> *cache, cv
             const int vol_y = static_cast<int>(vol_shape_zyx.at(1));
             const int vol_x = static_cast<int>(vol_shape_zyx.at(2));
 
-            z5::filesystem::handle::Group dirs_group(zarr_root.string(), z5::FileMode::FileMode::r);
-            z5::filesystem::handle::Group x_group(dirs_group, "x");
-            z5::filesystem::handle::Dataset x_ds_handle(x_group, "0", delim);
-            auto x_ds = z5::filesystem::openDataset(x_ds_handle);
+            auto x_ds = zarr::openDataset(zarr_root / "x", "0");
             const auto nshape = x_ds->shape();
             if (nshape.size() != 3) {
                 throw std::runtime_error("normal3d x/0 dataset is not 3D");
@@ -2896,26 +2883,20 @@ QuadSurface *tracer(z5::Dataset *ds, float scale, ChunkCache<uint8_t> *cache, cv
 
             const float scale_factor = 1.0f / static_cast<float>(ratio);
 
-            std::vector<std::unique_ptr<z5::Dataset>> dss;
+            std::vector<std::unique_ptr<zarr::Zarr>> dss;
             for (auto dim : std::string("xyz")) {
-                z5::filesystem::handle::Group dim_group(dirs_group, std::string(&dim, 1));
-                z5::filesystem::handle::Dataset ds_handle(dim_group, std::to_string(scale_level), delim);
-                dss.push_back(z5::filesystem::openDataset(ds_handle));
+                dss.push_back(zarr::openDataset(zarr_root / std::string(&dim, 1), std::to_string(scale_level)));
             }
 
-            const std::string unique_id = std::to_string(std::hash<std::string>{}(dirs_group.path().string()));
+            const std::string unique_id = std::to_string(std::hash<std::string>{}(zarr_root.string()));
             trace_data.normal3d_field = std::make_unique<Chunked3dVec3fFromUint8>(std::move(dss), scale_factor, cache, cache_root, unique_id + "_n3d");
 
             // Optional normal-fit diagnostics (written by vc_ngrids) to modulate loss weights.
             // Expected layout: <root>/fit_rms/0 and <root>/fit_frac_short_paths/0 (uint8, ZYX).
             try {
-                z5::filesystem::handle::Group g_rms(dirs_group, "fit_rms");
-                z5::filesystem::handle::Dataset ds_rms_handle(g_rms, std::to_string(scale_level), delim);
-                auto ds_rms = z5::filesystem::openDataset(ds_rms_handle);
+                auto ds_rms = zarr::openDataset(zarr_root / "fit_rms", std::to_string(scale_level));
 
-                z5::filesystem::handle::Group g_frac(dirs_group, "fit_frac_short_paths");
-                z5::filesystem::handle::Dataset ds_frac_handle(g_frac, std::to_string(scale_level), delim);
-                auto ds_frac = z5::filesystem::openDataset(ds_frac_handle);
+                auto ds_frac = zarr::openDataset(zarr_root / "fit_frac_short_paths", std::to_string(scale_level));
 
                 trace_data.normal3d_fit_quality = std::make_unique<NormalFitQualityWeightField>(
                     std::move(ds_rms), std::move(ds_frac), scale_factor, cache, cache_root, unique_id + "_n3d_fitq");

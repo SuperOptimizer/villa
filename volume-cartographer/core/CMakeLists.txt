@@ -17,7 +17,9 @@ add_library(vc_core
         src/QuadSurface.cpp
         src/Render.cpp
         src/Tiff.cpp
+        src/Tensor.cpp
         src/Zarr.cpp
+        src/PyramidBuilder.cpp
         src/Geometry.cpp
         src/Thinning.cpp
         src/Umbilicus.cpp
@@ -32,13 +34,22 @@ target_link_libraries(vc_core
         opencv_calib3d
         opencv_video
         nlohmann_json::nlohmann_json
-        z5
         OpenMP::OpenMP_CXX
         TIFF::TIFF
+        Blosc::blosc
+        ZLIB::ZLIB
+        zstd::libzstd_shared
+        LZ4::lz4
+        BZip2::BZip2
+        LZMA::lzma
         #${CURL_LIBRARIES}
         #${OPENSSL_LIBRARIES}
-        #${ZLIB_LIBRARIES}
 )
+
+if(VC_WITH_VIDEO_CODECS)
+    target_link_libraries(vc_core PUBLIC FFmpeg::avcodec FFmpeg::avutil FFmpeg::swscale)
+    target_compile_definitions(vc_core PUBLIC VC_HAS_VIDEO_CODECS=1)
+endif()
 
 # Precompiled headers for faster builds
 if(VC_USE_PCH)
@@ -97,17 +108,9 @@ target_precompile_headers(vc_core PRIVATE
     <opencv2/imgcodecs.hpp>
     # Boost (used by CLI apps)
     <boost/program_options.hpp>
-    # z5/xtensor (zarr volume access - heavy templates)
-    <xtensor/containers/xarray.hpp>
-    <xtensor/containers/xadapt.hpp>
-    <xtensor/views/xview.hpp>
-    <xtensor/generators/xbuilder.hpp>
-    <z5/factory.hxx>
-    <z5/dataset.hxx>
-    <z5/attributes.hxx>
-    <z5/filesystem/handle.hxx>
-    <z5/filesystem/dataset.hxx>
-    <z5/multiarray/xtensor_access.hxx>
+    # zarr/tensor (volume access)
+    "vc/core/types/Tensor.hpp"
+    "vc/core/types/Zarr.hpp"
 )
 endif()
 

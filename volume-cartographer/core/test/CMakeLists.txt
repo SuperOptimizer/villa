@@ -7,3 +7,5 @@ endfunction()
 
 vc_add_test(test_version test_version.cpp)
 vc_add_test(test_geometry test_geometry.cpp)
+vc_add_test(test_tensor test_tensor.cpp)
+vc_add_test(test_zarr test_zarr.cpp)

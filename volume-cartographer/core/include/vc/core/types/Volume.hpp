@@ -7,15 +7,7 @@
 #include <vector>
 #include <nlohmann/json.hpp>
 
-// Forward declarations
-namespace z5 {
-    class Dataset;
-
-        namespace filesystem::handle {
-            class File;
-        }
-
-}
+#include "vc/core/types/Zarr.hpp"
 
 class Volume
 {
@@ -48,8 +40,9 @@ public:
     [[nodiscard]] std::array<int, 3> shape() const;
     [[nodiscard]] double voxelSize() const;
 
-    [[nodiscard]] z5::Dataset *zarrDataset(int level = 0) const;
+    [[nodiscard]] zarr::Zarr *zarrDataset(int level = 0) const;
     [[nodiscard]] size_t numScales() const;
+    [[nodiscard]] zarr::OMEZarr* omeZarr() const { return omeZarr_.get(); }
 
     static bool checkDir(std::filesystem::path path);
 
@@ -62,9 +55,7 @@ protected:
     int _height{0};
     int _slices{0};
 
-    std::unique_ptr<z5::filesystem::handle::File> zarrFile_;
-    std::vector<std::unique_ptr<z5::Dataset>> zarrDs_;
-    nlohmann::json zarrGroup_;
+    std::unique_ptr<zarr::OMEZarr> omeZarr_;
     void zarrOpen();
 
     void loadMetadata();
