@@ -20,6 +20,8 @@ add_library(vc_core
         src/Zarr.cpp
         src/cache/IOPool.cpp
         src/cache/DiskStore.cpp
+        src/cache/ChunkSource.cpp
+        src/cache/HttpMetadataFetcher.cpp
         src/Geometry.cpp
         src/Thinning.cpp
         src/Umbilicus.cpp
@@ -37,10 +39,10 @@ target_link_libraries(vc_core
         z5
         OpenMP::OpenMP_CXX
         TIFF::TIFF
-        #${CURL_LIBRARIES}
-        #${OPENSSL_LIBRARIES}
-        #${ZLIB_LIBRARIES}
+        CURL::libcurl
 )
+
+target_compile_definitions(vc_core PUBLIC VC_USE_CURL)
 
 # Precompiled headers for faster builds
 if(VC_USE_PCH)
