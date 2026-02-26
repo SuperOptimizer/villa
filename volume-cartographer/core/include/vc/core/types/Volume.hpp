@@ -158,11 +158,11 @@ public:
     // Block read (xtensor output, blocking)
     void readBlock(xt::xtensor<uint8_t, 3, xt::layout_type::column_major>& out,
                    const cv::Vec3i& offset,
-                   const vc::SampleParams& params);
+                   int level = 0);
 
     void readBlock(xt::xtensor<uint16_t, 3, xt::layout_type::column_major>& out,
                    const cv::Vec3i& offset,
-                   const vc::SampleParams& params);
+                   int level = 0);
 
     // Compute volume gradients at native surface resolution.
     [[nodiscard]] cv::Mat_<cv::Vec3f> computeGradients(const cv::Mat_<cv::Vec3f>& rawPoints,
@@ -205,7 +205,6 @@ protected:
     int _slices{0};
 
     std::vector<std::unique_ptr<vc::VcDataset>> zarrDs_;
-    nlohmann::json zarrGroup_;
     void zarrOpen();
 
     // Cache ownership
@@ -229,6 +228,9 @@ protected:
     ChunkBBox coordsToChunkBBox(const cv::Mat_<cv::Vec3f>& coords, int level) const;
 
     // Composite-aware chunk helpers: expand bbox by normal offsets
+    ChunkBBox compositeChunkBBox(const cv::Mat_<cv::Vec3f>& coords,
+                                 const cv::Mat_<cv::Vec3f>& normals,
+                                 int zStart, int zEnd, int level) const;
     bool allCompositeChunksCached(const cv::Mat_<cv::Vec3f>& coords,
                                   const cv::Mat_<cv::Vec3f>& normals,
                                   int zStart, int zEnd, int level) const;

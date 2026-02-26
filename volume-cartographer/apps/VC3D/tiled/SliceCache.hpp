@@ -1,10 +1,8 @@
 #pragma once
 
 #include <cstdint>
-#include <functional>
 #include <list>
 #include <mutex>
-#include <optional>
 #include <string>
 #include <unordered_map>
 
@@ -62,9 +60,6 @@ class SliceCache
 public:
     explicit SliceCache(size_t maxEntries = 2048);
 
-    // Look up a tile. Returns empty optional on miss.
-    std::optional<QPixmap> get(const SliceCacheKey& key);
-
     // Find best available: checks requested level, then coarser.
     // Returns {pixmap, level} where level is the actual pyramid level found,
     // or level = -1 on complete miss.
@@ -75,9 +70,6 @@ public:
 
     // Clear all entries.
     void clear();
-
-    // Remove entries matching a predicate.
-    void invalidate(const std::function<bool(const SliceCacheKey&)>& predicate);
 
     // Stats
     size_t size() const;

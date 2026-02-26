@@ -1,4 +1,5 @@
 #include "CTiledVolumeViewer.hpp"
+#include "tiled/FnvHash.hpp"
 
 #include "ViewerManager.hpp"
 #include "VCSettings.hpp"
@@ -110,8 +111,6 @@ CTiledVolumeViewer::CTiledVolumeViewer(CState* state,
     _renderController->setOverlayCallback([this]() { updateAllOverlays(); });
     _renderController->setZoomSettleCallback([this]() {
         fGraphicsView->resetTransform();
-        _renderScale = _camera.scale;
-        _renderSurfacePtr = _camera.surfacePtr;
         rebuildContentGrid();
         centerViewport();
         _camera.invalidate();
@@ -127,8 +126,8 @@ CTiledVolumeViewer::CTiledVolumeViewer(CState* state,
 CTiledVolumeViewer::~CTiledVolumeViewer()
 {
     delete _tileScene;
-    delete fGraphicsView;
-    delete _scene;
+    // fGraphicsView and _scene are parented to this QWidget and will be
+    // destroyed by Qt's parent-child ownership — do not delete them here.
 }
 
 // ============================================================================
@@ -251,9 +250,7 @@ void CTiledVolumeViewer::OnVolumeChanged(std::shared_ptr<Volume> vol)
     // For remote volumes with no surface, create a default PlaneSurface
     // centered in the volume so the axis-aligned viewers can render.
     // The segmentation viewer should stay blank until a segment is loaded.
-    bool isAxisAligned = (_surfName == "xy plane" || _surfName == "xz plane" || _surfName == "yz plane"
-                          || _surfName == "seg xz" || _surfName == "seg yz");
-    if (!_surfWeak.lock() && _volume && isAxisAligned) {
+    if (!_surfWeak.lock() && _volume && isAxisAlignedView()) {
         auto shape = _volume->shape();  // (z, y, x) at scale 0
         const auto& db = _volume->dataBounds();
         cv::Vec3f center;
@@ -277,8 +274,6 @@ void CTiledVolumeViewer::OnVolumeChanged(std::shared_ptr<Volume> vol)
     updateContentMinScale();
 
     // Initialize zoom debounce tracking
-    _renderScale = _camera.scale;
-    _renderSurfacePtr = _camera.surfacePtr;
 
     updateStatusLabel();
 
@@ -304,11 +299,11 @@ void CTiledVolumeViewer::onSurfaceChanged(std::string name, std::shared_ptr<Surf
         if (!surf) {
             clearAllOverlayGroups();
             _tileScene->sceneCleared();
-            _cursor = nullptr;
-            _centerMarker = nullptr;
+            _ov.cursor = nullptr;
+            _ov.centerMarker = nullptr;
             _scene->clear();
-            _intersectItems.clear();
-            _sliceVisItems.clear();
+            _ov.intersectItems.clear();
+            _ov.sliceVisItems.clear();
             _paths.clear();
             emit overlaysUpdated();
             // Grid will be rebuilt when new surface is set
@@ -346,15 +341,14 @@ void CTiledVolumeViewer::onVolumeClosing()
 {
     if (_surfName == "segmentation") {
         onSurfaceChanged(_surfName, nullptr);
-    } else if (_surfName == "xy plane" || _surfName == "xz plane" || _surfName == "yz plane"
-               || _surfName == "seg xz" || _surfName == "seg yz") {
+    } else if (isAxisAlignedView()) {
         clearAllOverlayGroups();
         _tileScene->sceneCleared();
-        _cursor = nullptr;
-        _centerMarker = nullptr;
+        _ov.cursor = nullptr;
+        _ov.centerMarker = nullptr;
         _scene->clear();
-        _intersectItems.clear();
-        _sliceVisItems.clear();
+        _ov.intersectItems.clear();
+        _ov.sliceVisItems.clear();
         _paths.clear();
         emit overlaysUpdated();
         _contentBounds = ContentBounds{};
@@ -386,8 +380,7 @@ void CTiledVolumeViewer::updateContentMinScale()
 
     float contentW = 0, contentH = 0;
 
-    if (_volume && (_surfName == "xy plane" || _surfName == "xz plane" || _surfName == "yz plane"
-                    || _surfName == "seg xz" || _surfName == "seg yz")) {
+    if (_volume && isAxisAlignedView()) {
         auto [w, h, d] = _volume->shape();
         const auto& db = _volume->dataBounds();
         if (db.valid) {
@@ -564,8 +557,6 @@ void CTiledVolumeViewer::panBy(int dx, int dy)
         _camera.surfacePtr[1] = std::clamp(_camera.surfacePtr[1], minV, maxV);
     }
 
-    _renderScale = _camera.scale;
-    _renderSurfacePtr = _camera.surfacePtr;
 
     centerViewport();
     submitRender();
@@ -613,8 +604,6 @@ void CTiledVolumeViewer::zoomStepsAt(int steps, const QPointF& scenePos)
     // Every stop change is significant — always do a full re-render
     _renderController->cancelZoomSettle();
     fGraphicsView->resetTransform();
-    _renderScale = _camera.scale;
-    _renderSurfacePtr = _camera.surfacePtr;
     rebuildContentGrid();
     centerViewport();
     _camera.invalidate();
@@ -771,6 +760,26 @@ void CTiledVolumeViewer::onResized()
 // Rendering
 // ============================================================================
 
+bool CTiledVolumeViewer::isAxisAlignedView() const
+{
+    return _surfName == "xy plane" || _surfName == "xz plane" || _surfName == "yz plane"
+           || _surfName == "seg xz" || _surfName == "seg yz";
+}
+
+bool CTiledVolumeViewer::clampToDataBounds(cv::Vec3f& lo, cv::Vec3f& hi) const
+{
+    if (!_volume) return false;
+    const auto& db = _volume->dataBounds();
+    if (!db.valid) return true;  // no bounds to clamp against — keep as-is
+    lo[0] = std::max(lo[0], static_cast<float>(db.minX));
+    lo[1] = std::max(lo[1], static_cast<float>(db.minY));
+    lo[2] = std::max(lo[2], static_cast<float>(db.minZ));
+    hi[0] = std::min(hi[0], static_cast<float>(db.maxX));
+    hi[1] = std::min(hi[1], static_cast<float>(db.maxY));
+    hi[2] = std::min(hi[2], static_cast<float>(db.maxZ));
+    return lo[0] <= hi[0] && lo[1] <= hi[1] && lo[2] <= hi[2];
+}
+
 void CTiledVolumeViewer::renderVisible(bool force)
 {
     if (isWindowMinimized()) {
@@ -781,34 +790,6 @@ void CTiledVolumeViewer::renderVisible(bool force)
         _camera.invalidate();
     }
     submitRender();
-}
-
-void CTiledVolumeViewer::renderAllTiles()
-{
-    auto surf = _surfWeak.lock();
-    if (!surf || !_volume || !_volume->zarrDataset()) return;
-    if (_tileScene->cols() == 0 || _tileScene->rows() == 0) return;
-
-    _tileScene->forEachTile([&](const TileKey& key) {
-        WorldTileKey wk = _contentBounds.worldKeyAt(key.col, key.row);
-        TileRenderParams params = buildRenderParams(wk);
-        TileRenderResult result = TileRenderer::renderTile(params, surf, _volume.get());
-
-        if (!result.image.isNull()) {
-            QPixmap pixmap = QPixmap::fromImage(
-                result.image, _skipImageFormatConv ? Qt::NoFormatConversion : Qt::AutoColor);
-            _tileScene->setTileWorld(wk, pixmap, _camera.epoch, static_cast<int8_t>(result.actualLevel));
-        }
-    });
-
-    // Update center marker
-    if (!_centerMarker) {
-        _centerMarker = _scene->addEllipse({-10, -10, 20, 20},
-            QPen(COLOR_FOCUS, 3, Qt::DashDotLine, Qt::RoundCap, Qt::RoundJoin));
-        _centerMarker->setZValue(11);
-    }
-    QPointF centerScene = _tileScene->surfaceToScene(_camera.surfacePtr[0], _camera.surfacePtr[1]);
-    _centerMarker->setPos(centerScene);
 }
 
 void CTiledVolumeViewer::submitRender()
@@ -825,17 +806,17 @@ void CTiledVolumeViewer::submitRender()
     QRectF vpRect = viewportSceneRect();
 
     // Update center marker
-    if (!_centerMarker) {
-        _centerMarker = _scene->addEllipse({-10, -10, 20, 20},
+    if (!_ov.centerMarker) {
+        _ov.centerMarker = _scene->addEllipse({-10, -10, 20, 20},
             QPen(COLOR_FOCUS, 3, Qt::DashDotLine, Qt::RoundCap, Qt::RoundJoin));
-        _centerMarker->setZValue(11);
+        _ov.centerMarker->setZValue(11);
     }
     QPointF centerScene = _tileScene->surfaceToScene(_camera.surfacePtr[0], _camera.surfacePtr[1]);
-    _centerMarker->setPos(centerScene);
+    _ov.centerMarker->setPos(centerScene);
 
     // Submit to async render controller
     auto buildParams = [this](const WorldTileKey& wk) { return buildRenderParams(wk); };
-    _renderController->scheduleRender(_camera, surf, _volume.get(), buildParams, vpRect);
+    _renderController->scheduleRender(_camera, surf, _volume, buildParams, vpRect);
 
     // Compute prefetch viewport: extend in pan direction for predictive prefetch
     QRectF prefetchRect = vpRect;
@@ -864,130 +845,117 @@ void CTiledVolumeViewer::submitRender()
 
     // Viewport-aware prefetch
     if (_volume->tieredCache()) {
+        cv::Vec3f lo, hi;
         auto* plane = dynamic_cast<PlaneSurface*>(surf.get());
-        if (plane) {
-            const float invScale = 1.0f / _camera.scale;
-            const float margin = TileScene::TILE_PX * invScale;
-
-            // Get viewport extent in surface params
-            cv::Vec2f vpTopLeft = _tileScene->sceneToSurface(QPointF(prefetchRect.left(), prefetchRect.top()));
-            cv::Vec2f vpBotRight = _tileScene->sceneToSurface(QPointF(prefetchRect.right(), prefetchRect.bottom()));
-
-            const float uMin = vpTopLeft[0] - margin * invScale;
-            const float uMax = vpBotRight[0] + margin * invScale;
-            const float vMin = vpTopLeft[1] - margin * invScale;
-            const float vMax = vpBotRight[1] + margin * invScale;
-
-            const cv::Vec3f o = plane->origin();
-            const cv::Vec3f bx = plane->basisX();
-            const cv::Vec3f by = plane->basisY();
-            const cv::Vec3f n = plane->normal(cv::Vec3f(0, 0, 0));
-
-            cv::Vec3f corners[4] = {
-                o + bx * uMin + by * vMin + n * _camera.zOff,
-                o + bx * uMax + by * vMin + n * _camera.zOff,
-                o + bx * uMin + by * vMax + n * _camera.zOff,
-                o + bx * uMax + by * vMax + n * _camera.zOff,
-            };
-
-            cv::Vec3f lo(std::numeric_limits<float>::max(),
-                         std::numeric_limits<float>::max(),
-                         std::numeric_limits<float>::max());
-            cv::Vec3f hi(std::numeric_limits<float>::lowest(),
-                         std::numeric_limits<float>::lowest(),
-                         std::numeric_limits<float>::lowest());
-            for (const auto& c : corners) {
-                for (int i = 0; i < 3; i++) {
-                    lo[i] = std::min(lo[i], c[i]);
-                    hi[i] = std::max(hi[i], c[i]);
-                }
-            }
-            const auto& db = _volume->dataBounds();
-            if (db.valid) {
-                lo[0] = std::max(lo[0], static_cast<float>(db.minX));
-                lo[1] = std::max(lo[1], static_cast<float>(db.minY));
-                lo[2] = std::max(lo[2], static_cast<float>(db.minZ));
-                hi[0] = std::min(hi[0], static_cast<float>(db.maxX));
-                hi[1] = std::min(hi[1], static_cast<float>(db.maxY));
-                hi[2] = std::min(hi[2], static_cast<float>(db.maxZ));
-                if (lo[0] > hi[0] || lo[1] > hi[1] || lo[2] > hi[2]) return;
-            }
-            _volume->prefetchWorldBBox(lo, hi, _camera.dsScaleIdx);
-        } else {
-            // Non-plane surfaces: compute bounding box from viewport corners
-            QRectF vp = prefetchRect;
-            cv::Vec2f corners2d[4] = {
-                _tileScene->sceneToSurface(QPointF(vp.left(), vp.top())),
-                _tileScene->sceneToSurface(QPointF(vp.right(), vp.top())),
-                _tileScene->sceneToSurface(QPointF(vp.left(), vp.bottom())),
-                _tileScene->sceneToSurface(QPointF(vp.right(), vp.bottom())),
-            };
-
-            // Generate 3D coords at each corner to get world-space bounding box
-            cv::Vec3f lo(std::numeric_limits<float>::max(),
-                         std::numeric_limits<float>::max(),
-                         std::numeric_limits<float>::max());
-            cv::Vec3f hi(std::numeric_limits<float>::lowest(),
-                         std::numeric_limits<float>::lowest(),
-                         std::numeric_limits<float>::lowest());
-
-            for (const auto& c2 : corners2d) {
-                cv::Mat_<cv::Vec3f> pt;
-                surf->gen(&pt, nullptr, cv::Size(1, 1), cv::Vec3f(0, 0, 0),
-                          _camera.scale,
-                          {c2[0] * _camera.scale, c2[1] * _camera.scale, _camera.zOff});
-                if (pt.empty()) continue;
-                const cv::Vec3f& v = pt(0, 0);
-                for (int i = 0; i < 3; i++) {
-                    lo[i] = std::min(lo[i], v[i]);
-                    hi[i] = std::max(hi[i], v[i]);
-                }
-            }
-
-            // Add margin for interpolation + scrolling
-            float margin = TileScene::TILE_PX / _camera.scale;
-            for (int i = 0; i < 3; i++) {
-                lo[i] -= margin;
-                hi[i] += margin;
-            }
-
-            const auto& db = _volume->dataBounds();
-            if (db.valid) {
-                lo[0] = std::max(lo[0], static_cast<float>(db.minX));
-                lo[1] = std::max(lo[1], static_cast<float>(db.minY));
-                lo[2] = std::max(lo[2], static_cast<float>(db.minZ));
-                hi[0] = std::min(hi[0], static_cast<float>(db.maxX));
-                hi[1] = std::min(hi[1], static_cast<float>(db.maxY));
-                hi[2] = std::min(hi[2], static_cast<float>(db.maxZ));
-                if (lo[0] > hi[0] || lo[1] > hi[1] || lo[2] > hi[2]) return;
-            }
+        bool ok = plane
+            ? computePlanePrefetchBBox(plane, prefetchRect, lo, hi)
+            : computeQuadPrefetchBBox(surf, prefetchRect, lo, hi);
+        if (ok) {
             _volume->prefetchWorldBBox(lo, hi, _camera.dsScaleIdx);
         }
     }
 }
 
+bool CTiledVolumeViewer::computePlanePrefetchBBox(PlaneSurface* plane,
+                                                   const QRectF& prefetchRect,
+                                                   cv::Vec3f& lo, cv::Vec3f& hi) const
+{
+    const float invScale = 1.0f / _camera.scale;
+    const float margin = TileScene::TILE_PX * invScale;
+
+    cv::Vec2f vpTopLeft = _tileScene->sceneToSurface(QPointF(prefetchRect.left(), prefetchRect.top()));
+    cv::Vec2f vpBotRight = _tileScene->sceneToSurface(QPointF(prefetchRect.right(), prefetchRect.bottom()));
+
+    const float uMin = vpTopLeft[0] - margin * invScale;
+    const float uMax = vpBotRight[0] + margin * invScale;
+    const float vMin = vpTopLeft[1] - margin * invScale;
+    const float vMax = vpBotRight[1] + margin * invScale;
+
+    const cv::Vec3f o = plane->origin();
+    const cv::Vec3f bx = plane->basisX();
+    const cv::Vec3f by = plane->basisY();
+    const cv::Vec3f n = plane->normal(cv::Vec3f(0, 0, 0));
+
+    cv::Vec3f corners[4] = {
+        o + bx * uMin + by * vMin + n * _camera.zOff,
+        o + bx * uMax + by * vMin + n * _camera.zOff,
+        o + bx * uMin + by * vMax + n * _camera.zOff,
+        o + bx * uMax + by * vMax + n * _camera.zOff,
+    };
+
+    lo = cv::Vec3f(std::numeric_limits<float>::max(),
+                   std::numeric_limits<float>::max(),
+                   std::numeric_limits<float>::max());
+    hi = cv::Vec3f(std::numeric_limits<float>::lowest(),
+                   std::numeric_limits<float>::lowest(),
+                   std::numeric_limits<float>::lowest());
+    for (const auto& c : corners) {
+        for (int i = 0; i < 3; i++) {
+            lo[i] = std::min(lo[i], c[i]);
+            hi[i] = std::max(hi[i], c[i]);
+        }
+    }
+    return clampToDataBounds(lo, hi);
+}
+
+bool CTiledVolumeViewer::computeQuadPrefetchBBox(const std::shared_ptr<Surface>& surf,
+                                                  const QRectF& prefetchRect,
+                                                  cv::Vec3f& lo, cv::Vec3f& hi) const
+{
+    cv::Vec2f corners2d[4] = {
+        _tileScene->sceneToSurface(QPointF(prefetchRect.left(), prefetchRect.top())),
+        _tileScene->sceneToSurface(QPointF(prefetchRect.right(), prefetchRect.top())),
+        _tileScene->sceneToSurface(QPointF(prefetchRect.left(), prefetchRect.bottom())),
+        _tileScene->sceneToSurface(QPointF(prefetchRect.right(), prefetchRect.bottom())),
+    };
+
+    lo = cv::Vec3f(std::numeric_limits<float>::max(),
+                   std::numeric_limits<float>::max(),
+                   std::numeric_limits<float>::max());
+    hi = cv::Vec3f(std::numeric_limits<float>::lowest(),
+                   std::numeric_limits<float>::lowest(),
+                   std::numeric_limits<float>::lowest());
+
+    for (const auto& c2 : corners2d) {
+        cv::Mat_<cv::Vec3f> pt;
+        surf->gen(&pt, nullptr, cv::Size(1, 1), cv::Vec3f(0, 0, 0),
+                  _camera.scale,
+                  {c2[0] * _camera.scale, c2[1] * _camera.scale, _camera.zOff});
+        if (pt.empty()) continue;
+        const cv::Vec3f& v = pt(0, 0);
+        for (int i = 0; i < 3; i++) {
+            lo[i] = std::min(lo[i], v[i]);
+            hi[i] = std::max(hi[i], v[i]);
+        }
+    }
+
+    // Add margin for interpolation + scrolling
+    float margin = TileScene::TILE_PX / _camera.scale;
+    for (int i = 0; i < 3; i++) {
+        lo[i] -= margin;
+        hi[i] += margin;
+    }
+
+    return clampToDataBounds(lo, hi);
+}
+
 void CTiledVolumeViewer::updateParamsHash()
 {
     // Simple hash combining rendering parameters that affect output
-    size_t h = 14695981039346656037ULL;
-    auto mix = [&h](size_t val) {
-        h ^= val;
-        h *= 1099511628211ULL;
-    };
+    uint64_t h = fnv::BASIS;
+    fnv::mix(h, std::hash<float>{}(_baseWindowLow));
+    fnv::mix(h, std::hash<float>{}(_baseWindowHigh));
+    fnv::mix(h, std::hash<bool>{}(_stretchValues));
+    fnv::mix(h, std::hash<std::string>{}(_baseColormapId));
+    fnv::mix(h, std::hash<bool>{}(_useFastInterpolation));
+    fnv::mix(h, std::hash<bool>{}(_compositeSettings.enabled));
+    fnv::mix(h, std::hash<int>{}(_compositeSettings.layersFront));
+    fnv::mix(h, std::hash<int>{}(_compositeSettings.layersBehind));
+    fnv::mix(h, std::hash<bool>{}(_compositeSettings.planeEnabled));
+    fnv::mix(h, std::hash<std::string>{}(_compositeSettings.params.method));
+    fnv::mix(h, std::hash<uint8_t>{}(_compositeSettings.params.isoCutoff));
 
-    mix(std::hash<float>{}(_baseWindowLow));
-    mix(std::hash<float>{}(_baseWindowHigh));
-    mix(std::hash<bool>{}(_stretchValues));
-    mix(std::hash<std::string>{}(_baseColormapId));
-    mix(std::hash<bool>{}(_useFastInterpolation));
-    mix(std::hash<bool>{}(_compositeSettings.enabled));
-    mix(std::hash<int>{}(_compositeSettings.layersFront));
-    mix(std::hash<int>{}(_compositeSettings.layersBehind));
-    mix(std::hash<bool>{}(_compositeSettings.planeEnabled));
-    mix(std::hash<std::string>{}(_compositeSettings.params.method));
-    mix(std::hash<uint8_t>{}(_compositeSettings.params.isoCutoff));
-
-    _renderController->setParamsHash(static_cast<uint64_t>(h));
+    _renderController->setParamsHash(h);
 }
 
 TileRenderParams CTiledVolumeViewer::buildRenderParams(const WorldTileKey& wk) const
@@ -995,9 +963,6 @@ TileRenderParams CTiledVolumeViewer::buildRenderParams(const WorldTileKey& wk) c
     TileRenderParams params;
     params.worldKey = wk;
     params.epoch = _camera.epoch;
-
-    auto surf = _surfWeak.lock();
-    params.isPlaneSurface = surf && dynamic_cast<PlaneSurface*>(surf.get()) != nullptr;
 
     // Surface parameter ROI from world tile coordinates
     params.surfaceROI.x = wk.worldCol * _contentBounds.worldTileSize;
@@ -1019,7 +984,6 @@ TileRenderParams CTiledVolumeViewer::buildRenderParams(const WorldTileKey& wk) c
     params.colormapId = _baseColormapId;
     params.useFastInterpolation = _useFastInterpolation;
     params.compositeSettings = _compositeSettings;
-    params.isoCutoff = _compositeSettings.params.isoCutoff;
 
     return params;
 }
@@ -1031,54 +995,24 @@ TileRenderParams CTiledVolumeViewer::buildRenderParams(const WorldTileKey& wk) c
 QPointF CTiledVolumeViewer::volumeToScene(const cv::Vec3f& vol_point)
 {
     auto surf = _surfWeak.lock();
-    if (!surf) return QPointF();
-
-    PlaneSurface* plane = dynamic_cast<PlaneSurface*>(surf.get());
-    QuadSurface* quad = dynamic_cast<QuadSurface*>(surf.get());
-
-    if (plane) {
-        cv::Vec3f surfPos = plane->project(vol_point, 1.0, 1.0);
-        return _tileScene->surfaceToScene(surfPos[0], surfPos[1]);
-    } else if (quad) {
-        cv::Vec3f ptr(0, 0, 0);
-        auto* patchIndex = _viewerManager ? _viewerManager->surfacePatchIndex() : nullptr;
-        surf->pointTo(ptr, vol_point, 4.0, 100, patchIndex);
-        cv::Vec3f loc = surf->loc(ptr);
-        return _tileScene->surfaceToScene(loc[0], loc[1]);
-    }
-
-    return QPointF();
+    auto* patchIndex = _viewerManager ? _viewerManager->surfacePatchIndex() : nullptr;
+    return tiledVolumeToScene(surf.get(), _tileScene, patchIndex, vol_point);
 }
 
 cv::Vec3f CTiledVolumeViewer::sceneToVolume(const QPointF& scenePoint) const
 {
     cv::Vec3f p, n;
-    if (sceneToVolumeHelper(p, n, scenePoint)) {
+    if (sceneToVolumePN(p, n, scenePoint)) {
         return p;
     }
     return {0.0f, 0.0f, 0.0f};
 }
 
-bool CTiledVolumeViewer::sceneToVolumeHelper(cv::Vec3f& p, cv::Vec3f& n,
-                                              const QPointF& scenePos) const
+bool CTiledVolumeViewer::sceneToVolumePN(cv::Vec3f& p, cv::Vec3f& n,
+                                          const QPointF& scenePos) const
 {
     auto surf = _surfWeak.lock();
-    if (!surf) {
-        p = cv::Vec3f(0, 0, 0);
-        n = cv::Vec3f(0, 0, 1);
-        return false;
-    }
-
-    try {
-        cv::Vec2f surfParam = _tileScene->sceneToSurface(scenePos);
-        cv::Vec3f surfLoc = {surfParam[0], surfParam[1], 0};
-        cv::Vec3f ptr(0, 0, 0);
-        n = surf->normal(ptr, surfLoc);
-        p = surf->coord(ptr, surfLoc);
-    } catch (const std::exception&) {
-        return false;
-    }
-    return true;
+    return tiledSceneToVolume(surf.get(), _tileScene, scenePos, p, n);
 }
 
 // ============================================================================
@@ -1102,12 +1036,12 @@ void CTiledVolumeViewer::onCursorMove(QPointF scene_loc)
     }
 
     cv::Vec3f p, n;
-    if (!sceneToVolumeHelper(p, n, scene_loc)) {
-        if (_cursor) _cursor->hide();
+    if (!sceneToVolumePN(p, n, scene_loc)) {
+        if (_ov.cursor) _ov.cursor->hide();
     } else {
-        if (_cursor) {
-            _cursor->show();
-            _cursor->setPos(scene_loc);
+        if (_ov.cursor) {
+            _ov.cursor->show();
+            _ov.cursor->setPos(scene_loc);
         }
 
         POI* cursor = _state->poi("cursor");
@@ -1154,7 +1088,7 @@ void CTiledVolumeViewer::onVolumeClicked(QPointF scene_loc, Qt::MouseButton butt
     if (_draggedPointId != 0) return;
 
     cv::Vec3f p, n;
-    if (!sceneToVolumeHelper(p, n, scene_loc)) return;
+    if (!sceneToVolumePN(p, n, scene_loc)) return;
 
     if (buttons == Qt::LeftButton) {
         bool isShift = modifiers.testFlag(Qt::ShiftModifier);
@@ -1202,7 +1136,7 @@ void CTiledVolumeViewer::onMousePress(QPointF scene_loc, Qt::MouseButton button,
     }
 
     cv::Vec3f p, n;
-    if (sceneToVolumeHelper(p, n, scene_loc)) {
+    if (sceneToVolumePN(p, n, scene_loc)) {
         _lastScenePos = scene_loc;
         sendMousePressVolume(p, n, button, modifiers);
     }
@@ -1216,7 +1150,7 @@ void CTiledVolumeViewer::onMouseMove(QPointF scene_loc, Qt::MouseButtons buttons
 
     if ((buttons & Qt::LeftButton) && _draggedPointId != 0) {
         cv::Vec3f p, n;
-        if (sceneToVolumeHelper(p, n, scene_loc)) {
+        if (sceneToVolumePN(p, n, scene_loc)) {
             if (auto pointOpt = _pointCollection->getPoint(_draggedPointId)) {
                 ColPoint updated = *pointOpt;
                 updated.p = p;
@@ -1226,7 +1160,7 @@ void CTiledVolumeViewer::onMouseMove(QPointF scene_loc, Qt::MouseButtons buttons
     } else {
         if (!surf) return;
         cv::Vec3f p, n;
-        if (!sceneToVolumeHelper(p, n, scene_loc)) return;
+        if (!sceneToVolumePN(p, n, scene_loc)) return;
         _lastScenePos = scene_loc;
         emit sendMouseMoveVolume(p, buttons, modifiers);
     }
@@ -1242,7 +1176,7 @@ void CTiledVolumeViewer::onMouseRelease(QPointF scene_loc, Qt::MouseButton butto
     }
 
     cv::Vec3f p, n;
-    if (sceneToVolumeHelper(p, n, scene_loc)) {
+    if (sceneToVolumePN(p, n, scene_loc)) {
         const auto& segmentation = activeSegmentationHandle();
         if (dynamic_cast<PlaneSurface*>(surf.get())) {
             emit sendMouseReleaseVolume(p, button, modifiers);
@@ -1302,7 +1236,7 @@ void CTiledVolumeViewer::onPOIChanged(std::string name, POI* poi)
 
         // Position cursor in canvas coords
         QPointF scenePos = volumeToScene(poi->p);
-        if (!_cursor) {
+        if (!_ov.cursor) {
             // Create cursor item
             QPen pen(QBrush(COLOR_CURSOR), 2);
             QGraphicsLineItem* parent = new QGraphicsLineItem(-10, 0, -5, 0);
@@ -1311,8 +1245,8 @@ void CTiledVolumeViewer::onPOIChanged(std::string name, POI* poi)
             auto* l1 = new QGraphicsLineItem(10, 0, 5, 0, parent); l1->setPen(pen);
             auto* l2 = new QGraphicsLineItem(0, -10, 0, -5, parent); l2->setPen(pen);
             auto* l3 = new QGraphicsLineItem(0, 10, 0, 5, parent); l3->setPen(pen);
-            _cursor = parent;
-            _scene->addItem(_cursor);
+            _ov.cursor = parent;
+            _scene->addItem(_ov.cursor);
         }
 
         // Simple distance-based opacity
@@ -1320,14 +1254,14 @@ void CTiledVolumeViewer::onPOIChanged(std::string name, POI* poi)
         if (slicePlane) {
             float dist = slicePlane->pointDist(poi->p);
             if (dist < 20.0f / _camera.scale) {
-                _cursor->setPos(scenePos);
-                _cursor->setOpacity(1.0 - dist * _camera.scale / 20.0);
+                _ov.cursor->setPos(scenePos);
+                _ov.cursor->setOpacity(1.0 - dist * _camera.scale / 20.0);
             } else {
-                _cursor->setOpacity(0.0);
+                _ov.cursor->setOpacity(0.0);
             }
         } else {
-            _cursor->setPos(scenePos);
-            _cursor->setOpacity(1.0);
+            _ov.cursor->setPos(scenePos);
+            _ov.cursor->setOpacity(1.0);
         }
     }
 }
@@ -1339,17 +1273,6 @@ void CTiledVolumeViewer::onPOIChanged(std::string name, POI* poi)
 void CTiledVolumeViewer::updateStatusLabel()
 {
     QString status = QString("%1x").arg(_camera.scale, 0, 'f', 2);
-
-    auto surf = _surfWeak.lock();
-    if (surf) {
-        if (dynamic_cast<PlaneSurface*>(surf.get())) {
-            cv::Vec3f center(0, 0, 0);
-            status += QString(" ctr(%1,%2,%3)")
-                .arg(center[0], 0, 'f', 0)
-                .arg(center[1], 0, 'f', 0)
-                .arg(center[2], 0, 'f', 0);
-        }
-    }
 
     status += QString(" z=%1").arg(_camera.zOff, 0, 'f', 1);
 
@@ -1508,7 +1431,7 @@ void CTiledVolumeViewer::setCompositeRenderSettings(const CompositeRenderSetting
     auto surf = _surfWeak.lock();
     if (_volume && surf) {
         _camera.invalidate();
-        _renderController->onParamsChanged(_camera, surf, _volume.get(),
+        _renderController->onParamsChanged(_camera, surf, _volume,
             [this](const WorldTileKey& wk) { return buildRenderParams(wk); },
             viewportSceneRect());
     }
@@ -1569,15 +1492,15 @@ void CTiledVolumeViewer::setSurfaceOverlapThreshold(float threshold) { _surfaceO
 void CTiledVolumeViewer::setOverlayGroup(const std::string& key, const std::vector<QGraphicsItem*>& items)
 {
     clearOverlayGroup(key);
-    _overlayGroups[key] = items;
+    _ov.groups[key] = items;
     // Items are already added to the scene by applyPrimitives().
     // Do NOT re-add here (matches CVolumeViewer behavior).
 }
 
 void CTiledVolumeViewer::clearOverlayGroup(const std::string& key)
 {
-    auto it = _overlayGroups.find(key);
-    if (it == _overlayGroups.end()) return;
+    auto it = _ov.groups.find(key);
+    if (it == _ov.groups.end()) return;
     for (auto* item : it->second) {
         if (!item) continue;
         if (item->scene()) {
@@ -1585,12 +1508,12 @@ void CTiledVolumeViewer::clearOverlayGroup(const std::string& key)
         }
         delete item;
     }
-    _overlayGroups.erase(it);
+    _ov.groups.erase(it);
 }
 
 void CTiledVolumeViewer::clearAllOverlayGroups()
 {
-    for (auto& [key, items] : _overlayGroups) {
+    for (auto& [key, items] : _ov.groups) {
         for (auto* item : items) {
             if (!item) continue;
             if (item->scene()) {
@@ -1599,7 +1522,7 @@ void CTiledVolumeViewer::clearAllOverlayGroups()
             delete item;
         }
     }
-    _overlayGroups.clear();
+    _ov.groups.clear();
 }
 
 void CTiledVolumeViewer::invalidateOverlays()
@@ -1620,11 +1543,11 @@ void CTiledVolumeViewer::updateAllOverlays()
 void CTiledVolumeViewer::renderIntersections() { /* Phase 4 */ }
 void CTiledVolumeViewer::invalidateVis()
 {
-    for (auto* item : _sliceVisItems) {
+    for (auto* item : _ov.sliceVisItems) {
         _scene->removeItem(item);
         delete item;
     }
-    _sliceVisItems.clear();
+    _ov.sliceVisItems.clear();
 }
 void CTiledVolumeViewer::invalidateIntersect(const std::string& /*name*/) { /* Phase 4 */ }
 
@@ -1654,10 +1577,10 @@ void CTiledVolumeViewer::onDrawingModeActive(bool active, float brushSize, bool 
     _drawingModeActive = active;
     _brushSize = brushSize;
     _brushIsSquare = isSquare;
-    if (_cursor) {
-        _scene->removeItem(_cursor);
-        delete _cursor;
-        _cursor = nullptr;
+    if (_ov.cursor) {
+        _scene->removeItem(_ov.cursor);
+        delete _ov.cursor;
+        _ov.cursor = nullptr;
     }
     POI* cursor = _state->poi("cursor");
     if (cursor) onPOIChanged("cursor", cursor);

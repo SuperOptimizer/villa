@@ -37,7 +37,7 @@ public:
     //   - Cache miss -> submit to background pool
     void onCameraChanged(const TiledViewerCamera& camera,
                          const std::shared_ptr<Surface>& surface,
-                         Volume* volume,
+                         const std::shared_ptr<Volume>& volume,
                          const std::function<TileRenderParams(const WorldTileKey&)>& buildParams,
                          const QRectF& viewportRect);
 
@@ -45,7 +45,7 @@ public:
     // Clears the slice cache and re-renders everything.
     void onParamsChanged(const TiledViewerCamera& camera,
                          const std::shared_ptr<Surface>& surface,
-                         Volume* volume,
+                         const std::shared_ptr<Volume>& volume,
                          const std::function<TileRenderParams(const WorldTileKey&)>& buildParams,
                          const QRectF& viewportRect);
 
@@ -53,7 +53,7 @@ public:
     // Rapid calls coalesce into a single onCameraChanged().
     void scheduleRender(const TiledViewerCamera& camera,
                         const std::shared_ptr<Surface>& surface,
-                        Volume* volume,
+                        const std::shared_ptr<Volume>& volume,
                         const std::function<TileRenderParams(const WorldTileKey&)>& buildParams,
                         const QRectF& viewportRect);
 
@@ -117,14 +117,14 @@ private:
     // Last render state for refinement re-submission
     TiledViewerCamera _lastCamera;
     std::shared_ptr<Surface> _lastSurface;
-    Volume* _lastVolume = nullptr;
+    std::shared_ptr<Volume> _lastVolume;
     std::function<TileRenderParams(const WorldTileKey&)> _lastBuildParams;
 
     // Pending state for coalescing rapid viewport changes
     bool _pendingDirty = false;
     TiledViewerCamera _pendingCamera;
     std::shared_ptr<Surface> _pendingSurface;
-    Volume* _pendingVolume = nullptr;
+    std::shared_ptr<Volume> _pendingVolume;
     std::function<TileRenderParams(const WorldTileKey&)> _pendingBuildParams;
     QRectF _pendingViewportRect;
 

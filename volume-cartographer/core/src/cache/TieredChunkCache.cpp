@@ -1,25 +1,12 @@
 #include "vc/core/cache/TieredChunkCache.hpp"
+#include "vc/core/cache/CacheDebugLog.hpp"
 
 #include <algorithm>
 #include <chrono>
-#include <cstdio>
-#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 
 namespace vc::cache {
-
-static FILE* debugLog()
-{
-    static FILE* f = [] () -> FILE* {
-        const char* path = std::getenv("VC_CACHE_DEBUG_LOG");
-        if (!path || path[0] == '\0') return nullptr;
-        FILE* fp = std::fopen(path, "w");
-        if (fp) std::setvbuf(fp, nullptr, _IOLBF, 0);  // line-buffered
-        return fp;
-    }();
-    return f;
-}
 
 TieredChunkCache::TieredChunkCache(
     Config config,
@@ -43,7 +30,7 @@ TieredChunkCache::TieredChunkCache(
             if (diskData && !diskData->empty()) {
                 statColdHits_.fetch_add(1, std::memory_order_relaxed);
                 auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - t0).count();
-                if (auto* log = debugLog())
+                if (auto* log = cacheDebugLog())
                     std::fprintf(log, "FETCH cold-hit lvl=%d (%d,%d,%d) bytes=%zu %ldms\n",
                                  key.level, key.iz, key.iy, key.ix, diskData->size(), ms);
                 return std::move(*diskData);
@@ -58,7 +45,7 @@ TieredChunkCache::TieredChunkCache(
         try {
             data = source_->fetch(key);
         } catch (const std::exception& e) {
-            if (auto* log = debugLog())
+            if (auto* log = cacheDebugLog())
                 std::fprintf(log, "FETCH ice-error lvl=%d (%d,%d,%d) %s\n",
                              key.level, key.iz, key.iy, key.ix, e.what());
             throw;
@@ -67,7 +54,7 @@ TieredChunkCache::TieredChunkCache(
         auto fetchMs = std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count();
 
         if (data.empty()) {
-            if (auto* log = debugLog())
+            if (auto* log = cacheDebugLog())
                 std::fprintf(log, "FETCH ice-empty lvl=%d (%d,%d,%d) %ldms\n",
                              key.level, key.iz, key.iy, key.ix, fetchMs);
             return {};
@@ -80,7 +67,7 @@ TieredChunkCache::TieredChunkCache(
             diskStore_->put(config_.volumeId, key, data);
         }
         auto totalMs = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - t0).count();
-        if (auto* log = debugLog())
+        if (auto* log = cacheDebugLog())
             std::fprintf(log, "FETCH ice-ok lvl=%d (%d,%d,%d) bytes=%zu fetch=%ldms total=%ldms\n",
                          key.level, key.iz, key.iy, key.ix, data.size(), fetchMs, totalMs);
 
@@ -99,7 +86,7 @@ TieredChunkCache::TieredChunkCache(
                     }
                     negativeCache_.insert(key);
                 }
-                if (auto* log = debugLog())
+                if (auto* log = cacheDebugLog())
                     std::fprintf(log, "COMPLETE empty lvl=%d (%d,%d,%d) [negative cached]\n",
                                  key.level, key.iz, key.iy, key.ix);
                 return;
@@ -127,11 +114,11 @@ TieredChunkCache::TieredChunkCache(
                     size_t decompBytes = data->totalBytes();
                     hotPut(key, std::move(data), shouldPin);
                     auto totalMs = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - t0).count();
-                    if (auto* log = debugLog())
+                    if (auto* log = cacheDebugLog())
                         std::fprintf(log, "COMPLETE hot-put lvl=%d (%d,%d,%d) decompBytes=%zu decomp=%ldms total=%ldms\n",
                                      key.level, key.iz, key.iy, key.ix, decompBytes, decompMs, totalMs);
                 } else {
-                    if (auto* log = debugLog())
+                    if (auto* log = cacheDebugLog())
                         std::fprintf(log, "COMPLETE decompress-fail lvl=%d (%d,%d,%d)\n",
                                      key.level, key.iz, key.iy, key.ix);
                 }
@@ -143,9 +130,6 @@ TieredChunkCache::TieredChunkCache(
             // This batches rapid chunk arrivals into a single notification.
             if (!chunkArrivedFlag_.exchange(true, std::memory_order_acq_rel)) {
                 std::lock_guard cbLock(callbackMutex_);
-                if (chunkReadyCb_) {
-                    chunkReadyCb_(key);
-                }
                 for (const auto& [id, cb] : chunkReadyListeners_) {
                     cb(key);
                 }
@@ -322,11 +306,13 @@ void TieredChunkCache::prefetchRegion(
             }
         }
     }
-    static std::atomic<int> prefetchLogCount{0};
-    int n = prefetchLogCount.fetch_add(1, std::memory_order_relaxed);
-    if (n < 5) {
-        std::fprintf(stderr, "[TILED] prefetchRegion: level=%d range=(%d-%d,%d-%d,%d-%d) checked=%d toSubmit=%zu\n",
-                     level, iz0, iz1, iy0, iy1, ix0, ix1, totalChecked, keys.size());
+    if (auto* log = cacheDebugLog()) {
+        static std::atomic<int> prefetchLogCount{0};
+        int n = prefetchLogCount.fetch_add(1, std::memory_order_relaxed);
+        if (n < 5) {
+            std::fprintf(log, "prefetchRegion: level=%d range=(%d-%d,%d-%d,%d-%d) checked=%d toSubmit=%zu\n",
+                         level, iz0, iz1, iy0, iy1, ix0, ix1, totalChecked, keys.size());
+        }
     }
     if (!keys.empty()) {
         ioPool_.submit(keys);
@@ -374,8 +360,9 @@ void TieredChunkCache::pinLevel(
                 failed++;
             }
         }
-        std::fprintf(stderr, "[TILED] pinLevel: level=%d total=%zu pinned=%d failed=%d\n",
-                     level, keys.size(), pinned, failed);
+        if (auto* log = cacheDebugLog())
+            std::fprintf(log, "pinLevel: level=%d total=%zu pinned=%d failed=%d\n",
+                         level, keys.size(), pinned, failed);
     } else {
         // Register keys as pending pin, then submit for background loading
         {
@@ -527,13 +514,6 @@ void TieredChunkCache::removeChunkReadyListener(ChunkReadyCallbackId id)
     chunkReadyListeners_.erase(it, chunkReadyListeners_.end());
 }
 
-void TieredChunkCache::setChunkReadyCallback(ChunkReadyCallback cb)
-{
-    std::lock_guard lock(callbackMutex_);
-    chunkReadyListeners_.clear();
-    chunkReadyCb_ = std::move(cb);
-}
-
 void TieredChunkCache::clearChunkArrivedFlag()
 {
     chunkArrivedFlag_.store(false, std::memory_order_release);
@@ -560,17 +540,6 @@ auto TieredChunkCache::stats() const -> Stats
     }
     s.ioPending = ioPool_.pendingCount();
     return s;
-}
-
-void TieredChunkCache::resetStats()
-{
-    statHotHits_.store(0, std::memory_order_relaxed);
-    statWarmHits_.store(0, std::memory_order_relaxed);
-    statColdHits_.store(0, std::memory_order_relaxed);
-    statIceFetches_.store(0, std::memory_order_relaxed);
-    statMisses_.store(0, std::memory_order_relaxed);
-    statHotEvictions_.store(0, std::memory_order_relaxed);
-    statWarmEvictions_.store(0, std::memory_order_relaxed);
 }
 
 // =============================================================================
@@ -719,8 +688,11 @@ void TieredChunkCache::warmEvictIfNeeded()
 {
     if (config_.warmMaxBytes == 0) return;
 
-    std::unique_lock lock(warmMutex_);
-    if (warmBytes_ <= config_.warmMaxBytes) return;
+    // Fast check without exclusive lock
+    {
+        std::shared_lock lock(warmMutex_);
+        if (warmBytes_ <= config_.warmMaxBytes) return;
+    }
 
     struct Candidate {
         ChunkKey key;
@@ -728,25 +700,44 @@ void TieredChunkCache::warmEvictIfNeeded()
         uint64_t generation;
     };
 
+    // Snapshot under shared lock
     std::vector<Candidate> candidates;
-    candidates.reserve(warm_.size());
-    for (const auto& [k, e] : warm_) {
-        candidates.push_back({k, e.chunk.data.size(), e.generation});
+    size_t currentBytes;
+    {
+        std::shared_lock lock(warmMutex_);
+        currentBytes = warmBytes_;
+        if (currentBytes <= config_.warmMaxBytes) return;
+        candidates.reserve(warm_.size());
+        for (const auto& [k, e] : warm_) {
+            candidates.push_back({k, e.chunk.data.size(), e.generation});
+        }
     }
 
+    // Sort outside lock
     std::sort(candidates.begin(), candidates.end(),
               [](const Candidate& a, const Candidate& b) {
                   return a.generation < b.generation;
               });
 
     size_t target = config_.warmMaxBytes * 15 / 16;
+    std::vector<ChunkKey> toRemove;
+    size_t evictedBytes = 0;
     for (const auto& c : candidates) {
-        if (warmBytes_ <= target) break;
-        auto it = warm_.find(c.key);
-        if (it != warm_.end()) {
-            warmBytes_ -= it->second.chunk.data.size();
-            warm_.erase(it);
-            statWarmEvictions_.fetch_add(1, std::memory_order_relaxed);
+        if (currentBytes - evictedBytes <= target) break;
+        toRemove.push_back(c.key);
+        evictedBytes += c.bytes;
+    }
+
+    // Re-acquire for erasure
+    if (!toRemove.empty()) {
+        std::unique_lock lock(warmMutex_);
+        for (const auto& k : toRemove) {
+            auto it = warm_.find(k);
+            if (it != warm_.end()) {
+                warmBytes_ -= it->second.chunk.data.size();
+                warm_.erase(it);
+                statWarmEvictions_.fetch_add(1, std::memory_order_relaxed);
+            }
         }
     }
 }
@@ -820,32 +811,6 @@ ChunkDataPtr TieredChunkCache::loadFull(const ChunkKey& key)
     return promoteFromIce(key);
 }
 
-void TieredChunkCache::onIOComplete(
-    const ChunkKey& key, std::vector<uint8_t>&& compressed)
-{
-    if (compressed.empty()) return;
-
-    warmPut(key, std::move(compressed));
-
-    auto warmEntry = warmGet(key);
-    if (warmEntry && decompress_) {
-        auto data = decompress_(warmEntry->data, key);
-        if (data) {
-            hotPut(key, std::move(data));
-        }
-    }
-
-    {
-        std::lock_guard cbLock(callbackMutex_);
-        if (chunkReadyCb_) {
-            chunkReadyCb_(key);
-        }
-        for (const auto& [id, cb] : chunkReadyListeners_) {
-            cb(key);
-        }
-    }
-}
-
 // =============================================================================
 // Negative cache persistence
 // =============================================================================
@@ -866,8 +831,8 @@ void TieredChunkCache::loadNegativeCache()
         auto age = std::chrono::system_clock::now() - sctp;
         constexpr auto maxAge = std::chrono::hours(7 * 24);
         if (age > maxAge) {
-            std::fprintf(stderr,
-                "[TILED] Negative cache file older than 7 days, skipping load\n");
+            if (auto* log = cacheDebugLog())
+                std::fprintf(log, "Negative cache file older than 7 days, skipping load\n");
             std::filesystem::remove(path, ec);
             return;
         }
@@ -886,7 +851,8 @@ void TieredChunkCache::loadNegativeCache()
         count++;
     }
     if (count > 0) {
-        std::fprintf(stderr, "[TILED] Loaded %zu negative cache entries from disk\n", count);
+        if (auto* log = cacheDebugLog())
+            std::fprintf(log, "Loaded %zu negative cache entries from disk\n", count);
     }
 }
 
@@ -906,8 +872,9 @@ void TieredChunkCache::saveNegativeCache() const
         f.write(reinterpret_cast<const char*>(&iy), 4);
         f.write(reinterpret_cast<const char*>(&ix), 4);
     }
-    std::fprintf(stderr, "[TILED] Saved %zu negative cache entries to disk\n",
-                 negativeCache_.size());
+    if (auto* log = cacheDebugLog())
+        std::fprintf(log, "Saved %zu negative cache entries to disk\n",
+                     negativeCache_.size());
 }
 
 }  // namespace vc::cache

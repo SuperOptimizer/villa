@@ -43,7 +43,7 @@ void TileRenderController::ensureTickRunning()
 void TileRenderController::onCameraChanged(
     const TiledViewerCamera& camera,
     const std::shared_ptr<Surface>& surface,
-    Volume* volume,
+    const std::shared_ptr<Volume>& volume,
     const std::function<TileRenderParams(const WorldTileKey&)>& buildParams,
     const QRectF& viewportRect)
 {
@@ -89,7 +89,7 @@ void TileRenderController::onCameraChanged(
 void TileRenderController::onParamsChanged(
     const TiledViewerCamera& camera,
     const std::shared_ptr<Surface>& surface,
-    Volume* volume,
+    const std::shared_ptr<Volume>& volume,
     const std::function<TileRenderParams(const WorldTileKey&)>& buildParams,
     const QRectF& viewportRect)
 {
@@ -100,7 +100,7 @@ void TileRenderController::onParamsChanged(
 void TileRenderController::scheduleRender(
     const TiledViewerCamera& camera,
     const std::shared_ptr<Surface>& surface,
-    Volume* volume,
+    const std::shared_ptr<Volume>& volume,
     const std::function<TileRenderParams(const WorldTileKey&)>& buildParams,
     const QRectF& viewportRect)
 {
@@ -170,7 +170,7 @@ void TileRenderController::drainResults()
                         _pendingVolume, _pendingBuildParams, _pendingViewportRect);
         // Release references after dispatch
         _pendingSurface.reset();
-        _pendingVolume = nullptr;
+        _pendingVolume.reset();
         _pendingBuildParams = nullptr;
     }
 }

@@ -765,8 +765,8 @@ std::vector<std::pair<int, int>> SegmentationModule::filterVerticesForAutoApprov
         if (_autoApprovalMaxDistance > 0.0f && dragCenter.has_value()) {
             const int dr = edit.row - dragCenter->first;
             const int dc = edit.col - dragCenter->second;
-            const float gridDist = std::sqrt(static_cast<float>(dr * dr + dc * dc));
-            if (gridDist > _autoApprovalMaxDistance) {
+            const float gridDistSq = static_cast<float>(dr * dr + dc * dc);
+            if (gridDistSq > _autoApprovalMaxDistance * _autoApprovalMaxDistance) {
                 continue;
             }
         }

@@ -4,6 +4,7 @@
 #include <opencv2/core.hpp>
 
 #include "vc/core/types/VcDataset.hpp"
+#include "vc/core/types/Sampling.hpp"
 #include "vc/core/util/Slicing.hpp"
 #include "vc/core/cache/SimpleCacheFactory.hpp"
 #include "vc/core/util/Surface.hpp"
@@ -33,7 +34,7 @@ shape idCoord(const std::unique_ptr<vc::VcDataset> &ds, shape id)
     return coord;
 }
 
-void timed_plane_slice(Surface &plane, vc::cache::TieredChunkCache *cache, int size, std::string msg, bool nearest_neighbor)
+void timed_plane_slice(Surface &plane, vc::cache::TieredChunkCache *cache, int size, std::string msg, vc::Sampling method)
 {
     cv::Mat_<cv::Vec3f> coords;
     cv::Mat_<cv::Vec3f> normals;
@@ -44,7 +45,7 @@ void timed_plane_slice(Surface &plane, vc::cache::TieredChunkCache *cache, int s
     auto end = std::chrono::high_resolution_clock::now();
     std::cout << std::chrono::duration<double>(end-start).count() << "s gen_coords() " << msg << std::endl;
     start = std::chrono::high_resolution_clock::now();
-    readInterpolated3D(img, cache, 0, coords, nearest_neighbor);
+    readInterpolated3D(img, cache, 0, coords, method);
     end = std::chrono::high_resolution_clock::now();
     std::cout << std::chrono::duration<double>(end-start).count() << "s slicing  " << size*size/1024.0/1024.0/std::chrono::duration<double>(end-start).count() << "MiB/s " << msg << std::endl;
 }
@@ -56,11 +57,12 @@ int main(int argc, char *argv[])
   std::filesystem::path vol_path(argv[1]);
   auto ds = std::make_unique<vc::VcDataset>(vol_path / "1");
 
-   bool nearest_neighbor =  (argc == 3 && strncmp(argv[2],"nearest",7) == 0);
+   vc::Sampling sampling = (argc == 3 && strncmp(argv[2],"nearest",7) == 0)
+       ? vc::Sampling::Nearest : vc::Sampling::Trilinear;
 
   std::cout << "ds shape " << ds->shape() << std::endl;
   std::cout << "chunk shape " << ds->defaultChunkShape() << std::endl;
-  if (nearest_neighbor) {
+  if (sampling == vc::Sampling::Nearest) {
     std::cout << "doing nearest neighbor interpolation" << std::endl;
   }
 
@@ -108,14 +110,14 @@ int main(int argc, char *argv[])
 
   std::cout << "testing different slice directions / caching" << std::endl;
   for(int r=0;r<3;r++) {
-      timed_plane_slice(plane_x, chunk_cache.get(), size,"yz cold", nearest_neighbor);
-      timed_plane_slice(plane_x, chunk_cache.get(), size,"yz", nearest_neighbor);
-      timed_plane_slice(plane_y, chunk_cache.get(), size,"xz cold", nearest_neighbor);
-      timed_plane_slice(plane_y, chunk_cache.get(), size,"xz", nearest_neighbor);
-      timed_plane_slice(plane_z, chunk_cache.get(), size,"xy cold", nearest_neighbor);
-      timed_plane_slice(plane_z, chunk_cache.get(), size,"xy", nearest_neighbor);
-      timed_plane_slice(gen_plane, chunk_cache.get(), size,"diag cold", nearest_neighbor);
-      timed_plane_slice(gen_plane, chunk_cache.get(), size,"diag", nearest_neighbor);
+      timed_plane_slice(plane_x, chunk_cache.get(), size,"yz cold", sampling);
+      timed_plane_slice(plane_x, chunk_cache.get(), size,"yz", sampling);
+      timed_plane_slice(plane_y, chunk_cache.get(), size,"xz cold", sampling);
+      timed_plane_slice(plane_y, chunk_cache.get(), size,"xz", sampling);
+      timed_plane_slice(plane_z, chunk_cache.get(), size,"xy cold", sampling);
+      timed_plane_slice(plane_z, chunk_cache.get(), size,"xy", sampling);
+      timed_plane_slice(gen_plane, chunk_cache.get(), size,"diag cold", sampling);
+      timed_plane_slice(gen_plane, chunk_cache.get(), size,"diag", sampling);
   }
 
 

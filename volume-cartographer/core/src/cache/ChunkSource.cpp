@@ -1,18 +1,41 @@
 #include "vc/core/cache/ChunkSource.hpp"
+#include "vc/core/cache/CacheDebugLog.hpp"
+#include "vc/core/cache/CacheUtils.hpp"
 
 #include <algorithm>
 #include <atomic>
-#include <cstdio>
 #include <cstring>
-#include <fcntl.h>
 #include <stdexcept>
 #include <fstream>
 #include <mutex>
 #include <nlohmann/json.hpp>
-#include <sys/stat.h>
-#include <unistd.h>
 
 namespace vc::cache {
+
+// --- Shared metadata helpers for both FileSystem and Http chunk sources ---
+
+using LevelMeta = FileSystemChunkSource::LevelMeta;
+
+static int levelsNumLevels(const std::vector<LevelMeta>& levels)
+{
+    return static_cast<int>(levels.size());
+}
+
+static std::array<int, 3> levelsChunkShape(
+    const std::vector<LevelMeta>& levels, int level)
+{
+    if (level < 0 || level >= static_cast<int>(levels.size()))
+        return {0, 0, 0};
+    return levels[level].chunkShape;
+}
+
+static std::array<int, 3> levelsLevelShape(
+    const std::vector<LevelMeta>& levels, int level)
+{
+    if (level < 0 || level >= static_cast<int>(levels.size()))
+        return {0, 0, 0};
+    return levels[level].shape;
+}
 
 // =============================================================================
 // FileSystemChunkSource
@@ -63,8 +86,9 @@ void FileSystemChunkSource::discoverLevels()
         try {
             f >> meta;
         } catch (const std::exception& e) {
-            std::fprintf(stderr, "[CHUNK_SOURCE] Warning: failed to parse %s: %s\n",
-                         zarrayPath.c_str(), e.what());
+            if (auto* log = cacheDebugLog())
+                std::fprintf(log, "[CHUNK_SOURCE] Warning: failed to parse %s: %s\n",
+                             zarrayPath.c_str(), e.what());
             continue;
         }
 
@@ -89,91 +113,18 @@ void FileSystemChunkSource::discoverLevels()
 std::filesystem::path FileSystemChunkSource::chunkPath(
     const ChunkKey& key) const
 {
-    // zarr v2: <root>/<level>/<iz>.<iy>.<ix>
-    std::string name;
-    name.reserve(32);
-    name += std::to_string(key.iz);
-    name += delimiter_;
-    name += std::to_string(key.iy);
-    name += delimiter_;
-    name += std::to_string(key.ix);
-    return root_ / std::to_string(key.level) / name;
+    return root_ / std::to_string(key.level) / chunkFilename(key, delimiter_);
 }
 
 std::vector<uint8_t> FileSystemChunkSource::fetch(const ChunkKey& key)
 {
-    auto path = chunkPath(key);
-
-    // Log first few fetches and all failures for diagnostics
-    static std::atomic<int> fetchCount{0};
-    int n = fetchCount.fetch_add(1, std::memory_order_relaxed);
-    if (n < 5) {
-        std::fprintf(stderr, "[TILED] ChunkSource::fetch #%d: lvl=%d (%d,%d,%d) path=%s\n",
-                     n, key.level, key.iz, key.iy, key.ix, path.c_str());
-    }
-
-    // Use POSIX I/O for performance (matches existing ChunkCache pattern)
-    int fd = ::open(path.c_str(), O_RDONLY | O_NOATIME);
-    if (fd < 0) {
-        fd = ::open(path.c_str(), O_RDONLY);
-        if (fd < 0) {
-            if (n < 5) {
-                std::fprintf(stderr, "[TILED] ChunkSource::fetch: FAILED to open %s (errno=%d)\n",
-                             path.c_str(), errno);
-            }
-            return {};
-        }
-    }
-
-    struct stat sb;
-    if (::fstat(fd, &sb) != 0) {
-        ::close(fd);
-        return {};
-    }
-
-    auto fileSize = static_cast<size_t>(sb.st_size);
-    if (fileSize == 0) {
-        ::close(fd);
-        return {};
-    }
-
-    std::vector<uint8_t> buf(fileSize);
-    size_t total = 0;
-    while (total < fileSize) {
-        ssize_t n = ::read(fd, buf.data() + total, fileSize - total);
-        if (n <= 0) {
-            ::close(fd);
-            return {};
-        }
-        total += static_cast<size_t>(n);
-    }
-    ::close(fd);
-    return buf;
+    auto result = readFileToVector(chunkPath(key));
+    return result ? std::move(*result) : std::vector<uint8_t>{};
 }
 
-bool FileSystemChunkSource::exists(const ChunkKey& key) const
-{
-    return std::filesystem::exists(chunkPath(key));
-}
-
-int FileSystemChunkSource::numLevels() const
-{
-    return static_cast<int>(levels_.size());
-}
-
-std::array<int, 3> FileSystemChunkSource::chunkShape(int level) const
-{
-    if (level < 0 || level >= static_cast<int>(levels_.size()))
-        return {0, 0, 0};
-    return levels_[level].chunkShape;
-}
-
-std::array<int, 3> FileSystemChunkSource::levelShape(int level) const
-{
-    if (level < 0 || level >= static_cast<int>(levels_.size()))
-        return {0, 0, 0};
-    return levels_[level].shape;
-}
+int FileSystemChunkSource::numLevels() const { return levelsNumLevels(levels_); }
+std::array<int, 3> FileSystemChunkSource::chunkShape(int level) const { return levelsChunkShape(levels_, level); }
+std::array<int, 3> FileSystemChunkSource::levelShape(int level) const { return levelsLevelShape(levels_, level); }
 
 // =============================================================================
 // HttpChunkSource
@@ -257,22 +208,9 @@ std::vector<uint8_t> HttpChunkSource::fetch(const ChunkKey& key)
     curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
     curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1L);
 
-    struct curl_slist* headers = nullptr;
-    std::string userpwd;
-    if (auth_.awsSigv4) {
-        std::string sigv4 = "aws:amz:" + auth_.region + ":s3";
-        curl_easy_setopt(curl, CURLOPT_AWS_SIGV4, sigv4.c_str());
-        userpwd = auth_.accessKey + ":" + auth_.secretKey;
-        curl_easy_setopt(curl, CURLOPT_USERPWD, userpwd.c_str());
-        if (!auth_.sessionToken.empty()) {
-            std::string hdr = "x-amz-security-token: " + auth_.sessionToken;
-            headers = curl_slist_append(headers, hdr.c_str());
-            curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-        }
-    }
+    auto authGuard = applyCurlAuth(curl, auth_);
 
     CURLcode res = curl_easy_perform(curl);
-    if (headers) curl_slist_free_all(headers);
 
     if (res != CURLE_OK) {
         long httpCode = 0;
@@ -299,71 +237,8 @@ std::vector<uint8_t> HttpChunkSource::fetch(const ChunkKey& key)
 #endif
 }
 
-bool HttpChunkSource::exists(const ChunkKey& key) const
-{
-#ifdef VC_USE_CURL
-    // Thread-local CURL handle for HEAD requests (shares connection pool)
-    thread_local CURL* curl = [] {
-        CURL* c = curl_easy_init();
-        if (c) {
-            curl_easy_setopt(c, CURLOPT_NOSIGNAL, 1L);
-        }
-        return c;
-    }();
-    if (!curl) return false;
-
-    curl_easy_reset(curl);
-
-    std::string url = chunkUrl(key);
-
-    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-    curl_easy_setopt(curl, CURLOPT_NOBODY, 1L);  // HEAD request
-    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10L);
-    curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
-    curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1L);
-
-    struct curl_slist* existsHeaders = nullptr;
-    std::string existsUserpwd;
-    if (auth_.awsSigv4) {
-        std::string sigv4 = "aws:amz:" + auth_.region + ":s3";
-        curl_easy_setopt(curl, CURLOPT_AWS_SIGV4, sigv4.c_str());
-        existsUserpwd = auth_.accessKey + ":" + auth_.secretKey;
-        curl_easy_setopt(curl, CURLOPT_USERPWD, existsUserpwd.c_str());
-        if (!auth_.sessionToken.empty()) {
-            std::string hdr = "x-amz-security-token: " + auth_.sessionToken;
-            existsHeaders = curl_slist_append(existsHeaders, hdr.c_str());
-            curl_easy_setopt(curl, CURLOPT_HTTPHEADER, existsHeaders);
-        }
-    }
-
-    CURLcode res = curl_easy_perform(curl);
-    if (existsHeaders) curl_slist_free_all(existsHeaders);
-
-    return res == CURLE_OK;
-#else
-    (void)key;
-    return false;
-#endif
-}
-
-int HttpChunkSource::numLevels() const
-{
-    return static_cast<int>(levels_.size());
-}
-
-std::array<int, 3> HttpChunkSource::chunkShape(int level) const
-{
-    if (level < 0 || level >= static_cast<int>(levels_.size()))
-        return {0, 0, 0};
-    return levels_[level].chunkShape;
-}
-
-std::array<int, 3> HttpChunkSource::levelShape(int level) const
-{
-    if (level < 0 || level >= static_cast<int>(levels_.size()))
-        return {0, 0, 0};
-    return levels_[level].shape;
-}
+int HttpChunkSource::numLevels() const { return levelsNumLevels(levels_); }
+std::array<int, 3> HttpChunkSource::chunkShape(int level) const { return levelsChunkShape(levels_, level); }
+std::array<int, 3> HttpChunkSource::levelShape(int level) const { return levelsLevelShape(levels_, level); }
 
 }  // namespace vc::cache

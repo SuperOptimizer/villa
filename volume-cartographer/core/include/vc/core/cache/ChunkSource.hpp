@@ -21,9 +21,6 @@ public:
     // Fetch raw compressed chunk bytes. Returns empty vector if not found.
     [[nodiscard]] virtual std::vector<uint8_t> fetch(const ChunkKey& key) = 0;
 
-    // Check if a chunk exists at the source (cheaper than fetch for some sources).
-    [[nodiscard]] virtual bool exists(const ChunkKey& key) const = 0;
-
     // Number of pyramid levels available.
     [[nodiscard]] virtual int numLevels() const = 0;
 
@@ -57,7 +54,6 @@ public:
         std::vector<LevelMeta> levels);
 
     [[nodiscard]] std::vector<uint8_t> fetch(const ChunkKey& key) override;
-    [[nodiscard]] bool exists(const ChunkKey& key) const override;
     [[nodiscard]] int numLevels() const override;
     [[nodiscard]] std::array<int, 3> chunkShape(int level) const override;
     [[nodiscard]] std::array<int, 3> levelShape(int level) const override;
@@ -90,7 +86,6 @@ public:
     ~HttpChunkSource() override;
 
     [[nodiscard]] std::vector<uint8_t> fetch(const ChunkKey& key) override;
-    [[nodiscard]] bool exists(const ChunkKey& key) const override;
     [[nodiscard]] int numLevels() const override;
     [[nodiscard]] std::array<int, 3> chunkShape(int level) const override;
     [[nodiscard]] std::array<int, 3> levelShape(int level) const override;

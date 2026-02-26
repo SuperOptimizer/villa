@@ -1,6 +1,6 @@
 #include "vc/core/cache/IOPool.hpp"
+#include "vc/core/cache/CacheDebugLog.hpp"
 
-#include <cstdio>
 #include <exception>
 
 namespace vc::cache {
@@ -108,20 +108,18 @@ void IOPool::workerLoop()
 
         inFlight_.fetch_add(1, std::memory_order_relaxed);
 
-        // Fetch the chunk data
+        // Fetch the chunk data — fetchFunc_ and onComplete_ are set once
+        // before any tasks are submitted, so we reference them directly
+        // without copying under lock.
         std::vector<uint8_t> data;
-        FetchFunc fetchFn;
-        {
-            std::lock_guard lock(mutex_);
-            fetchFn = fetchFunc_;
-        }
 
-        if (fetchFn) {
+        if (fetchFunc_) {
             try {
-                data = fetchFn(task.key);
+                data = fetchFunc_(task.key);
             } catch (const std::exception& e) {
-                std::fprintf(stderr, "[IOPOOL] fetch exception for lvl=%d pos=(%d,%d,%d): %s\n",
-                             task.key.level, task.key.iz, task.key.iy, task.key.ix, e.what());
+                if (auto* log = cacheDebugLog())
+                    std::fprintf(log, "[IOPOOL] fetch exception for lvl=%d pos=(%d,%d,%d): %s\n",
+                                 task.key.level, task.key.iz, task.key.iy, task.key.ix, e.what());
                 {
                     std::lock_guard lock(mutex_);
                     inFlightKeys_.erase(task.key);
@@ -129,8 +127,9 @@ void IOPool::workerLoop()
                 inFlight_.fetch_sub(1, std::memory_order_relaxed);
                 continue;
             } catch (...) {
-                std::fprintf(stderr, "[IOPOOL] unknown fetch exception for lvl=%d pos=(%d,%d,%d)\n",
-                             task.key.level, task.key.iz, task.key.iy, task.key.ix);
+                if (auto* log = cacheDebugLog())
+                    std::fprintf(log, "[IOPOOL] unknown fetch exception for lvl=%d pos=(%d,%d,%d)\n",
+                                 task.key.level, task.key.iz, task.key.iy, task.key.ix);
                 {
                     std::lock_guard lock(mutex_);
                     inFlightKeys_.erase(task.key);
@@ -147,13 +146,8 @@ void IOPool::workerLoop()
         inFlight_.fetch_sub(1, std::memory_order_relaxed);
 
         // Notify completion
-        CompletionCallback cb;
-        {
-            std::lock_guard lock(mutex_);
-            cb = onComplete_;
-        }
-        if (cb) {
-            cb(task.key, std::move(data));
+        if (onComplete_) {
+            onComplete_(task.key, std::move(data));
         }
     }
 }

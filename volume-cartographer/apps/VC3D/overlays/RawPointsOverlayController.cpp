@@ -384,7 +384,7 @@ void RawPointsOverlayController::collectPlaneViewPoints(VolumeViewerBase* viewer
     // Render points with color based on signed distance
     for (size_t i = 0; i < count; ++i) {
         const PlanePoint& pp = candidates[i];
-        QPointF scenePos = viewer->volumePointToScene(pp.world);
+        QPointF scenePos = viewer->volumeToScene(pp.world);
         const OverlayStyle& style = (pp.signedDistance >= 0) ? positiveStyle : negativeStyle;
         builder.addCircle(scenePos, scaledRadius, true, style);
     }

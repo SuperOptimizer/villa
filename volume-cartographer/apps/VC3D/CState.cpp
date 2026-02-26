@@ -210,6 +210,10 @@ std::vector<std::string> CState::surfaceNames()
 
 void CState::setPOI(const std::string& name, POI* poi)
 {
+    auto it = _pois.find(name);
+    if (it != _pois.end() && it->second != poi) {
+        delete it->second;
+    }
     _pois[name] = poi;
     emit poiChanged(name, poi);
 }

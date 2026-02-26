@@ -158,9 +158,6 @@ public:
     [[nodiscard]] ChunkReadyCallbackId addChunkReadyListener(ChunkReadyCallback cb);
     void removeChunkReadyListener(ChunkReadyCallbackId id);
 
-    // Legacy single-callback API (clears all listeners and adds one).
-    void setChunkReadyCallback(ChunkReadyCallback cb);
-
     // Clear the chunk-arrived debounce flag. Call this after processing
     // the chunk-ready callback to allow the next notification.
     void clearChunkArrivedFlag();
@@ -181,7 +178,6 @@ public:
     };
 
     [[nodiscard]] Stats stats() const;
-    void resetStats();
 
 private:
     // --- Hot tier ---
@@ -266,11 +262,7 @@ private:
     // Full promotion chain (checks each tier in order).
     [[nodiscard]] ChunkDataPtr loadFull(const ChunkKey& key);
 
-    // IO completion handler (called from worker thread).
-    void onIOComplete(const ChunkKey& key, std::vector<uint8_t>&& compressed);
-
     mutable std::mutex callbackMutex_;
-    ChunkReadyCallback chunkReadyCb_;  // legacy single callback
     std::vector<std::pair<ChunkReadyCallbackId, ChunkReadyCallback>> chunkReadyListeners_;
     std::atomic<ChunkReadyCallbackId> nextListenerId_{1};
     std::atomic<bool> chunkArrivedFlag_{false};

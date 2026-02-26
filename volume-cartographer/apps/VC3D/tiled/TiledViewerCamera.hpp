@@ -2,7 +2,14 @@
 
 #include <cstdint>
 #include <cmath>
+#include <QPointF>
 #include <opencv2/core.hpp>
+
+class Surface;
+class PlaneSurface;
+class QuadSurface;
+class TileScene;
+class SurfacePatchIndex;
 
 // Camera state for the tiled volume viewer.
 // All fields are main-thread only (no locking needed).
@@ -46,3 +53,22 @@ struct TiledViewerCamera {
     // |steps| > 1 skips multiple stops.  Returns the new scale.
     static float stepScale(float current, int steps);
 };
+
+// ---------------------------------------------------------------------------
+// Coordinate-transform helpers
+// ---------------------------------------------------------------------------
+// These live alongside TiledViewerCamera because they depend on the camera's
+// tile-scene layout, but they are free functions so overlay controllers (or
+// tests) can call them without a full CTiledVolumeViewer instance.
+
+// Map a volume (world) coordinate to scene pixel coordinates.
+// Returns a null QPointF if the surface is nullptr.
+QPointF tiledVolumeToScene(Surface* surf, TileScene* tileScene,
+                           SurfacePatchIndex* patchIndex,
+                           const cv::Vec3f& volPoint);
+
+// Map scene pixel coordinates to a volume (world) position + surface normal.
+// Returns false if the conversion fails (null surface, out-of-range, etc.).
+bool tiledSceneToVolume(Surface* surf, TileScene* tileScene,
+                        const QPointF& scenePos,
+                        cv::Vec3f& outPos, cv::Vec3f& outNormal);

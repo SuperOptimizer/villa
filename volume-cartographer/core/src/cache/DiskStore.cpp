@@ -1,4 +1,6 @@
 #include "vc/core/cache/DiskStore.hpp"
+#include "vc/core/cache/CacheDebugLog.hpp"
+#include "vc/core/cache/CacheUtils.hpp"
 
 #include <algorithm>
 #include <cerrno>
@@ -35,15 +37,7 @@ std::filesystem::path DiskStore::chunkPath(
     auto base = config_.directMode
                     ? config_.root
                     : config_.root / volumeId;
-    const auto& d = config_.delimiter;
-    std::string name;
-    name.reserve(32);
-    name += std::to_string(key.iz);
-    name += d;
-    name += std::to_string(key.iy);
-    name += d;
-    name += std::to_string(key.ix);
-    return base / std::to_string(key.level) / name;
+    return base / std::to_string(key.level) / chunkFilename(key, config_.delimiter);
 }
 
 size_t DiskStore::lockIndex(
@@ -59,45 +53,7 @@ std::optional<std::vector<uint8_t>> DiskStore::get(
     const std::string& volumeId,
     const ChunkKey& key) const
 {
-    auto path = chunkPath(volumeId, key);
-
-    int fd = ::open(path.c_str(), O_RDONLY | O_NOATIME);
-    if (fd < 0) {
-        fd = ::open(path.c_str(), O_RDONLY);
-        if (fd < 0) return std::nullopt;
-    }
-
-    struct stat sb;
-    if (::fstat(fd, &sb) != 0) {
-        ::close(fd);
-        return std::nullopt;
-    }
-
-    auto fileSize = static_cast<size_t>(sb.st_size);
-    if (fileSize == 0) {
-        ::close(fd);
-        return std::nullopt;
-    }
-
-    std::vector<uint8_t> buf(fileSize);
-    size_t total = 0;
-    while (total < fileSize) {
-        ssize_t n = ::read(fd, buf.data() + total, fileSize - total);
-        if (n == 0 && total < fileSize) {
-            std::fprintf(stderr, "[DISK] get: truncated file %s (read %zu/%zu bytes)\n",
-                         path.c_str(), total, static_cast<size_t>(fileSize));
-            ::close(fd);
-            return std::nullopt;
-        }
-        if (n < 0) {
-            ::close(fd);
-            return std::nullopt;
-        }
-        total += static_cast<size_t>(n);
-    }
-    ::close(fd);
-
-    return buf;
+    return readFileToVector(chunkPath(volumeId, key));
 }
 
 void DiskStore::put(
@@ -115,8 +71,9 @@ void DiskStore::put(
     std::error_code ec;
     std::filesystem::create_directories(path.parent_path(), ec);
     if (ec) {
-        std::fprintf(stderr, "[DISK] put: create_directories FAILED for %s: %s\n",
-                     path.parent_path().c_str(), ec.message().c_str());
+        if (auto* log = cacheDebugLog())
+            std::fprintf(log, "[DISK] put: create_directories FAILED for %s: %s\n",
+                         path.parent_path().c_str(), ec.message().c_str());
         return;
     }
 
@@ -126,8 +83,9 @@ void DiskStore::put(
 
     int fd = ::open(tmpPath.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (fd < 0) {
-        std::fprintf(stderr, "[DISK] put: open FAILED for %s errno=%d\n",
-                     tmpPath.c_str(), errno);
+        if (auto* log = cacheDebugLog())
+            std::fprintf(log, "[DISK] put: open FAILED for %s errno=%d\n",
+                         tmpPath.c_str(), errno);
         return;
     }
 
@@ -137,10 +95,12 @@ void DiskStore::put(
         if (n <= 0) {
             int err = errno;
             if (err == ENOSPC) {
-                std::fprintf(stderr, "[DISK] put: DISK FULL writing %s\n", tmpPath.c_str());
+                if (auto* log = cacheDebugLog())
+                    std::fprintf(log, "[DISK] put: DISK FULL writing %s\n", tmpPath.c_str());
             } else {
-                std::fprintf(stderr, "[DISK] put: write FAILED for %s errno=%d (%s)\n",
-                             tmpPath.c_str(), err, strerror(err));
+                if (auto* log = cacheDebugLog())
+                    std::fprintf(log, "[DISK] put: write FAILED for %s errno=%d (%s)\n",
+                                 tmpPath.c_str(), err, strerror(err));
             }
             ::close(fd);
             ::unlink(tmpPath.c_str());
@@ -153,19 +113,13 @@ void DiskStore::put(
     // Atomic rename
     std::filesystem::rename(tmpPath, path, ec);
     if (ec) {
-        std::fprintf(stderr, "[DISK] put: rename FAILED %s -> %s: %s\n",
-                     tmpPath.c_str(), path.c_str(), ec.message().c_str());
+        if (auto* log = cacheDebugLog())
+            std::fprintf(log, "[DISK] put: rename FAILED %s -> %s: %s\n",
+                         tmpPath.c_str(), path.c_str(), ec.message().c_str());
         ::unlink(tmpPath.c_str());
     } else {
         totalBytes_.fetch_add(size, std::memory_order_relaxed);
     }
-}
-
-bool DiskStore::has(
-    const std::string& volumeId,
-    const ChunkKey& key) const
-{
-    return std::filesystem::exists(chunkPath(volumeId, key));
 }
 
 void DiskStore::remove(

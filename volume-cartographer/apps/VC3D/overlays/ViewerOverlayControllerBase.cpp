@@ -282,7 +282,6 @@ void ViewerOverlayControllerBase::bindToViewerManager(ViewerManager* manager)
                                                attachViewer(viewer);
                                            });
 
-    QObject::disconnect(_managerDestroyedConn);
     _managerDestroyedConn = QObject::connect(_manager, &QObject::destroyed,
                                              this, [this]() {
                                                  _manager = nullptr;
@@ -322,7 +321,7 @@ QPointF ViewerOverlayControllerBase::volumeToScene(VolumeViewerBase* viewer, con
     if (!viewer) {
         return QPointF();
     }
-    return viewer->volumePointToScene(volumePoint);
+    return viewer->volumeToScene(volumePoint);
 }
 
 cv::Vec3f ViewerOverlayControllerBase::sceneToVolume(VolumeViewerBase* viewer, const QPointF& scenePoint) const
@@ -659,7 +658,7 @@ void ViewerOverlayControllerBase::applyPrimitives(VolumeViewerBase* viewer,
                     std::vector<QPointF> scenePoints;
                     scenePoints.reserve(prim.points.size());
                     for (const auto& p : prim.points) {
-                        scenePoints.emplace_back(viewer->volumePointToScene(p));
+                        scenePoints.emplace_back(viewer->volumeToScene(p));
                     }
 
                     OverlayStyle style;

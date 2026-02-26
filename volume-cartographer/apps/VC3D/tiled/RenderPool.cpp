@@ -12,7 +12,7 @@
 
 TileRenderTask::TileRenderTask(TileRenderParams params,
                                std::shared_ptr<Surface> surface,
-                               Volume* volume,
+                               std::shared_ptr<Volume> volume,
                                RenderPool* pool)
     : _params(std::move(params))
     , _surface(std::move(surface))
@@ -30,7 +30,7 @@ void TileRenderTask::run()
         return;
     }
 
-    TileRenderResult result = TileRenderer::renderTile(_params, _surface, _volume);
+    TileRenderResult result = TileRenderer::renderTile(_params, _surface, _volume.get());
 
     // Skip if stale after rendering
     if (_params.epoch < _pool->currentEpoch()) {
@@ -59,7 +59,7 @@ RenderPool::~RenderPool()
 
 void RenderPool::submit(const TileRenderParams& params,
                         const std::shared_ptr<Surface>& surface,
-                        Volume* volume)
+                        const std::shared_ptr<Volume>& volume)
 {
     _pendingCount.fetch_add(1, std::memory_order_relaxed);
     auto* task = new TileRenderTask(params, surface, volume, this);

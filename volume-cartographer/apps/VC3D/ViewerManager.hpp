@@ -26,6 +26,7 @@ class BBoxOverlayController;
 class VectorOverlayController;
 class VolumeOverlayController;
 class SegmentationModule;
+class ViewerOverlayControllerBase;
 class Volume;
 class Surface;
 class QuadSurface;
@@ -116,6 +117,7 @@ private slots:
     void handleSurfaceWillBeDeleted(std::string name, std::shared_ptr<Surface> surf);
 
 private:
+    void registerOverlay(ViewerOverlayControllerBase* overlay);
     bool updateSurfacePatchIndexForSurface(const SurfacePatchIndex::SurfacePtr& quad, bool isEditUpdate);
 
     CState* _state;
@@ -127,6 +129,10 @@ private:
     PathsOverlayController* _pathsOverlay{nullptr};
     BBoxOverlayController* _bboxOverlay{nullptr};
     VectorOverlayController* _vectorOverlay{nullptr};
+    // All overlay controllers that should be attached/detached from viewers.
+    // Populated by the set*Overlay() methods. Does NOT include VolumeOverlayController
+    // (which is not a ViewerOverlayControllerBase subclass).
+    std::vector<ViewerOverlayControllerBase*> _allOverlays;
     bool _segmentationEditActive{false};
     SegmentationModule* _segmentationModule{nullptr};
     std::vector<CTiledVolumeViewer*> _viewers;

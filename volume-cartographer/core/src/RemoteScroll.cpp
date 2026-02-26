@@ -1,9 +1,9 @@
 #include "vc/core/util/RemoteScroll.hpp"
 
-#include <cstdio>
 #include <fstream>
 
 #include "vc/core/util/LoadJson.hpp"
+#include "vc/core/util/Logging.hpp"
 
 namespace vc {
 
@@ -18,43 +18,43 @@ RemoteScrollInfo discoverRemoteScroll(const std::string& httpsUrl, const cache::
     info.auth = auth;
 
     // Probe volumes/
-    std::fprintf(stderr, "[RemoteScroll] Probing %s/volumes/\n", baseUrl.c_str());
+    Logger()->info("[RemoteScroll] Probing {}/volumes/", baseUrl);
     auto volList = cache::s3ListObjects(baseUrl + "/volumes/", auth);
 
     // If the very first request has an auth error, bail out early
     if (volList.authError) {
         info.authError = true;
         info.authErrorMessage = volList.errorMessage;
-        std::fprintf(stderr, "[RemoteScroll] Auth error: %s\n", volList.errorMessage.c_str());
+        Logger()->error("[RemoteScroll] Auth error: {}", volList.errorMessage);
         return info;
     }
 
     for (const auto& name : volList.prefixes) {
-        std::fprintf(stderr, "[RemoteScroll]   volume: %s\n", name.c_str());
+        Logger()->info("[RemoteScroll]   volume: {}", name);
         info.volumeNames.push_back(name);
     }
 
     // Probe paths/ first (full volpkg format)
-    std::fprintf(stderr, "[RemoteScroll] Probing %s/paths/\n", baseUrl.c_str());
+    Logger()->info("[RemoteScroll] Probing {}/paths/", baseUrl);
     auto pathsList = cache::s3ListObjects(baseUrl + "/paths/", auth);
     if (!pathsList.prefixes.empty()) {
         info.segmentSource = RemoteSegmentSource::Paths;
         for (const auto& name : pathsList.prefixes) {
-            std::fprintf(stderr, "[RemoteScroll]   path segment: %s\n", name.c_str());
+            Logger()->info("[RemoteScroll]   path segment: {}", name);
             info.segmentIds.push_back(name);
         }
     } else {
         // Fall back to segments/ (lite format)
-        std::fprintf(stderr, "[RemoteScroll] Probing %s/segments/\n", baseUrl.c_str());
+        Logger()->info("[RemoteScroll] Probing {}/segments/", baseUrl);
         auto segList = cache::s3ListObjects(baseUrl + "/segments/", auth);
         info.segmentSource = RemoteSegmentSource::Segments;
         for (const auto& name : segList.prefixes) {
-            std::fprintf(stderr, "[RemoteScroll]   segment: %s\n", name.c_str());
+            Logger()->info("[RemoteScroll]   segment: {}", name);
             info.segmentIds.push_back(name);
         }
     }
 
-    std::fprintf(stderr, "[RemoteScroll] Found %zu volumes, %zu segments (source: %s)\n",
+    Logger()->info("[RemoteScroll] Found {} volumes, {} segments (source: {})",
                  info.volumeNames.size(), info.segmentIds.size(),
                  info.segmentSource == RemoteSegmentSource::Paths ? "paths" : "segments");
 
@@ -87,8 +87,8 @@ std::filesystem::path downloadRemoteSegment(
     }
 
     if (allExist) {
-        std::fprintf(stderr, "[RemoteScroll] Segment %s already cached at %s\n",
-                     segmentId.c_str(), localDir.c_str());
+        Logger()->info("[RemoteScroll] Segment {} already cached at {}",
+                     segmentId, localDir.string());
         return localDir;
     }
 
@@ -108,16 +108,16 @@ std::filesystem::path downloadRemoteSegment(
     for (const auto& f : files) {
         auto localPath = localDir / f;
         if (fs::exists(localPath)) {
-            std::fprintf(stderr, "[RemoteScroll]   %s already exists, skipping\n", f.c_str());
+            Logger()->debug("[RemoteScroll]   {} already exists, skipping", f);
             continue;
         }
 
         std::string url = remoteBase + f;
-        std::fprintf(stderr, "[RemoteScroll]   Downloading %s -> %s\n",
-                     url.c_str(), localPath.c_str());
+        Logger()->info("[RemoteScroll]   Downloading {} -> {}",
+                     url, localPath.string());
 
         if (!cache::httpDownloadFile(url, localPath, auth)) {
-            std::fprintf(stderr, "[RemoteScroll]   FAILED to download %s\n", f.c_str());
+            Logger()->error("[RemoteScroll]   FAILED to download {}", f);
             // Continue with other files — partial downloads are handled by the
             // caller checking if meta.json exists
         }
@@ -146,14 +146,12 @@ std::filesystem::path downloadRemoteSegment(
             }
 
             if (patched) {
-                std::fprintf(stderr, "[RemoteScroll]   Patched meta.json for segment %s\n",
-                             segmentId.c_str());
+                Logger()->info("[RemoteScroll]   Patched meta.json for segment {}", segmentId);
                 std::ofstream ofs(metaPath);
                 ofs << meta.dump(2);
             }
         } catch (const std::exception& e) {
-            std::fprintf(stderr, "[RemoteScroll]   Warning: failed to patch meta.json: %s\n",
-                         e.what());
+            Logger()->warn("[RemoteScroll]   Failed to patch meta.json: {}", e.what());
         }
     }
 

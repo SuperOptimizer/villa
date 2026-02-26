@@ -7,13 +7,17 @@
 
 #include <QObject>
 #include <QString>
+#include <QStringList>
 #include <QSet>
 #include <QTemporaryFile>
+
+#include "elements/VolumeSelector.hpp"
 
 class CState;
 class CommandLineToolRunner;
 class SurfacePanelController;
 class SegmentationGrower;
+class QuadSurface;
 class QWidget;
 
 /**
@@ -148,6 +152,24 @@ public:
 private:
     /** Helper: get current volume path from state */
     QString getCurrentVolumePath() const;
+
+    /**
+     * Validate that a volume package is loaded and the surface exists.
+     * Shows appropriate warning dialogs on failure.
+     * If \p checkRunner is true, also verifies _cmdRunner is set and idle.
+     * Returns the QuadSurface* on success, or nullptr on failure.
+     */
+    QuadSurface* requireSurfaceAndRunner(const std::string& segmentId,
+                                          bool checkRunner = true);
+
+    /**
+     * Build the list of available volumes from the current vpkg, with the
+     * currently-loaded volume selected as default.  Returns an empty vector
+     * (and shows a warning) if no volumes are available.
+     * If \p defaultOut is non-null, receives the default volume ID.
+     */
+    QVector<VolumeSelector::VolumeOption> buildVolumeOptionList(
+        QString* defaultOut = nullptr);
 
     QWidget* _parentWidget{nullptr};
     CState* _state{nullptr};

@@ -27,7 +27,6 @@ public:
     size_t defaultChunkSize() const;  // product of chunk dims
     VcDtype getDtype() const;
     size_t dtypeSize() const;  // 1 for uint8, 2 for uint16
-    bool isZarr() const { return true; }
     const std::filesystem::path& path() const;
     const std::string& delimiter() const;
 

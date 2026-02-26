@@ -12,9 +12,6 @@ namespace {
 
 static constexpr bool kDeactivateWhenZero = true;
 static constexpr double kTauDeactivate = 0.50;
-static constexpr bool kBackfaceCullFolds = false;
-static constexpr double kCullDotEps = 1e-12;
-static constexpr int kNormalDecimateMax = 128;
 
 static inline bool isFinite3(const cv::Vec3d& p)
 {
@@ -24,15 +21,6 @@ static inline bool isFinite3(const cv::Vec3d& p)
 static inline double tri_area3D(const cv::Vec3d& a, const cv::Vec3d& b, const cv::Vec3d& c)
 {
     return 0.5 * cv::norm((b - a).cross(c - a));
-}
-
-static inline double tri_area3D_culled(const cv::Vec3d& a, const cv::Vec3d& b, const cv::Vec3d& c,
-                                       const cv::Vec3d& refN, double dot_eps)
-{
-    const cv::Vec3d n = (b - a).cross(c - a);
-    const double dot = n.dot(refN);
-    if (dot <= dot_eps) return 0.0;
-    return 0.5 * cv::norm(n);
 }
 
 static int choose_largest_page(const std::vector<cv::Mat>& pages)
@@ -101,27 +89,6 @@ static inline double sumRect01d(const cv::Mat1d& ii, int x0, int y0, int x1, int
     return ii(y1, x1) - ii(y0, x1) - ii(y1, x0) + ii(y0, x0);
 }
 
-static cv::Vec3d estimate_global_normal(const cv::Mat1f& X, const cv::Mat1f& Y, const cv::Mat1f& Z)
-{
-    const int H = X.rows, W = X.cols;
-    const int sy = std::max(1, H / kNormalDecimateMax);
-    const int sx = std::max(1, W / kNormalDecimateMax);
-
-    cv::Vec3d acc(0, 0, 0);
-    for (int y = 0; y + sy < H; y += sy) {
-        for (int x = 0; x + sx < W; x += sx) {
-            const cv::Vec3d A(X(y, x), Y(y, x), Z(y, x));
-            const cv::Vec3d B(X(y, x + sx), Y(y, x + sx), Z(y, x + sx));
-            const cv::Vec3d C(X(y + sy, x), Y(y + sy, x), Z(y + sy, x));
-            if (!isFinite3(A) || !isFinite3(B) || !isFinite3(C)) continue;
-            acc += (B - A).cross(C - A);
-        }
-    }
-    const double nrm = cv::norm(acc);
-    if (nrm < 1e-20) return cv::Vec3d(0, 0, 1);
-    return acc / nrm;
-}
-
 static double area_from_mesh_and_mask(const cv::Mat1f& X, const cv::Mat1f& Y, const cv::Mat1f& Z,
                                       const cv::Mat1b& mask01)
 {
@@ -140,8 +107,6 @@ static double area_from_mesh_and_mask(const cv::Mat1f& X, const cv::Mat1f& Y, co
 
     const double sx = static_cast<double>(Wm) / static_cast<double>(Wq - 1);
     const double sy = static_cast<double>(Hm) / static_cast<double>(Hq - 1);
-
-    const cv::Vec3d refN = kBackfaceCullFolds ? estimate_global_normal(X, Y, Z) : cv::Vec3d(0, 0, 0);
 
     double total = 0.0;
 
@@ -175,12 +140,7 @@ static double area_from_mesh_and_mask(const cv::Mat1f& X, const cv::Mat1f& Y, co
             if (!isFinite3(A) || !isFinite3(B) || !isFinite3(C) || !isFinite3(D))
                 continue;
 
-            if (kBackfaceCullFolds) {
-                total += tri_area3D_culled(A, B, D, refN, kCullDotEps);
-                total += tri_area3D_culled(A, D, C, refN, kCullDotEps);
-            } else {
-                total += tri_area3D(A, B, D) + tri_area3D(A, D, C);
-            }
+            total += tri_area3D(A, B, D) + tri_area3D(A, D, C);
         }
     }
     return total;

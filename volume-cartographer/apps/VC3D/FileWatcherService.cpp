@@ -356,9 +356,6 @@ void FileWatcherService::processSegmentRename(const std::string& dirName,
                     }
                 }
 
-                if (_surfacePanel) {
-                    //_surfacePanel->refreshFiltersOnly();
-                }
             }
         } catch (const std::exception& e) {
             Logger()->error("Failed to load renamed segment {}: {}", newId, e.what());
@@ -404,9 +401,6 @@ void FileWatcherService::processSegmentAddition(const std::string& dirName, cons
                         _surfacePanel->addSingleSegmentation(segmentId);
                     }
                     emit statusMessage(tr("Added: %1").arg(QString::fromStdString(segmentName)), 2000);
-                    if (_surfacePanel) {
-                        //_surfacePanel->refreshFiltersOnly();
-                    }
                 }
             } catch (const std::exception& e) {
                 Logger()->error("Failed to load segment {}: {}", segmentId, e.what());
@@ -453,7 +447,6 @@ void FileWatcherService::processSegmentRemoval(const std::string& dirName, const
         if (isCurrentDir && _surfacePanel) {
             _surfacePanel->removeSingleSegmentation(segmentId);
             emit statusMessage(tr("Removed: %1").arg(QString::fromStdString(segmentName)), 2000);
-            //_surfacePanel->refreshFiltersOnly();
         }
     }
 }

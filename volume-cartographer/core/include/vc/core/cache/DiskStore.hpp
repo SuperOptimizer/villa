@@ -55,9 +55,6 @@ public:
         put(volumeId, key, data.data(), data.size());
     }
 
-    // Check if a chunk file exists on disk.
-    [[nodiscard]] bool has(const std::string& volumeId, const ChunkKey& key) const;
-
     // Remove a specific chunk from disk.
     void remove(const std::string& volumeId, const ChunkKey& key);
 

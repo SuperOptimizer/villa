@@ -55,7 +55,6 @@ public:
 
     // --- Coordinate transforms ---
     virtual QPointF volumeToScene(const cv::Vec3f& vol_point) = 0;
-    QPointF volumePointToScene(const cv::Vec3f& vol_point) { return volumeToScene(vol_point); }
     virtual cv::Vec3f sceneToVolume(const QPointF& scenePoint) const = 0;
 
     // --- Data access ---

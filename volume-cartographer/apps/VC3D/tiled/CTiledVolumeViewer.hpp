@@ -34,6 +34,7 @@ class QLabel;
 struct POI;
 class CState;
 class ViewerManager;
+class PlaneSurface;
 
 // Tiled volume viewer: fixed-size canvas composed of a grid of tile
 // QGraphicsPixmapItems. Navigation updates tile *contents* rather than
@@ -57,7 +58,6 @@ public:
 
     // --- Rendering ---
     void renderVisible(bool force = false);
-    void renderAllTiles();
     void renderIntersections();
     void invalidateVis();
     void invalidateIntersect(const std::string& name = "");
@@ -168,7 +168,6 @@ public:
     // --- Coordinate transforms ---
     // Transform from volume (world) coordinates to canvas scene coordinates
     QPointF volumeToScene(const cv::Vec3f& vol_point);
-    QPointF volumePointToScene(const cv::Vec3f& vol_point) { return volumeToScene(vol_point); }
     // Transform from canvas scene coordinates to volume (world) coordinates
     cv::Vec3f sceneToVolume(const QPointF& scenePoint) const;
     QPointF lastScenePosition() const { return _lastScenePos; }
@@ -244,8 +243,8 @@ private:
     // Build TileRenderParams for a given tile key
     TileRenderParams buildRenderParams(const WorldTileKey& wk) const;
 
-    // Scene-to-volume coordinate conversion helper
-    bool sceneToVolumeHelper(cv::Vec3f& p, cv::Vec3f& n, const QPointF& scenePos) const;
+    // Scene-to-volume coordinate conversion (returns position + normal)
+    bool sceneToVolumePN(cv::Vec3f& p, cv::Vec3f& n, const QPointF& scenePos) const;
 
     void markActiveSegmentationDirty();
 
@@ -257,6 +256,23 @@ private:
 
     // Recompute dynamic minimum scale so content never appears smaller than viewport
     void updateContentMinScale();
+
+    // Returns true for axis-aligned viewer slots (xy/xz/yz plane, seg xz/yz)
+    bool isAxisAlignedView() const;
+
+    // Clamp lo/hi bounding box to volume dataBounds; returns false if empty after clamping
+    bool clampToDataBounds(cv::Vec3f& lo, cv::Vec3f& hi) const;
+
+    // Compute world-space bounding box for prefetching (PlaneSurface path).
+    // Returns false if the bbox is empty after clamping to data bounds.
+    bool computePlanePrefetchBBox(PlaneSurface* plane, const QRectF& prefetchRect,
+                                  cv::Vec3f& lo, cv::Vec3f& hi) const;
+
+    // Compute world-space bounding box for prefetching (QuadSurface / generic path).
+    // Returns false if the bbox is empty after clamping to data bounds.
+    bool computeQuadPrefetchBBox(const std::shared_ptr<Surface>& surf,
+                                 const QRectF& prefetchRect,
+                                 cv::Vec3f& lo, cv::Vec3f& hi) const;
 
     // Submit all visible tiles to the render controller (async path)
     void submitRender();
@@ -310,19 +326,29 @@ private:
     std::map<std::string, cv::Vec3b> _surfaceOverlays;
     float _surfaceOverlapThreshold = 5.0f;
 
+    // --- Overlay state (graphics items, intersection + overlay group bookkeeping) ---
+    struct OverlayState {
+        // Overlay groups managed by overlay controllers
+        std::unordered_map<std::string, std::vector<QGraphicsItem*>> groups;
+
+        // Intersection items per surface name
+        std::unordered_map<std::string, std::vector<QGraphicsItem*>> intersectItems;
+
+        // Slice visualisation items (cleared on invalidateVis)
+        std::vector<QGraphicsItem*> sliceVisItems;
+
+        // Cursor crosshair and center-of-view marker
+        QGraphicsItem* cursor = nullptr;
+        QGraphicsItem* centerMarker = nullptr;
+    };
+    OverlayState _ov;
+
     // --- Intersection rendering ---
     float _intersectionOpacity = 1.0f;
     float _intersectionThickness = 0.0f;
     int _surfacePatchSamplingStride = 1;
     std::set<std::string> _intersectTgts = {"visible_segmentation"};
-    std::unordered_map<std::string, std::vector<QGraphicsItem*>> _intersectItems;
     std::unordered_set<std::string> _highlightedSurfaceIds;
-
-    // --- Overlay management ---
-    std::unordered_map<std::string, std::vector<QGraphicsItem*>> _overlayGroups;
-    QGraphicsItem* _centerMarker = nullptr;
-    QGraphicsItem* _cursor = nullptr;
-    std::vector<QGraphicsItem*> _sliceVisItems;
 
     // --- Interaction state ---
     uint64_t _highlightedPointId = 0;
@@ -368,10 +394,6 @@ private:
     // --- Chunk-ready listener tracking ---
     vc::cache::TieredChunkCache::ChunkReadyCallbackId _chunkCbId = 0;
     bool _hadValidDataBounds = false;
-
-    // --- Zoom debounce ---
-    float _renderScale = 0.5f;           // scale at which tiles were last rendered
-    cv::Vec3f _renderSurfacePtr{0,0,0};  // surfacePtr at last render
 
     // --- Pan tracking ---
     // For tiled viewer, panning is tracked via delta signals from the view

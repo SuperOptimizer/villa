@@ -1,6 +1,5 @@
 #include "PathsOverlayController.hpp"
 
-#include "../tiled/CTiledVolumeViewer.hpp"
 #include "../VolumeViewerBase.hpp"
 
 #include "vc/core/util/Surface.hpp"

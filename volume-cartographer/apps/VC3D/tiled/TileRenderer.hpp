@@ -23,9 +23,6 @@ struct TileRenderParams {
     WorldTileKey worldKey;
     uint64_t epoch = 0;
 
-    // --- Surface type ---
-    bool isPlaneSurface = false;
-
     // --- Tile geometry ---
     // Surface parameter space ROI for this tile (same for both surface types)
     cv::Rect2f surfaceROI;
@@ -45,13 +42,11 @@ struct TileRenderParams {
     std::string colormapId;             // colormap identifier (empty = grayscale)
     bool useFastInterpolation = false;  // nearest-neighbor instead of trilinear
     CompositeRenderSettings compositeSettings;  // multi-layer composite params
-    uint8_t isoCutoff = 0;             // ISO surface cutoff threshold
 };
 
 // Result from rendering a single tile
 struct TileRenderResult {
     WorldTileKey worldKey;
-    bool isPlaneSurface = false;
     QImage image;        // RGB QImage (converted on worker thread)
     uint64_t epoch = 0;
 

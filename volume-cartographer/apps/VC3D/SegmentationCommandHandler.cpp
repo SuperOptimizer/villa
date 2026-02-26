@@ -60,58 +60,75 @@
 #include "elements/JsonProfilePresets.hpp"
 #include <nlohmann/json.hpp>
 
-// --------- local helpers for running external tools -------------------------
-static bool runProcessBlocking(const QString& program,
-                               const QStringList& args,
-                               const QString& workDir,
-                               QString* out=nullptr,
-                               QString* err=nullptr)
+// --------- locate executables (unified helper) --------------------------------
+
+static QString findExecutable(
+    const QString& name,
+    const QStringList& extraPaths = {},
+    const QString& envVar = {})
 {
-    QProcess p;
-    if (!workDir.isEmpty()) p.setWorkingDirectory(workDir);
-    p.setProcessChannelMode(QProcess::SeparateChannels);
+    // 1. Environment variable override (if provided)
+    if (!envVar.isEmpty()) {
+        const QByteArray envVal = qgetenv(envVar.toUtf8().constData());
+        if (!envVal.isEmpty()) {
+            QFileInfo fi(QString::fromLocal8Bit(envVal));
+            if (fi.exists() && fi.isFile() && fi.isExecutable())
+                return fi.absoluteFilePath();
+        }
+    }
 
-    std::cout << "Running: " << program.toStdString();
-    for (const QString& arg : args) std::cout << " " << arg.toStdString();
-    std::cout << std::endl;
+    // 2. INI settings (tools/<name>_path, tools/<name>)
+    {
+        QSettings settings(vc3d::settingsFilePath(), QSettings::IniFormat);
+        const QString key1 = QStringLiteral("tools/%1_path").arg(name);
+        const QString key2 = QStringLiteral("tools/%1").arg(name);
+        const QString iniPath =
+            settings.value(key1, settings.value(key2)).toString().trimmed();
+        if (!iniPath.isEmpty()) {
+            QFileInfo fi(iniPath);
+            if (fi.exists() && fi.isFile() && fi.isExecutable())
+                return fi.absoluteFilePath();
+        }
+    }
 
-    p.start(program, args);
-    if (!p.waitForStarted()) { if (err) *err = QObject::tr("Failed to start %1").arg(program); return false; }
-    if (!p.waitForFinished(-1)) { if (err) *err = QObject::tr("Timeout running %1").arg(program); return false; }
-    if (out) *out = QString::fromLocal8Bit(p.readAllStandardOutput());
-    if (err) *err = QString::fromLocal8Bit(p.readAllStandardError());
-    return (p.exitStatus()==QProcess::NormalExit && p.exitCode()==0);
-}
-
-// --------- locate generic vc_* executables -----------------------------------
-static QString findVcTool(const char* name)
-{
-    QSettings settings(vc3d::settingsFilePath(), QSettings::IniFormat);
-    const QString key1 = QStringLiteral("tools/%1_path").arg(name);
-    const QString key2 = QStringLiteral("tools/%1").arg(name);
-    const QString iniPath =
-        settings.value(key1, settings.value(key2)).toString().trimmed();
-    if (!iniPath.isEmpty()) {
-        QFileInfo fi(iniPath);
+    // 3. Extra hard-coded paths (caller-supplied)
+    for (const QString& p : extraPaths) {
+        QFileInfo fi(p);
         if (fi.exists() && fi.isFile() && fi.isExecutable())
             return fi.absoluteFilePath();
     }
 
+    // 4. QStandardPaths / manual PATH walk
 #if QT_VERSION >= QT_VERSION_CHECK(5, 10, 0)
-    const QString onPath = QStandardPaths::findExecutable(QString::fromLatin1(name));
+    const QString onPath = QStandardPaths::findExecutable(name);
     if (!onPath.isEmpty()) return onPath;
 #else
     const QStringList pathDirs =
         QProcessEnvironment::systemEnvironment().value("PATH")
             .split(QDir::listSeparator(), Qt::SkipEmptyParts);
     for (const QString& dir : pathDirs) {
-        const QString candidate = QDir(dir).filePath(QString::fromLatin1(name));
+        const QString candidate = QDir(dir).filePath(name);
         QFileInfo fi(candidate);
         if (fi.exists() && fi.isFile() && fi.isExecutable())
             return fi.absoluteFilePath();
     }
 #endif
     return {};
+}
+
+// Convenience wrappers matching the old signatures
+static QString findVcTool(const char* name)
+{
+    return findExecutable(QString::fromLatin1(name));
+}
+
+static QString findFlatboiExecutable()
+{
+    return findExecutable(
+        QStringLiteral("flatboi"),
+        {QStringLiteral("/usr/local/bin/flatboi"),
+         QStringLiteral("/home/builder/vc-dependencies/bin/flatboi")},
+        QStringLiteral("FLATBOI"));
 }
 
 namespace { // -------------------- anonymous namespace -------------------------
@@ -647,70 +664,6 @@ private:
     }
 };
 
-// --------- locate 'flatboi' executable --------------------------------------
-static QString findFlatboiExecutable()
-{
-    const QByteArray envFlatboi = qgetenv("FLATBOI");
-    if (!envFlatboi.isEmpty()) {
-        const QString p = QString::fromLocal8Bit(envFlatboi);
-        QFileInfo fi(p);
-        if (fi.exists() && fi.isFile() && fi.isExecutable())
-            return fi.absoluteFilePath();
-    }
-
-    {
-        QSettings settings(vc3d::settingsFilePath(), QSettings::IniFormat);
-        const QString iniPath = settings.value(vc3d::settings::tools::FLATBOI_PATH,
-                                               settings.value(vc3d::settings::tools::FLATBOI)).toString().trimmed();
-        if (!iniPath.isEmpty()) {
-            QFileInfo fi(iniPath);
-            if (fi.exists() && fi.isFile() && fi.isExecutable())
-                return fi.absoluteFilePath();
-        }
-    }
-
-    const QStringList known = {
-        "/usr/local/bin/flatboi",
-        "/home/builder/vc-dependencies/bin/flatboi"
-    };
-    for (const QString& p : known) {
-        QFileInfo fi(p);
-        if (fi.exists() && fi.isFile() && fi.isExecutable())
-            return fi.absoluteFilePath();
-    }
-
-#if QT_VERSION >= QT_VERSION_CHECK(5, 10, 0)
-    const QString onPath = QStandardPaths::findExecutable("flatboi");
-    if (!onPath.isEmpty()) return onPath;
-#else
-    const QStringList pathDirs =
-        QProcessEnvironment::systemEnvironment().value("PATH")
-            .split(QDir::listSeparator(), Qt::SkipEmptyParts);
-    for (const QString& dir : pathDirs) {
-        const QString candidate = QDir(dir).filePath("flatboi");
-        QFileInfo fi(candidate);
-        if (fi.exists() && fi.isFile() && fi.isExecutable())
-            return fi.absoluteFilePath();
-    }
-#endif
-
-    return {};
-}
-
-static QSet<QString> snapshotDirectoryEntries(const QString& dirPath)
-{
-    QSet<QString> entries;
-    QDir dir(dirPath);
-    if (!dir.exists()) {
-        return entries;
-    }
-    const QFileInfoList infoList = dir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot);
-    for (const QFileInfo& info : infoList) {
-        entries.insert(info.fileName());
-    }
-    return entries;
-}
-
 using ProgressCallback = std::function<void(const QString&)>;
 
 struct ABFFlattenTaskConfig {
@@ -941,13 +894,81 @@ QString SegmentationCommandHandler::getCurrentVolumePath() const
     return QString::fromStdString(_state->currentVolume()->path().string());
 }
 
+QuadSurface* SegmentationCommandHandler::requireSurfaceAndRunner(
+    const std::string& segmentId,
+    bool checkRunner)
+{
+    if (_state->currentVolume() == nullptr || !_state->vpkg()) {
+        QMessageBox::warning(_parentWidget, tr("Error"),
+                             tr("No volume package or volume loaded."));
+        return nullptr;
+    }
+
+    auto surf = _state->vpkg()->getSurface(segmentId);
+    if (!surf) {
+        QMessageBox::warning(_parentWidget, tr("Error"),
+                             tr("Invalid segment or segment not loaded: %1")
+                                 .arg(QString::fromStdString(segmentId)));
+        return nullptr;
+    }
+
+    if (checkRunner) {
+        if (!_cmdRunner) {
+            emit statusMessage(tr("Command line tools not available"), 3000);
+            return nullptr;
+        }
+        if (_cmdRunner->isRunning()) {
+            QMessageBox::warning(_parentWidget, tr("Warning"),
+                                 tr("A command line tool is already running."));
+            return nullptr;
+        }
+    }
+
+    return surf.get();
+}
+
+QVector<VolumeSelector::VolumeOption>
+SegmentationCommandHandler::buildVolumeOptionList(QString* defaultOut)
+{
+    QVector<VolumeSelector::VolumeOption> options;
+    if (!_state->vpkg()) {
+        return options;
+    }
+
+    for (const auto& volumeId : _state->vpkg()->volumeIDs()) {
+        auto volume = _state->vpkg()->volume(volumeId);
+        if (!volume) {
+            continue;
+        }
+        VolumeSelector::VolumeOption opt;
+        opt.id = QString::fromStdString(volumeId);
+        opt.name = QString::fromStdString(volume->name());
+        opt.path = QString::fromStdString(volume->path().string());
+        options.push_back(opt);
+    }
+
+    if (defaultOut && !options.isEmpty()) {
+        *defaultOut = options.front().id;
+        if (!_state->currentVolumeId().empty()) {
+            const QString currentId = QString::fromStdString(_state->currentVolumeId());
+            for (const auto& opt : options) {
+                if (opt.id == currentId) {
+                    *defaultOut = currentId;
+                    break;
+                }
+            }
+        }
+    }
+
+    return options;
+}
+
 void SegmentationCommandHandler::onRenderSegment(const std::string& segmentId)
 {
-    auto surf = _state->vpkg() ? _state->vpkg()->getSurface(segmentId) : nullptr;
-    if (_state->currentVolume() == nullptr || !surf) {
-        QMessageBox::warning(_parentWidget, tr("Error"), tr("Cannot render segment: No volume or invalid segment selected"));
-        return;
-    }
+    auto* surface = requireSurfaceAndRunner(segmentId, false);
+    if (!surface) return;
+
+    auto surf = _state->vpkg()->getSurface(segmentId);
 
     QSettings settings(vc3d::settingsFilePath(), QSettings::IniFormat);
 
@@ -994,17 +1015,14 @@ void SegmentationCommandHandler::onRenderSegment(const std::string& segmentId)
 
 void SegmentationCommandHandler::onSlimFlatten(const std::string& segmentId)
 {
-    auto surf = _state->vpkg() ? _state->vpkg()->getSurface(segmentId) : nullptr;
-    if (_state->currentVolume() == nullptr || !surf) {
-        QMessageBox::warning(_parentWidget, tr("Error"), tr("Cannot SLIM-flatten: No volume or invalid segment selected"));
-        return;
-    }
+    auto* surface = requireSurfaceAndRunner(segmentId, false);
+    if (!surface) return;
     if (_cmdRunner && _cmdRunner->isRunning()) {
         QMessageBox::warning(_parentWidget, tr("Warning"), tr("A command line tool is already running."));
         return;
     }
 
-    const std::filesystem::path segDirFs = surf->path; // tifxyz folder
+    const std::filesystem::path segDirFs = surface->path; // tifxyz folder
     const QString segDir = QString::fromStdString(segDirFs.string());
     const QString segmentStem = QString::fromStdString(segmentId);
 
@@ -1045,27 +1063,10 @@ void SegmentationCommandHandler::onABFFlatten(const std::string& segmentId)
 
 void SegmentationCommandHandler::onGrowSegmentFromSegment(const std::string& segmentId)
 {
-    if (_state->currentVolume() == nullptr || !_state->vpkg()) {
-        QMessageBox::warning(_parentWidget, tr("Error"), tr("Cannot grow segment: No volume package loaded"));
-        return;
-    }
+    auto* surface = requireSurfaceAndRunner(segmentId, true);
+    if (!surface) return;
 
-    auto surf = _state->vpkg()->getSurface(segmentId);
-    if (!surf) {
-        QMessageBox::warning(_parentWidget, tr("Error"), tr("Cannot grow segment: Invalid segment or segment not loaded"));
-        return;
-    }
-
-    if (!_cmdRunner) {
-        emit statusMessage(tr("Command line tools not available"), 3000);
-        return;
-    }
-    if (_cmdRunner->isRunning()) {
-        QMessageBox::warning(_parentWidget, tr("Warning"), tr("A command line tool is already running."));
-        return;
-    }
-
-    QString srcSegment = QString::fromStdString(surf->path.string());
+    QString srcSegment = QString::fromStdString(surface->path.string());
 
     std::filesystem::path volpkgPath = std::filesystem::path(_state->vpkgPath().toStdString());
     std::filesystem::path tracesDir = volpkgPath / "traces";
@@ -1136,29 +1137,12 @@ void SegmentationCommandHandler::onGrowSegmentFromSegment(const std::string& seg
 
 void SegmentationCommandHandler::onAddOverlap(const std::string& segmentId)
 {
-    if (_state->currentVolume() == nullptr || !_state->vpkg()) {
-        QMessageBox::warning(_parentWidget, tr("Error"), tr("Cannot add overlap: No volume package loaded"));
-        return;
-    }
-
-    auto surf = _state->vpkg()->getSurface(segmentId);
-    if (!surf) {
-        QMessageBox::warning(_parentWidget, tr("Error"), tr("Cannot add overlap: Invalid segment or segment not loaded"));
-        return;
-    }
-
-    if (!_cmdRunner) {
-        emit statusMessage(tr("Command line tools not available"), 3000);
-        return;
-    }
-    if (_cmdRunner->isRunning()) {
-        QMessageBox::warning(_parentWidget, tr("Warning"), tr("A command line tool is already running."));
-        return;
-    }
+    auto* surface = requireSurfaceAndRunner(segmentId, true);
+    if (!surface) return;
 
     std::filesystem::path volpkgPath = std::filesystem::path(_state->vpkgPath().toStdString());
     std::filesystem::path pathsDir = volpkgPath / "paths";
-    QString tifxyzPath = QString::fromStdString(surf->path.string());
+    QString tifxyzPath = QString::fromStdString(surface->path.string());
 
     _cmdRunner->setAddOverlapParams(QString::fromStdString(pathsDir.string()), tifxyzPath);
     _cmdRunner->execute(CommandLineToolRunner::Tool::SegAddOverlap);
@@ -1192,33 +1176,22 @@ void SegmentationCommandHandler::onNeighborCopyRequested(const QString& segmentI
         return;
     }
 
-    QVector<NeighborCopyVolumeOption> volumeOptions;
-    for (const auto& volumeId : _state->vpkg()->volumeIDs()) {
-        auto volume = _state->vpkg()->volume(volumeId);
-        if (!volume) {
-            continue;
-        }
-        NeighborCopyVolumeOption option;
-        option.id = QString::fromStdString(volumeId);
-        option.name = QString::fromStdString(volume->name());
-        option.path = QString::fromStdString(volume->path().string());
-        volumeOptions.push_back(option);
-    }
-
-    if (volumeOptions.isEmpty()) {
+    QString defaultVolumeId;
+    const auto volOpts = buildVolumeOptionList(&defaultVolumeId);
+    if (volOpts.isEmpty()) {
         QMessageBox::warning(_parentWidget, tr("Error"), tr("No volumes available in the volume package."));
         return;
     }
 
-    QString defaultVolumeId = volumeOptions.front().id;
-    if (!_state->currentVolumeId().empty()) {
-        const QString currentId = QString::fromStdString(_state->currentVolumeId());
-        for (const auto& opt : volumeOptions) {
-            if (opt.id == currentId) {
-                defaultVolumeId = currentId;
-                break;
-            }
-        }
+    // Convert to NeighborCopyVolumeOption for the dialog
+    QVector<NeighborCopyVolumeOption> volumeOptions;
+    volumeOptions.reserve(volOpts.size());
+    for (const auto& v : volOpts) {
+        NeighborCopyVolumeOption opt;
+        opt.id = v.id;
+        opt.name = v.name;
+        opt.path = v.path;
+        volumeOptions.push_back(opt);
     }
 
     const QString surfacePath = QString::fromStdString(surf->path.string());
@@ -1316,7 +1289,18 @@ void SegmentationCommandHandler::onNeighborCopyRequested(const QString& segmentI
     job.directoryPrefix = copyOut ? QStringLiteral("neighbor_out_") : QStringLiteral("neighbor_in_");
     job.copyOut = copyOut;
     job.pass2OmpThreads = dlg.pass2OmpThreads();
-    job.baselineEntries = snapshotDirectoryEntries(outputDirPath);
+    // Snapshot current directory entries so we can detect the newly-created
+    // surface after the first pass completes.
+    {
+        QSet<QString> entries;
+        const QDir dir(outputDirPath);
+        if (dir.exists()) {
+            for (const auto& fi : dir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot)) {
+                entries.insert(fi.fileName());
+            }
+        }
+        job.baselineEntries = std::move(entries);
+    }
     job.pass1JsonFile = std::move(pass1JsonFile);
     job.pass2JsonFile = std::move(pass2JsonFile);
     job.generatedSurfacePath.clear();
@@ -1375,33 +1359,11 @@ void SegmentationCommandHandler::onResumeLocalGrowPatchRequested(const QString& 
         return;
     }
 
-    QVector<VolumeSelector::VolumeOption> volumeOptions;
-    for (const auto& volumeId : _state->vpkg()->volumeIDs()) {
-        auto volume = _state->vpkg()->volume(volumeId);
-        if (!volume) {
-            continue;
-        }
-        VolumeSelector::VolumeOption option;
-        option.id = QString::fromStdString(volumeId);
-        option.name = QString::fromStdString(volume->name());
-        option.path = QString::fromStdString(volume->path().string());
-        volumeOptions.push_back(option);
-    }
-
+    QString defaultVolumeId;
+    const auto volumeOptions = buildVolumeOptionList(&defaultVolumeId);
     if (volumeOptions.isEmpty()) {
         QMessageBox::warning(_parentWidget, tr("Error"), tr("No volumes available in the volume package."));
         return;
-    }
-
-    QString defaultVolumeId = volumeOptions.front().id;
-    if (!_state->currentVolumeId().empty()) {
-        const QString currentId = QString::fromStdString(_state->currentVolumeId());
-        for (const auto& opt : volumeOptions) {
-            if (opt.id == currentId) {
-                defaultVolumeId = currentId;
-                break;
-            }
-        }
     }
 
     QString selectedVolumePath;
@@ -1514,27 +1476,10 @@ void SegmentationCommandHandler::onResumeLocalGrowPatchRequested(const QString& 
 
 void SegmentationCommandHandler::onConvertToObj(const std::string& segmentId)
 {
-    if (_state->currentVolume() == nullptr || !_state->vpkg()) {
-        QMessageBox::warning(_parentWidget, tr("Error"), tr("Cannot convert to OBJ: No volume package loaded"));
-        return;
-    }
+    auto* surface = requireSurfaceAndRunner(segmentId, true);
+    if (!surface) return;
 
-    auto surf = _state->vpkg()->getSurface(segmentId);
-    if (!surf) {
-        QMessageBox::warning(_parentWidget, tr("Error"), tr("Cannot convert to OBJ: Invalid segment or segment not loaded"));
-        return;
-    }
-
-    if (!_cmdRunner) {
-        emit statusMessage(tr("Command line tools not available"), 3000);
-        return;
-    }
-    if (_cmdRunner->isRunning()) {
-        QMessageBox::warning(_parentWidget, tr("Warning"), tr("A command line tool is already running."));
-        return;
-    }
-
-    std::filesystem::path tifxyzPath = surf->path;
+    std::filesystem::path tifxyzPath = surface->path;
     std::filesystem::path objPath = tifxyzPath / (segmentId + ".obj");
 
     ConvertToObjDialog dlg(_parentWidget,
@@ -1554,18 +1499,10 @@ void SegmentationCommandHandler::onConvertToObj(const std::string& segmentId)
 
 void SegmentationCommandHandler::onCropSurfaceToValidRegion(const std::string& segmentId)
 {
-    if (_state->currentVolume() == nullptr || !_state->vpkg()) {
-        QMessageBox::warning(_parentWidget, tr("Error"), tr("Cannot crop surface: No volume package loaded"));
-        return;
-    }
+    auto* surface = requireSurfaceAndRunner(segmentId, false);
+    if (!surface) return;
 
     auto surf = _state->vpkg()->getSurface(segmentId);
-    if (!surf) {
-        QMessageBox::warning(_parentWidget, tr("Error"), tr("Cannot crop surface: Invalid segment or segment not loaded"));
-        return;
-    }
-
-    QuadSurface* surface = surf.get();
 
     cv::Mat_<cv::Vec3f>* points = surface->rawPointsPtr();
     if (!points || points->empty()) {
@@ -1707,18 +1644,10 @@ void SegmentationCommandHandler::onCropSurfaceToValidRegion(const std::string& s
 
 void SegmentationCommandHandler::onFlipSurface(const std::string& segmentId, bool flipU)
 {
-    if (_state->currentVolume() == nullptr || !_state->vpkg()) {
-        QMessageBox::warning(_parentWidget, tr("Error"), tr("Cannot flip surface: No volume package loaded"));
-        return;
-    }
+    auto* surface = requireSurfaceAndRunner(segmentId, false);
+    if (!surface) return;
 
     auto surf = _state->vpkg()->getSurface(segmentId);
-    if (!surf) {
-        QMessageBox::warning(_parentWidget, tr("Error"), tr("Cannot flip surface: Invalid segment or segment not loaded"));
-        return;
-    }
-
-    QuadSurface* surface = surf.get();
 
     if (flipU) {
         surface->flipU();
@@ -1754,18 +1683,10 @@ void SegmentationCommandHandler::onFlipSurface(const std::string& segmentId, boo
 
 void SegmentationCommandHandler::onRotateSurface(const std::string& segmentId)
 {
-    if (_state->currentVolume() == nullptr || !_state->vpkg()) {
-        QMessageBox::warning(_parentWidget, tr("Error"), tr("Cannot rotate surface: No volume package loaded"));
-        return;
-    }
+    auto* surface = requireSurfaceAndRunner(segmentId, false);
+    if (!surface) return;
 
     auto surf = _state->vpkg()->getSurface(segmentId);
-    if (!surf) {
-        QMessageBox::warning(_parentWidget, tr("Error"), tr("Cannot rotate surface: Invalid segment or segment not loaded"));
-        return;
-    }
-
-    QuadSurface* surface = surf.get();
     surface->rotate(90.0f);
 
     try {
@@ -1794,25 +1715,8 @@ void SegmentationCommandHandler::onRotateSurface(const std::string& segmentId)
 
 void SegmentationCommandHandler::onAlphaCompRefine(const std::string& segmentId)
 {
-    if (_state->currentVolume() == nullptr || !_state->vpkg()) {
-        QMessageBox::warning(_parentWidget, tr("Error"), tr("Cannot refine surface: No volume package loaded"));
-        return;
-    }
-
-    auto surf = _state->vpkg()->getSurface(segmentId);
-    if (!surf) {
-        QMessageBox::warning(_parentWidget, tr("Error"), tr("Cannot refine surface: Invalid segment or segment not loaded"));
-        return;
-    }
-
-    if (!_cmdRunner) {
-        emit statusMessage(tr("Command line tools not available"), 3000);
-        return;
-    }
-    if (_cmdRunner->isRunning()) {
-        QMessageBox::warning(_parentWidget, tr("Warning"), tr("A command line tool is already running."));
-        return;
-    }
+    auto* surface = requireSurfaceAndRunner(segmentId, true);
+    if (!surface) return;
 
     QString volumePath = getCurrentVolumePath();
     if (volumePath.isEmpty()) {
@@ -1820,7 +1724,7 @@ void SegmentationCommandHandler::onAlphaCompRefine(const std::string& segmentId)
         return;
     }
 
-    QString srcPath = QString::fromStdString(surf->path.string());
+    QString srcPath = QString::fromStdString(surface->path.string());
     QFileInfo srcInfo(srcPath);
 
     QString defaultOutput;
@@ -2059,17 +1963,14 @@ void SegmentationCommandHandler::launchNeighborCopySecondPass()
 
 void SegmentationCommandHandler::onAWSUpload(const std::string& segmentId)
 {
-    auto surf = _state->vpkg() ? _state->vpkg()->getSurface(segmentId) : nullptr;
-    if (_state->currentVolume() == nullptr || !surf) {
-        QMessageBox::warning(_parentWidget, tr("Error"), tr("Cannot upload to AWS: No volume or invalid segment selected"));
-        return;
-    }
+    auto* surface = requireSurfaceAndRunner(segmentId, false);
+    if (!surface) return;
     if (_cmdRunner && _cmdRunner->isRunning()) {
         QMessageBox::warning(_parentWidget, tr("Warning"), tr("A command line tool is already running."));
         return;
     }
 
-    const std::filesystem::path segDirFs = surf->path;
+    const std::filesystem::path segDirFs = surface->path;
     const QString  segDir   = QString::fromStdString(segDirFs.string());
     const QString  objPath  = QDir(segDir).filePath(QString::fromStdString(segmentId) + ".obj");
     const QString  flatObj  = QDir(segDir).filePath(QString::fromStdString(segmentId) + "_flatboi.obj");

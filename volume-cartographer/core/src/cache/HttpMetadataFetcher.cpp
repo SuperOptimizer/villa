@@ -1,4 +1,5 @@
 #include "vc/core/cache/HttpMetadataFetcher.hpp"
+#include "vc/core/cache/CacheDebugLog.hpp"
 
 #include <cstdio>
 #include <fstream>
@@ -39,22 +40,9 @@ std::string httpGetString(const std::string& url, const HttpAuth& auth)
     curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
     curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1L);
 
-    struct curl_slist* headers = nullptr;
-    std::string userpwd;
-    if (auth.awsSigv4) {
-        std::string sigv4 = "aws:amz:" + auth.region + ":s3";
-        curl_easy_setopt(curl, CURLOPT_AWS_SIGV4, sigv4.c_str());
-        userpwd = auth.accessKey + ":" + auth.secretKey;
-        curl_easy_setopt(curl, CURLOPT_USERPWD, userpwd.c_str());
-        if (!auth.sessionToken.empty()) {
-            std::string hdr = "x-amz-security-token: " + auth.sessionToken;
-            headers = curl_slist_append(headers, hdr.c_str());
-            curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-        }
-    }
+    auto authGuard = applyCurlAuth(curl, auth);
 
     CURLcode res = curl_easy_perform(curl);
-    if (headers) curl_slist_free_all(headers);
     curl_easy_cleanup(curl);
 
     if (res != CURLE_OK) return {};
@@ -124,14 +112,16 @@ S3ListResult s3ListObjects(const std::string& httpsBaseUrl, const HttpAuth& auth
         listUrl += "&prefix=" + prefix;
     }
 
-    std::fprintf(stderr, "[S3] ListObjects: %s\n", listUrl.c_str());
+    if (auto* log = cacheDebugLog())
+        std::fprintf(log, "[S3] ListObjects: %s\n", listUrl.c_str());
 
     // Use our own curl handle without FAILONERROR so we can log the status
     std::string xml;
     {
         CURL* curl = curl_easy_init();
         if (!curl) {
-            std::fprintf(stderr, "[S3] Failed to init curl\n");
+            if (auto* log = cacheDebugLog())
+                std::fprintf(log, "[S3] Failed to init curl\n");
             return result;
         }
 
@@ -142,39 +132,28 @@ S3ListResult s3ListObjects(const std::string& httpsBaseUrl, const HttpAuth& auth
         curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
         curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
 
-        struct curl_slist* headers = nullptr;
-        std::string userpwd;
-        if (auth.awsSigv4) {
-            std::string sigv4 = "aws:amz:" + auth.region + ":s3";
-            curl_easy_setopt(curl, CURLOPT_AWS_SIGV4, sigv4.c_str());
-            userpwd = auth.accessKey + ":" + auth.secretKey;
-            curl_easy_setopt(curl, CURLOPT_USERPWD, userpwd.c_str());
-            if (!auth.sessionToken.empty()) {
-                std::string hdr = "x-amz-security-token: " + auth.sessionToken;
-                headers = curl_slist_append(headers, hdr.c_str());
-                curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-            }
-        }
+        auto authGuard = applyCurlAuth(curl, auth);
 
         CURLcode res = curl_easy_perform(curl);
 
         long httpCode = 0;
         curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
 
-        if (headers) curl_slist_free_all(headers);
         curl_easy_cleanup(curl);
 
         if (res != CURLE_OK) {
-            std::fprintf(stderr, "[S3] ListObjects curl error: %s\n",
-                         curl_easy_strerror(res));
+            if (auto* log = cacheDebugLog())
+                std::fprintf(log, "[S3] ListObjects curl error: %s\n",
+                             curl_easy_strerror(res));
             return result;
         }
 
         if (httpCode != 200) {
-            std::fprintf(stderr, "[S3] ListObjects HTTP %ld\n", httpCode);
-            // Log first 500 chars of error body for debugging
-            if (!xml.empty()) {
-                std::fprintf(stderr, "[S3] Response: %.500s\n", xml.c_str());
+            if (auto* log = cacheDebugLog()) {
+                std::fprintf(log, "[S3] ListObjects HTTP %ld\n", httpCode);
+                if (!xml.empty()) {
+                    std::fprintf(log, "[S3] Response: %.500s\n", xml.c_str());
+                }
             }
 
             // Detect auth errors so callers can prompt for fresh credentials
@@ -203,7 +182,8 @@ S3ListResult s3ListObjects(const std::string& httpsBaseUrl, const HttpAuth& auth
     }
 
     if (xml.empty()) {
-        std::fprintf(stderr, "[S3] ListObjects returned empty response\n");
+        if (auto* log = cacheDebugLog())
+            std::fprintf(log, "[S3] ListObjects returned empty response\n");
         return result;
     }
 
@@ -235,8 +215,9 @@ S3ListResult s3ListObjects(const std::string& httpsBaseUrl, const HttpAuth& auth
         }
     }
 
-    std::fprintf(stderr, "[S3] Found %zu prefixes, %zu objects\n",
-                 result.prefixes.size(), result.objects.size());
+    if (auto* log = cacheDebugLog())
+        std::fprintf(log, "[S3] Found %zu prefixes, %zu objects\n",
+                     result.prefixes.size(), result.objects.size());
 #else
     (void)httpsBaseUrl;
     (void)auth;
@@ -282,22 +263,9 @@ bool httpDownloadFile(const std::string& url, const std::filesystem::path& dest,
     curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
     curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1L);
 
-    struct curl_slist* headers = nullptr;
-    std::string userpwd;
-    if (auth.awsSigv4) {
-        std::string sigv4 = "aws:amz:" + auth.region + ":s3";
-        curl_easy_setopt(curl, CURLOPT_AWS_SIGV4, sigv4.c_str());
-        userpwd = auth.accessKey + ":" + auth.secretKey;
-        curl_easy_setopt(curl, CURLOPT_USERPWD, userpwd.c_str());
-        if (!auth.sessionToken.empty()) {
-            std::string hdr = "x-amz-security-token: " + auth.sessionToken;
-            headers = curl_slist_append(headers, hdr.c_str());
-            curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-        }
-    }
+    auto authGuard = applyCurlAuth(curl, auth);
 
     CURLcode res = curl_easy_perform(curl);
-    if (headers) curl_slist_free_all(headers);
     curl_easy_cleanup(curl);
     std::fclose(fp);
 
@@ -385,8 +353,9 @@ static std::optional<RemoteZarrInfo> tryLoadCachedMetadata(
         } catch (...) {}
     }
 
-    std::fprintf(stderr, "[REMOTE] Using cached metadata from %s (%d levels)\n",
-                 stagingDir.c_str(), numLevels);
+    if (auto* log = cacheDebugLog())
+        std::fprintf(log, "[REMOTE] Using cached metadata from %s (%d levels)\n",
+                     stagingDir.c_str(), numLevels);
 
     return RemoteZarrInfo{
         .url = baseUrl,
@@ -424,8 +393,9 @@ RemoteZarrInfo fetchRemoteZarrMetadata(
 
     std::filesystem::create_directories(stagingDir);
 
-    std::fprintf(stderr, "[REMOTE] Fetching metadata for %s -> %s\n",
-                 baseUrl.c_str(), stagingDir.c_str());
+    if (auto* log = cacheDebugLog())
+        std::fprintf(log, "[REMOTE] Fetching metadata for %s -> %s\n",
+                     baseUrl.c_str(), stagingDir.c_str());
 
     // Fetch .zgroup
     auto zgroup = httpGetString(baseUrl + "/.zgroup", auth);
@@ -451,7 +421,8 @@ RemoteZarrInfo fetchRemoteZarrMetadata(
         std::string levelStr = std::to_string(lvl);
         auto zarray = httpGetString(baseUrl + "/" + levelStr + "/.zarray", auth);
         if (zarray.empty()) {
-            std::fprintf(stderr, "[REMOTE] Level %d: no .zarray, stopping\n", lvl);
+            if (auto* log = cacheDebugLog())
+                std::fprintf(log, "[REMOTE] Level %d: no .zarray, stopping\n", lvl);
             break;
         }
 
@@ -459,8 +430,9 @@ RemoteZarrInfo fetchRemoteZarrMetadata(
         writeFile(levelDir / ".zarray", zarray);
         numLevels++;
 
-        std::fprintf(stderr, "[REMOTE] Level %d: fetched .zarray (%zu bytes)\n",
-                     lvl, zarray.size());
+        if (auto* log = cacheDebugLog())
+            std::fprintf(log, "[REMOTE] Level %d: fetched .zarray (%zu bytes)\n",
+                         lvl, zarray.size());
 
         // Parse level 0 for shape and delimiter
         if (lvl == 0) {
@@ -470,7 +442,8 @@ RemoteZarrInfo fetchRemoteZarrMetadata(
                     delimiter = level0Meta["dimension_separator"].get<std::string>();
                 }
             } catch (const std::exception& e) {
-                std::fprintf(stderr, "[REMOTE] Warning: failed to parse level 0 .zarray: %s\n", e.what());
+                if (auto* log = cacheDebugLog())
+                    std::fprintf(log, "[REMOTE] Warning: failed to parse level 0 .zarray: %s\n", e.what());
             }
         }
     }
@@ -503,8 +476,9 @@ RemoteZarrInfo fetchRemoteZarrMetadata(
 
     writeFile(stagingDir / "meta.json", meta.dump(2));
 
-    std::fprintf(stderr, "[REMOTE] Metadata complete: %d levels, shape=[%d, %d, %d] delimiter='%s'\n",
-                 numLevels, slices, height, width, delimiter.c_str());
+    if (auto* log = cacheDebugLog())
+        std::fprintf(log, "[REMOTE] Metadata complete: %d levels, shape=[%d, %d, %d] delimiter='%s'\n",
+                     numLevels, slices, height, width, delimiter.c_str());
 
     return RemoteZarrInfo{
         .url = baseUrl,

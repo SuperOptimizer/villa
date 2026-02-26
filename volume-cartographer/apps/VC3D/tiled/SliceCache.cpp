@@ -1,4 +1,5 @@
 #include "SliceCache.hpp"
+#include "FnvHash.hpp"
 #include <cmath>
 
 // ============================================================================
@@ -25,21 +26,14 @@ SliceCacheKey SliceCacheKey::make(const WorldTileKey& worldTile, const TiledView
 
 size_t SliceCacheKeyHash::operator()(const SliceCacheKey& k) const
 {
-    // FNV-1a inspired hash combining
-    size_t h = 14695981039346656037ULL;
-    auto mix = [&h](size_t val) {
-        h ^= val;
-        h *= 1099511628211ULL;
-    };
-
-    mix(static_cast<size_t>(k.worldTile.worldCol));
-    mix(static_cast<size_t>(k.worldTile.worldRow));
-    mix(static_cast<size_t>(k.scaleQ));
-    mix(static_cast<size_t>(k.zOffQ));
-    mix(static_cast<size_t>(k.dsScaleIdx));
-    mix(k.paramsHash);
-
-    return h;
+    uint64_t h = fnv::BASIS;
+    fnv::mix(h, static_cast<uint64_t>(k.worldTile.worldCol));
+    fnv::mix(h, static_cast<uint64_t>(k.worldTile.worldRow));
+    fnv::mix(h, static_cast<uint64_t>(k.scaleQ));
+    fnv::mix(h, static_cast<uint64_t>(k.zOffQ));
+    fnv::mix(h, static_cast<uint64_t>(k.dsScaleIdx));
+    fnv::mix(h, k.paramsHash);
+    return static_cast<size_t>(h);
 }
 
 // ============================================================================
@@ -49,22 +43,6 @@ size_t SliceCacheKeyHash::operator()(const SliceCacheKey& k) const
 SliceCache::SliceCache(size_t maxEntries)
     : _maxEntries(maxEntries)
 {
-}
-
-std::optional<QPixmap> SliceCache::get(const SliceCacheKey& key)
-{
-    std::lock_guard<std::mutex> lock(_mutex);
-
-    auto it = _map.find(key);
-    if (it == _map.end()) {
-        ++_misses;
-        return std::nullopt;
-    }
-
-    // Move to front (most recently used)
-    _lruList.splice(_lruList.begin(), _lruList, it->second);
-    ++_hits;
-    return it->second->pixmap;
 }
 
 SliceCacheLookup SliceCache::getBest(const SliceCacheKey& key, int maxCoarserLevels)
@@ -128,20 +106,6 @@ void SliceCache::clear()
     std::lock_guard<std::mutex> lock(_mutex);
     _map.clear();
     _lruList.clear();
-}
-
-void SliceCache::invalidate(const std::function<bool(const SliceCacheKey&)>& predicate)
-{
-    std::lock_guard<std::mutex> lock(_mutex);
-
-    for (auto it = _lruList.begin(); it != _lruList.end();) {
-        if (predicate(it->key)) {
-            _map.erase(it->key);
-            it = _lruList.erase(it);
-        } else {
-            ++it;
-        }
-    }
 }
 
 size_t SliceCache::size() const

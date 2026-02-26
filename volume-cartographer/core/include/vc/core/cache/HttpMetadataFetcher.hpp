@@ -51,4 +51,52 @@ S3ListResult s3ListObjects(const std::string& httpsBaseUrl, const HttpAuth& auth
 // Uses atomic write (temp file + rename).
 bool httpDownloadFile(const std::string& url, const std::filesystem::path& dest, const HttpAuth& auth = {});
 
+// ---- Shared curl auth helper (VC_USE_CURL only) -----------------------------
+#ifdef VC_USE_CURL
+#include <curl/curl.h>
+
+// RAII guard that applies AWS SigV4 auth to a CURL handle.
+// The guard owns the header slist and userpwd string, which must outlive
+// curl_easy_perform(). Construct before perform, destroy after.
+struct CurlAuthGuard {
+    struct curl_slist* headers = nullptr;
+    std::string userpwd;
+
+    CurlAuthGuard() = default;
+    ~CurlAuthGuard() { if (headers) curl_slist_free_all(headers); }
+
+    CurlAuthGuard(const CurlAuthGuard&) = delete;
+    CurlAuthGuard& operator=(const CurlAuthGuard&) = delete;
+    CurlAuthGuard(CurlAuthGuard&& o) noexcept
+        : headers(o.headers), userpwd(std::move(o.userpwd)) { o.headers = nullptr; }
+    CurlAuthGuard& operator=(CurlAuthGuard&& o) noexcept {
+        if (this != &o) {
+            if (headers) curl_slist_free_all(headers);
+            headers = o.headers; o.headers = nullptr;
+            userpwd = std::move(o.userpwd);
+        }
+        return *this;
+    }
+};
+
+// Apply AWS SigV4 auth options to a CURL handle if auth.awsSigv4 is set.
+// Returns a guard whose lifetime must span the curl_easy_perform() call.
+[[nodiscard]] inline CurlAuthGuard applyCurlAuth(CURL* curl, const HttpAuth& auth)
+{
+    CurlAuthGuard guard;
+    if (!auth.awsSigv4) return guard;
+
+    std::string sigv4 = "aws:amz:" + auth.region + ":s3";
+    curl_easy_setopt(curl, CURLOPT_AWS_SIGV4, sigv4.c_str());
+    guard.userpwd = auth.accessKey + ":" + auth.secretKey;
+    curl_easy_setopt(curl, CURLOPT_USERPWD, guard.userpwd.c_str());
+    if (!auth.sessionToken.empty()) {
+        std::string hdr = "x-amz-security-token: " + auth.sessionToken;
+        guard.headers = curl_slist_append(guard.headers, hdr.c_str());
+        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, guard.headers);
+    }
+    return guard;
+}
+#endif  // VC_USE_CURL
+
 }  // namespace vc::cache

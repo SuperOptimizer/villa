@@ -219,8 +219,8 @@ void PlaneSlicingOverlayController::collectPrimitives(VolumeViewerBase* viewer,
         cv::Vec3f positivePoint = origin + dirXY * span;
         cv::Vec3f negativePoint = origin - dirXY * span;
 
-        QPointF positiveScene = builder.viewer()->volumePointToScene(positivePoint);
-        QPointF negativeScene = builder.viewer()->volumePointToScene(negativePoint);
+        QPointF positiveScene = builder.viewer()->volumeToScene(positivePoint);
+        QPointF negativeScene = builder.viewer()->volumeToScene(negativePoint);
 
         QColor lineColor = def.lineColor;
         lineColor.setAlphaF(_overlayOpacity);
@@ -237,8 +237,8 @@ void PlaneSlicingOverlayController::collectPrimitives(VolumeViewerBase* viewer,
         cv::Vec3f handlePositive = origin + handleOffset3D;
         cv::Vec3f handleNegative = origin - handleOffset3D;
 
-        QPointF handlePositiveScene = builder.viewer()->volumePointToScene(handlePositive);
-        QPointF handleNegativeScene = builder.viewer()->volumePointToScene(handleNegative);
+        QPointF handlePositiveScene = builder.viewer()->volumeToScene(handlePositive);
+        QPointF handleNegativeScene = builder.viewer()->volumeToScene(handleNegative);
 
         QColor handlePen = kHandleOutline;
         handlePen.setAlphaF(std::min(1.0f, _overlayOpacity + 0.25f));
@@ -292,7 +292,7 @@ void PlaneSlicingOverlayController::handleMousePress(VolumeViewerBase* viewer,
     }
 
     ViewerState& state = it->second;
-    QPointF scenePoint = viewer->volumePointToScene(volumePoint);
+    QPointF scenePoint = viewer->volumeToScene(volumePoint);
 
     for (auto& entry : state.planes) {
         const std::string& planeName = entry.first;
@@ -304,7 +304,7 @@ void PlaneSlicingOverlayController::handleMousePress(VolumeViewerBase* viewer,
             _activeDrag.viewer = viewer;
             _activeDrag.planeName = planeName;
             _activeDrag.positiveHandle = onPositive;
-            viewer->graphicsView()->setCursor(Qt::ClosedHandCursor);
+            if (auto* gv = viewer->graphicsView()) gv->setCursor(Qt::ClosedHandCursor);
             break;
         }
     }
@@ -326,7 +326,7 @@ void PlaneSlicingOverlayController::handleMouseMove(VolumeViewerBase* viewer,
     }
 
     ViewerState& state = it->second;
-    QPointF scenePoint = viewer->volumePointToScene(volumePoint);
+    QPointF scenePoint = viewer->volumeToScene(volumePoint);
 
     if (_activeDrag.viewer == viewer && !_activeDrag.planeName.empty()) {
         if (!(buttons & Qt::LeftButton)) {
@@ -396,7 +396,7 @@ void PlaneSlicingOverlayController::handleMouseMove(VolumeViewerBase* viewer,
         }
     }
 
-    viewer->graphicsView()->setCursor(hoveringHandle ? Qt::OpenHandCursor : Qt::ArrowCursor);
+    if (auto* gv = viewer->graphicsView()) gv->setCursor(hoveringHandle ? Qt::OpenHandCursor : Qt::ArrowCursor);
 }
 
 void PlaneSlicingOverlayController::handleMouseRelease(VolumeViewerBase* viewer,
@@ -412,7 +412,7 @@ void PlaneSlicingOverlayController::handleMouseRelease(VolumeViewerBase* viewer,
         const bool hadActiveDrag = !_activeDrag.planeName.empty();
         _activeDrag.viewer = nullptr;
         _activeDrag.planeName.clear();
-        viewer->graphicsView()->setCursor(Qt::ArrowCursor);
+        if (auto* gv = viewer->graphicsView()) gv->setCursor(Qt::ArrowCursor);
         if (hadActiveDrag && _rotationFinishedCallback) {
             _rotationFinishedCallback();
         }
@@ -452,7 +452,7 @@ bool PlaneSlicingOverlayController::isVolumePointNearRotationHandle(VolumeViewer
     if (!viewer) {
         return false;
     }
-    const QPointF scenePoint = viewer->volumePointToScene(volumePoint);
+    const QPointF scenePoint = viewer->volumeToScene(volumePoint);
     return isScenePointNearRotationHandle(viewer, scenePoint, radiusScale);
 }
 

@@ -18,7 +18,6 @@ TileRenderResult TileRenderer::renderTile(
 {
     TileRenderResult result;
     result.worldKey = params.worldKey;
-    result.isPlaneSurface = params.isPlaneSurface;
     result.epoch = params.epoch;
     result.scale = params.scale;
     result.zOff = params.zOff;

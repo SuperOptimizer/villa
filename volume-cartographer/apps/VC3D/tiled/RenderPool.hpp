@@ -21,7 +21,7 @@ class TileRenderTask : public QRunnable
 public:
     TileRenderTask(TileRenderParams params,
                    std::shared_ptr<Surface> surface,
-                   Volume* volume,
+                   std::shared_ptr<Volume> volume,
                    class RenderPool* pool);
 
     void run() override;
@@ -29,7 +29,7 @@ public:
 private:
     TileRenderParams _params;
     std::shared_ptr<Surface> _surface;
-    Volume* _volume;
+    std::shared_ptr<Volume> _volume;
     RenderPool* _pool;
 };
 
@@ -47,7 +47,7 @@ public:
     // Submit a tile for background rendering.
     void submit(const TileRenderParams& params,
                 const std::shared_ptr<Surface>& surface,
-                Volume* volume);
+                const std::shared_ptr<Volume>& volume);
 
     // Take up to maxResults completed results (main thread).
     // Results with epoch < minEpoch are discarded.

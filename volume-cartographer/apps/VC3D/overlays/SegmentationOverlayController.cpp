@@ -644,8 +644,8 @@ void SegmentationOverlayController::collectPrimitives(VolumeViewerBase* viewer,
 
     // Render correction drag line (regardless of editing mode - corrections are annotations)
     if (state.correctionDragActive) {
-        const QPointF startScene = viewer->volumePointToScene(state.correctionDragStart);
-        const QPointF currentScene = viewer->volumePointToScene(state.correctionDragCurrent);
+        const QPointF startScene = viewer->volumeToScene(state.correctionDragStart);
+        const QPointF currentScene = viewer->volumeToScene(state.correctionDragCurrent);
 
         // Draw line from start to current
         ViewerOverlayControllerBase::OverlayStyle lineStyle;
@@ -741,11 +741,11 @@ void SegmentationOverlayController::buildRadiusOverlay(const State& state,
     }
 
     const cv::Vec3f world = state.activeMarker->world;
-    const QPointF sceneCenter = viewer->volumePointToScene(world);
+    const QPointF sceneCenter = viewer->volumeToScene(world);
 
     cv::Vec3f offsetWorld = world;
     offsetWorld[0] += radiusWorld;
-    const QPointF sceneEdge = viewer->volumePointToScene(offsetWorld);
+    const QPointF sceneEdge = viewer->volumeToScene(offsetWorld);
     const qreal radiusPixels = std::hypot(sceneEdge.x() - sceneCenter.x(),
                                           sceneEdge.y() - sceneCenter.y());
 
@@ -786,7 +786,7 @@ void SegmentationOverlayController::buildVertexMarkers(const State& state,
     };
 
     const auto appendMarker = [&](VertexMarker marker) {
-        const QPointF scene = viewer->volumePointToScene(marker.world);
+        const QPointF scene = viewer->volumeToScene(marker.world);
         const auto style = buildStyle(marker);
         builder.addCircle(scene, kMarkerRadius, true, style);
     };
@@ -1099,16 +1099,16 @@ void SegmentationOverlayController::buildApprovalMaskOverlay(const State& state,
         const float brushRadiusNative = state.approvalBrushRadius;
 
         if (isPlaneViewer) {
-            // For plane viewers: use volumePointToScene which is fast (O(1) for PlaneSurface)
+            // For plane viewers: use volumeToScene which is fast (O(1) for PlaneSurface)
             // Compute center and radius consistently using the same projection
-            const QPointF sceneCenter = viewer->volumePointToScene(hoverWorld);
+            const QPointF sceneCenter = viewer->volumeToScene(hoverWorld);
 
             // Convert brush radius from native voxels to scene pixels
             // Use both X and Y offsets to handle different plane orientations
             const cv::Vec3f offsetPosX = hoverWorld + cv::Vec3f(brushRadiusNative, 0, 0);
             const cv::Vec3f offsetPosY = hoverWorld + cv::Vec3f(0, brushRadiusNative, 0);
-            const QPointF sceneOffsetX = viewer->volumePointToScene(offsetPosX);
-            const QPointF sceneOffsetY = viewer->volumePointToScene(offsetPosY);
+            const QPointF sceneOffsetX = viewer->volumeToScene(offsetPosX);
+            const QPointF sceneOffsetY = viewer->volumeToScene(offsetPosY);
             const qreal radiusPixelsX = std::hypot(sceneOffsetX.x() - sceneCenter.x(),
                                                     sceneOffsetX.y() - sceneCenter.y());
             const qreal radiusPixelsY = std::hypot(sceneOffsetY.x() - sceneCenter.x(),
@@ -1136,8 +1136,8 @@ void SegmentationOverlayController::buildApprovalMaskOverlay(const State& state,
             const float thisViewerScale = viewer->getCurrentScale();
 
             // Convert world position to scene coordinates
-            // This uses volumePointToScene which calls pointTo for QuadSurface
-            const QPointF sceneCenter = viewer->volumePointToScene(hoverWorld);
+            // This uses volumeToScene which calls pointTo for QuadSurface
+            const QPointF sceneCenter = viewer->volumeToScene(hoverWorld);
 
             // Convert from native voxels to grid units
             float surfaceScale = 1.0f;
@@ -1172,7 +1172,7 @@ void SegmentationOverlayController::buildApprovalMaskOverlay(const State& state,
                     // Project the cylinder axis (plane normal) into the flattened view
                     const cv::Vec3f& normal = *state.approvalHoverPlaneNormal;
                     const cv::Vec3f axisEndWorld = hoverWorld + normal * brushDepthNative;
-                    const QPointF axisEndScene = viewer->volumePointToScene(axisEndWorld);
+                    const QPointF axisEndScene = viewer->volumeToScene(axisEndWorld);
 
                     // Compute angle from center to axis end
                     const qreal dx = axisEndScene.x() - sceneCenter.x();

@@ -50,14 +50,6 @@ cv::Vec3f normalizeOrZero(const cv::Vec3f& v)
     return v * (1.0f / magnitude);
 }
 
-cv::Vec3f crossProduct(const cv::Vec3f& a, const cv::Vec3f& b)
-{
-    return cv::Vec3f(
-        a[1] * b[2] - a[2] * b[1],
-        a[2] * b[0] - a[0] * b[2],
-        a[0] * b[1] - a[1] * b[0]);
-}
-
 float signedAngleBetween(const cv::Vec3f& from, const cv::Vec3f& to, const cv::Vec3f& axis)
 {
     cv::Vec3f fromNorm = normalizeOrZero(from);
@@ -68,7 +60,7 @@ float signedAngleBetween(const cv::Vec3f& from, const cv::Vec3f& to, const cv::V
 
     float dot = fromNorm.dot(toNorm);
     dot = std::clamp(dot, -1.0f, 1.0f);
-    cv::Vec3f cross = crossProduct(fromNorm, toNorm);
+    cv::Vec3f cross = fromNorm.cross(toNorm);
     float angle = std::atan2(cv::norm(cross), dot);
     float sign = cross.dot(axis) >= 0.0f ? 1.0f : -1.0f;
     return angle * sign;
@@ -127,7 +119,7 @@ void AxisAlignedSliceController::onMousePress(CTiledVolumeViewer* viewer, const 
 
     DragState& state = _drags[viewer];
     state.active = true;
-    state.startScenePos = viewer->volumePointToScene(volLoc);
+    state.startScenePos = viewer->volumeToScene(volLoc);
     state.startRotationDegrees = currentRotationDegrees(surfaceName);
 }
 
@@ -148,7 +140,7 @@ void AxisAlignedSliceController::onMouseMove(CTiledVolumeViewer* viewer, const c
     }
 
     DragState& state = it->second;
-    QPointF currentScenePos = viewer->volumePointToScene(volLoc);
+    QPointF currentScenePos = viewer->volumeToScene(volLoc);
     const float dragPixels = static_cast<float>(currentScenePos.y() - state.startScenePos.y());
     const float candidate = normalizeDegrees(state.startRotationDegrees - dragPixels * kAxisRotationDegreesPerScenePixel);
     const float currentRotation = currentRotationDegrees(surfaceName);
