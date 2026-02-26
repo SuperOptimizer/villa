@@ -22,6 +22,7 @@ add_library(vc_core
         src/cache/DiskStore.cpp
         src/cache/ChunkSource.cpp
         src/cache/HttpMetadataFetcher.cpp
+        src/cache/TieredChunkCache.cpp
         src/Geometry.cpp
         src/Thinning.cpp
         src/Umbilicus.cpp
