@@ -1,0 +1,355 @@
+================================================================================
+  TILED RENDERER BRANCH → MAIN: SEQUENCED PR PLAN
+================================================================================
+
+Branch: tiled_renderer (347 files changed, +32645/-54156 vs main)
+Goal:   Break into ~26 small PRs that never leave main broken.
+Created: 2026-02-26
+
+The changes fall into three layers:
+  1. Core library (~30 new files) — cache, VcDataset, types, utilities
+  2. CLI apps (~15 files) — migrate from z5/ChunkCache to VcDataset/TieredChunkCache
+  3. VC3D app (~70 files) — architecture swap (CVolumeViewer → CTiledVolumeViewer)
+
+Key constraint: new APIs are added alongside old ones first, then old ones removed.
+
+Decision: The SuperOptimizer/utils repo is NOT vendored via FetchContent. Instead,
+the specific files needed (zarr.hpp, tensor.hpp, json.hpp + .cpp files) will be
+copied directly into the VC source tree when needed (PR 6).
+
+================================================================================
+  PR STATUS
+================================================================================
+
+  [DONE]  PR 1  — Build system deps
+  [DONE]  PR 2  — Cache primitives (headers)
+  [    ]  PR 3  — Cache I/O (IOPool + DiskStore)
+  [    ]  PR 4  — HTTP metadata + chunk sources
+  [    ]  PR 5  — TieredChunkCache
+  [    ]  PR 6  — VcDataset + cache factory (+ copy utils zarr files)
+  [    ]  PR 7  — New types and small utilities
+  [    ]  PR 8  — Remote utilities
+  [    ]  PR 9  — Slicing API update
+  [    ]  PR 10 — Volume refactor
+  [    ]  PR 11 — VolumePkg + remaining core updates
+  [    ]  PR 12 — CLI apps batch 1 (zarr tools)
+  [    ]  PR 13 — CLI apps batch 2 (remaining tools)
+  [    ]  PR 14 — CLI apps batch 3 (diffusion + cleanup)
+  [    ]  PR 15 — Remove old z5/ChunkCache
+  [    ]  PR 16 — VC3D standalone utilities
+  [    ]  PR 17 — CState + VolumeViewerBase
+  [    ]  PR 18 — Tiled renderer data structures
+  [    ]  PR 19 — Tiled renderer pipeline
+  [    ]  PR 20 — CTiledVolumeViewer widget
+  [    ]  PR 21 — Overlay controller updates
+  [    ]  PR 22 — SegmentationCommandHandler + services
+  [    ]  PR 23 — ViewerManager + CWindow integration
+  [    ]  PR 24 — Remaining VC3D updates
+  [    ]  PR 25 — Segmentation tools + growth
+  [    ]  PR 26 — Delete old viewer code
+
+================================================================================
+  PR DETAILS
+================================================================================
+
+--- PR 1: Build system — add new dependencies [DONE] --------------------------
+Branch: pr1-build-system-deps (based on main)
+Files (3):
+  - cmake/VCFindDependencies.cmake — vc_suppress_warnings(), CURL, Qt6::Concurrent
+  - cmake/VCSanitizers.cmake — ASAN+leak, -fno-lto for ASAN/UBSAN
+  - scripts/fromscratch.sh — zlib URL, OpenBLAS arch detect, remove bzip2/brotli/
+    TBB/Python/z5, trim OpenCV modules
+Notes: z5 kept. VCToolchain.cmake change deferred to PR 15 (z5 conda workaround).
+
+--- PR 2: Cache primitives — headers only [DONE] ------------------------------
+Branch: pr2-cache-primitives (based on pr1-build-system-deps)
+Files (6):
+  - core/include/vc/core/cache/ChunkKey.hpp — chunk coordinate key + FNV-1a hash
+  - core/include/vc/core/cache/ChunkData.hpp — decompressed chunk container
+  - core/include/vc/core/cache/CacheDebugLog.hpp — env-var gated debug log
+  - core/include/vc/core/cache/CacheUtils.hpp — readFileToVector(), chunkFilename()
+  - core/test/test_cache_primitives.cpp — 15 tests
+  - core/test/CMakeLists.txt — register test
+Fixes applied:
+  - coarsen() guards against negative shift (targetLevel < level)
+  - readFileToVector() handles EINTR
+
+--- PR 3: Cache I/O — IOPool + DiskStore ---------------------------------------
+Branch: pr3-cache-io (based on pr2)
+Files (4):
+  - core/include/vc/core/cache/IOPool.hpp + core/src/cache/IOPool.cpp
+  - core/include/vc/core/cache/DiskStore.hpp + core/src/cache/DiskStore.cpp
+Tests: DiskStore write/read round-trip. IOPool submit/complete.
+CMakeLists.txt: add src/cache/*.cpp, link CURL::libcurl.
+
+--- PR 4: HTTP metadata + chunk sources ----------------------------------------
+Branch: pr4-chunk-sources (based on pr3)
+Files (4):
+  - core/include/vc/core/cache/HttpMetadataFetcher.hpp + core/src/cache/HttpMetadataFetcher.cpp
+  - core/include/vc/core/cache/ChunkSource.hpp + core/src/cache/ChunkSource.cpp
+Tests: FileSystemChunkSource with temp zarr dir. HttpChunkSource skip if no network.
+
+--- PR 5: TieredChunkCache -----------------------------------------------------
+Branch: pr5-tiered-cache (based on pr4)
+Files (2):
+  - core/include/vc/core/cache/TieredChunkCache.hpp + core/src/cache/TieredChunkCache.cpp
+Tests: Create with FileSystemChunkSource, read chunks, verify hot hits.
+  getBestAvailable() progressive behavior. LRU eviction.
+
+--- PR 6: VcDataset + cache factory --------------------------------------------
+Branch: pr6-vcdataset (based on pr5)
+Files (6 + copied utils files):
+  - core/include/vc/core/types/VcDataset.hpp + core/src/VcDataset.cpp
+  - core/include/vc/core/cache/VcDecompressor.hpp + core/src/cache/VcDecompressor.cpp
+  - core/include/vc/core/cache/SimpleCacheFactory.hpp + core/src/cache/SimpleCacheFactory.cpp
+  - Copy utils zarr/tensor/json files into core/vendored/ or similar
+Tests: Open zarr dataset, verify shape/dtype/chunks match z5.
+Notes: This is where we copy the specific files from SuperOptimizer/utils
+  (zarr.hpp, tensor.hpp, json.hpp + their .cpp files) instead of vendoring the repo.
+
+--- PR 7: New types and small utilities ----------------------------------------
+Branch: pr7-types-utils (based on pr6)
+Files (6):
+  - core/include/vc/core/types/Sampling.hpp — enum (Nearest, Trilinear, Tricubic)
+  - core/include/vc/core/types/SampleParams.hpp — sampling parameter struct
+  - core/include/vc/core/util/PostProcess.hpp + core/src/PostProcess.cpp
+  - core/include/vc/core/util/CoordGrid.hpp + core/src/CoordGrid.cpp
+Tests: makeCoordGrid() dimensions. applyPostProcess() with known input.
+
+--- PR 8: Remote utilities -----------------------------------------------------
+Branch: pr8-remote-utils (based on pr7)
+Files (6):
+  - core/include/vc/core/util/RemoteUrl.hpp + core/src/RemoteUrl.cpp
+  - core/include/vc/core/util/NetworkFilesystem.hpp + core/src/NetworkFilesystem.cpp
+  - core/include/vc/core/util/RemoteScroll.hpp + core/src/RemoteScroll.cpp
+Tests: resolveRemoteUrl() with known URL patterns.
+
+--- PR 9: Slicing API update ---------------------------------------------------
+Branch: pr9-slicing-api (based on pr8)
+Files (2):
+  - core/include/vc/core/util/Slicing.hpp — add new overloads (keep old)
+  - core/src/Slicing.cpp — implement new overloads, keep old
+Tests: Compare new API output to old API output.
+
+--- PR 10: Volume refactor -----------------------------------------------------
+Branch: pr10-volume-refactor (based on pr9)
+Files (4):
+  - core/include/vc/core/types/Volume.hpp — new sampling API
+  - core/src/Volume.cpp — implement new API
+  - core/include/vc/core/util/Zarr.hpp + core/src/Zarr.cpp — readZarrAttributes()
+Tests: Volume::sample() matches old sliceVolume(). Bounds checking.
+
+--- PR 11: VolumePkg + remaining core updates ----------------------------------
+Branch: pr11-volumepkg (based on pr10)
+Files (5):
+  - core/include/vc/core/types/VolumePkg.hpp + core/src/VolumePkg.cpp
+  - core/include/vc/core/types/ChunkedTensor.hpp
+  - core/src/Segmentation.cpp
+  - core/src/surface_metrics.cpp
+Tests: VolumePkg::NewFromScrollInfo() with local data.
+
+--- PR 12: CLI apps batch 1 — zarr tools ---------------------------------------
+Branch: pr12-cli-zarr (based on pr11)
+Files (5):
+  - apps/src/ZarrExtract.cpp
+  - apps/src/vc_zarr_to_tiff.cpp
+  - apps/src/vc_ced2d.cpp
+  - apps/src/vc_ngrids.cpp
+  - apps/src/vc_render_tifxyz.cpp
+Tests: Build all, run on test data.
+
+--- PR 13: CLI apps batch 2 — remaining tools ----------------------------------
+Branch: pr13-cli-remaining (based on pr12)
+Files (8):
+  - apps/src/vc_render_video.cpp
+  - apps/src/vc_create_segment_mask.cpp
+  - apps/src/vc_gen_normalgrids.cpp
+  - apps/src/vc_grow_seg_from_seed.cpp
+  - apps/src/vc_grow_seg_from_segments.cpp
+  - apps/src/vc_fill_quadmesh.cpp
+  - apps/src/vc_visualize.cpp
+  - apps/src/ObjAlphaCompRefinement.cpp
+Tests: Build all targets.
+
+--- PR 14: CLI apps batch 3 — diffusion + cleanup -----------------------------
+Branch: pr14-cli-diffusion (based on pr13)
+Files (6):
+  - apps/diffusion/common.hpp
+  - apps/diffusion/continuous3d.cpp
+  - apps/diffusion/spiral.cpp
+  - apps/diffusion/vc_diffuse_winding.cpp
+  - apps/src/vc_tiffxyz_upscale_grounding.cpp
+  - apps/src/vc_tifxyz2obj.cpp
+Tests: Diffusion tools build and run.
+
+--- PR 15: Remove old z5/ChunkCache --------------------------------------------
+Branch: pr15-remove-z5 (based on pr14)
+Files (4):
+  - DELETE core/include/vc/core/util/ChunkCache.hpp
+  - DELETE core/src/ChunkCache.cpp
+  - cmake/VCFindDependencies.cmake — remove z5 FetchContent
+  - cmake/VCToolchain.cmake — remove z5 conda workaround
+  - core/CMakeLists.txt — remove ChunkCache.cpp, remove z5 link
+  - Remove old Slicing overloads
+Tests: Full build — nothing references z5 or ChunkCache.
+
+--- PR 16: VC3D standalone utilities -------------------------------------------
+Branch: pr16-vc3d-utils (based on pr15)
+Files (6):
+  - apps/VC3D/FocusHistoryManager.hpp + .cpp
+  - apps/VC3D/SurfaceAreaCalculator.hpp + .cpp
+  - apps/VC3D/VCSettings.hpp — add new settings keys
+  - apps/VC3D/CVolumeViewerView.hpp + .cpp — minor input handling updates
+Tests: FocusHistoryManager push/pop/undo. SurfaceAreaCalculator correctness.
+
+--- PR 17: CState + VolumeViewerBase ------------------------------------------
+Branch: pr17-cstate (based on pr16)
+Files (5):
+  - apps/VC3D/CState.hpp + .cpp
+  - apps/VC3D/VolumeViewerBase.hpp
+  - apps/VC3D/overlays/ViewerOverlayControllerBase.hpp + .cpp
+Tests: CState signals fire on set. setPOI self-assignment guard.
+
+--- PR 18: Tiled renderer core — data structures -------------------------------
+Branch: pr18-tiled-data (based on pr17)
+Files (8):
+  - apps/VC3D/tiled/TiledViewerCamera.hpp + .cpp
+  - apps/VC3D/tiled/TileScene.hpp + .cpp
+  - apps/VC3D/tiled/FnvHash.hpp
+  - apps/VC3D/tiled/SliceCache.hpp + .cpp
+  - apps/VC3D/tiled/PostProcess.hpp + .cpp
+Tests: TileScene grid layout. SliceCache LRU eviction. Camera transforms.
+
+--- PR 19: Tiled renderer core — rendering pipeline ----------------------------
+Branch: pr19-tiled-render (based on pr18)
+Files (6):
+  - apps/VC3D/tiled/TileRenderer.hpp + .cpp
+  - apps/VC3D/tiled/RenderPool.hpp + .cpp
+  - apps/VC3D/tiled/TileRenderController.hpp + .cpp
+Tests: TileRenderer produces valid output. RenderPool completes tasks.
+
+--- PR 20: CTiledVolumeViewer — the main widget --------------------------------
+Branch: pr20-tiled-viewer (based on pr19)
+Files (4):
+  - apps/VC3D/tiled/CTiledVolumeViewer.hpp + .cpp
+  - apps/VC3D/CMakeLists.txt — add tiled/ sources
+  - apps/VC3D/apps/CMakeLists.txt — link Qt6::Concurrent
+Tests: Widget instantiates. Camera pan/zoom. Tiles render.
+
+--- PR 21: Overlay controller updates ------------------------------------------
+Branch: pr21-overlays (based on pr20)
+Files (14):
+  - apps/VC3D/overlays/SegmentationOverlayController.hpp + .cpp
+  - apps/VC3D/overlays/PointsOverlayController.hpp + .cpp
+  - apps/VC3D/overlays/RawPointsOverlayController.hpp + .cpp
+  - apps/VC3D/overlays/PathsOverlayController.hpp + .cpp
+  - apps/VC3D/overlays/BBoxOverlayController.hpp + .cpp
+  - apps/VC3D/overlays/VectorOverlayController.hpp + .cpp
+  - apps/VC3D/overlays/PlaneSlicingOverlayController.hpp + .cpp
+Tests: Each overlay renders. Coordinate transforms. Null checks.
+
+--- PR 22: SegmentationCommandHandler + services -------------------------------
+Branch: pr22-services (based on pr21)
+Files (8):
+  - apps/VC3D/SegmentationCommandHandler.hpp + .cpp
+  - apps/VC3D/FileWatcherService.hpp + .cpp
+  - apps/VC3D/AxisAlignedSliceController.hpp + .cpp
+  - apps/VC3D/overlays/VolumeOverlayController.hpp + .cpp
+Tests: Segmentation operations work. FileWatcher detects changes.
+
+--- PR 23: ViewerManager + CWindow integration ---------------------------------
+Branch: pr23-integration (based on pr22)
+Files (6):
+  - apps/VC3D/ViewerManager.hpp + .cpp
+  - apps/VC3D/CWindow.hpp + .cpp
+  - apps/VC3D/CWindowContextMenu.cpp
+  - apps/VC3D/VCAppMain.cpp
+Tests: App starts. Viewers created. Overlays render. Menus work.
+
+--- PR 24: Remaining VC3D updates ----------------------------------------------
+Branch: pr24-vc3d-remaining (based on pr23)
+Files (12):
+  - apps/VC3D/SurfacePanelController.hpp + .cpp
+  - apps/VC3D/MenuActionController.hpp + .cpp
+  - apps/VC3D/DrawingWidget.hpp + .cpp
+  - apps/VC3D/SeedingWidget.hpp + .cpp
+  - apps/VC3D/segmentation/SegmentationModule.hpp + .cpp
+  - apps/VC3D/segmentation/SegmentationModule_Input.cpp
+  - apps/VC3D/segmentation/SegmentationModule_Session.cpp
+Tests: Full workflow: open volume, navigate, draw, segment.
+
+--- PR 25: Segmentation tools + growth -----------------------------------------
+Branch: pr25-seg-tools (based on pr24)
+Files (13):
+  - apps/VC3D/segmentation/tools/SegmentationEditManager.cpp
+  - apps/VC3D/segmentation/tools/SegmentationBrushTool.hpp + .cpp
+  - apps/VC3D/segmentation/tools/SegmentationLineTool.hpp + .cpp
+  - apps/VC3D/segmentation/tools/SegmentationPushPullTool.hpp + .cpp
+  - apps/VC3D/segmentation/growth/SegmentationGrower.hpp + .cpp
+  - apps/VC3D/segmentation/growth/SegmentationGrowth.hpp + .cpp
+  - apps/VC3D/segmentation/growth/ExtrapolationGrowth.hpp + .cpp
+Tests: Editing works. Growth produces correct results.
+
+--- PR 26: Delete old viewer code ----------------------------------------------
+Branch: pr26-delete-old (based on pr25)
+Files (8+):
+  - DELETE apps/VC3D/CVolumeViewer.hpp + .cpp
+  - DELETE apps/VC3D/CVolumeViewerRender.cpp
+  - DELETE apps/VC3D/CVolumeViewerIntersections.cpp
+  - DELETE apps/VC3D/CVolumeViewerOverlay.cpp
+  - DELETE apps/VC3D/CSurfaceCollection.hpp + .cpp
+  - core/include/vc/core/util/Surface.hpp — remove pointer()
+  - Other minor cleanups
+Tests: Full build clean. Full app test.
+
+================================================================================
+  VERIFICATION STRATEGY
+================================================================================
+
+For EACH PR:
+  1. cmake --build build --target VC3D -j$(nproc) — all targets compile
+  2. Run VC3D, open a volume, basic navigation works
+  3. Run any new tests: ctest --test-dir build -R <test_name>
+
+Milestones:
+  - After PR 15: z5 fully removed, all core code uses new APIs
+  - After PR 26: old viewer code fully removed, tiled renderer only path
+  - Every intermediate PR: main compiles and app runs
+
+================================================================================
+  BRANCH DEPENDENCY CHAIN
+================================================================================
+
+  main
+   └── pr1-build-system-deps
+        └── pr2-cache-primitives
+             └── pr3-cache-io
+                  └── pr4-chunk-sources
+                       └── pr5-tiered-cache
+                            └── pr6-vcdataset
+                                 └── pr7-types-utils
+                                      └── pr8-remote-utils
+                                           └── pr9-slicing-api
+                                                └── pr10-volume-refactor
+                                                     └── pr11-volumepkg
+                                                          └── pr12-cli-zarr
+                                                               └── pr13-cli-remaining
+                                                                    └── pr14-cli-diffusion
+                                                                         └── pr15-remove-z5
+                                                                              └── pr16-vc3d-utils
+                                                                                   └── ... → pr26
+
+Each PR targets main. Once PR N is merged, PR N+1 is rebased onto main.
+
+================================================================================
+  NOTES / DECISIONS
+================================================================================
+
+- Utils repo (SuperOptimizer/utils): NOT vendored via FetchContent.
+  Files will be copied directly into VC source tree in PR 6.
+  Only 3 headers + 3 .cpp files needed (zarr, tensor, json).
+
+- VCToolchain.cmake z5 conda workaround: kept until PR 15 (z5 removal).
+
+- Each PR should include tests where possible (using existing minimal
+  test framework in core/test/test.hpp).

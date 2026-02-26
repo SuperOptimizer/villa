@@ -18,6 +18,8 @@ add_library(vc_core
         src/Render.cpp
         src/Tiff.cpp
         src/Zarr.cpp
+        src/cache/IOPool.cpp
+        src/cache/DiskStore.cpp
         src/Geometry.cpp
         src/Thinning.cpp
         src/Umbilicus.cpp
