@@ -47,17 +47,19 @@ struct CacheParams {
         chunksY = (sy + cy - 1) / cy;
         chunksX = (sx + cx - 1) / cx;
 
-        // Compute chunk-level data bounds from level-0 bounds
+        // Compute chunk-level data bounds from level-0 bounds.
+        // Dilate by 1 chunk on each side — the level-0 bounds are already
+        // dilated by 1 coarsest voxel (32 pixels), but chunks are 128^3
+        // so an extra chunk of margin avoids clipping at boundaries.
         auto db = cache->dataBounds();
         if (db.valid) {
             float scale = 1.0f / static_cast<float>(1 << level);
-            // Floor for min, ceil for max to be conservative
-            dbMinCx = static_cast<int>(std::floor(db.minX * scale)) >> cxShift;
-            dbMaxCx = static_cast<int>(std::ceil(db.maxX * scale)) >> cxShift;
-            dbMinCy = static_cast<int>(std::floor(db.minY * scale)) >> cyShift;
-            dbMaxCy = static_cast<int>(std::ceil(db.maxY * scale)) >> cyShift;
-            dbMinCz = static_cast<int>(std::floor(db.minZ * scale)) >> czShift;
-            dbMaxCz = static_cast<int>(std::ceil(db.maxZ * scale)) >> czShift;
+            dbMinCx = std::max(0, (static_cast<int>(std::floor(db.minX * scale)) >> cxShift) - 1);
+            dbMaxCx = std::min(chunksX - 1, (static_cast<int>(std::ceil(db.maxX * scale)) >> cxShift) + 1);
+            dbMinCy = std::max(0, (static_cast<int>(std::floor(db.minY * scale)) >> cyShift) - 1);
+            dbMaxCy = std::min(chunksY - 1, (static_cast<int>(std::ceil(db.maxY * scale)) >> cyShift) + 1);
+            dbMinCz = std::max(0, (static_cast<int>(std::floor(db.minZ * scale)) >> czShift) - 1);
+            dbMaxCz = std::min(chunksZ - 1, (static_cast<int>(std::ceil(db.maxZ * scale)) >> czShift) + 1);
             dbValid = true;
         }
     }
@@ -330,8 +332,9 @@ static void readVolumeImpl(
 
         if (numLayers == 1) {
             for (int y = 0; y < h; y++) {
+                const auto* row = coords.ptr<cv::Vec3f>(y);
                 for (int x = 0; x < w; x++) {
-                    float vz = coords(y,x)[2], vy = coords(y,x)[1], vx = coords(y,x)[0];
+                    float vx = row[x][0], vy = row[x][1], vz = row[x][2];
                     if constexpr (Mode == SampleMode::Tricubic) {
                         if (!(vz >= 0 && vy >= 0 && vx >= 0 && vz < p.sz && vy < p.sy && vx < p.sx)) continue;
                         int iz = static_cast<int>(std::floor(vz)), iy = static_cast<int>(std::floor(vy)), ix = static_cast<int>(std::floor(vx));
@@ -357,9 +360,9 @@ static void readVolumeImpl(
                 layerOffsets[l] = (zStart + l) * zStep;
 
             for (int y = 0; y < h; y++) {
+                const auto* row = coords.ptr<cv::Vec3f>(y);
                 for (int x = 0; x < w; x++) {
-                    const cv::Vec3f& bc = coords(y, x);
-                    float bz = bc[2], by = bc[1], bx = bc[0];
+                    float bx = row[x][0], by = row[x][1], bz = row[x][2];
                     if (!(bz >= 0 && by >= 0 && bx >= 0 && bz < p.sz && by < p.sy && bx < p.sx)) continue;
                     cv::Vec3f n = getNormal(y, x);
                     for (int l = 0; l < numLayers; l++) {
@@ -388,13 +391,12 @@ static void readVolumeImpl(
         }
 
         if (anyMissing) {
-            #pragma omp parallel for schedule(dynamic, 1)
             for (size_t ci = 0; ci < neededChunks.size(); ci++)
                 cache.getBlocking(vc::cache::ChunkKey{level, neededChunks[ci][0], neededChunks[ci][1], neededChunks[ci][2]});
         }
     }
 
-    // Phase 2: Sample (OMP parallel, all chunks already cached)
+    // Phase 2: Sample (all chunks already cached)
     const bool isComposite = (numLayers > 1);
     const bool isMin = params && (params->method == "min");
     const bool isMax = params && (params->method == "max");
@@ -402,7 +404,6 @@ static void readVolumeImpl(
     const bool needsLayerStorage = params && methodRequiresLayerStorage(params->method);
     const float firstLayerOffset = zStart * zStep;
 
-    #pragma omp parallel
     {
         ChunkSampler<T> samplerNoPrefetch(p, cache, level);
         ChunkSampler<T> samplerPrefetch(p, cache, level);
@@ -412,11 +413,11 @@ static void readVolumeImpl(
             stack.values.resize(numLayers);
         }
 
-        #pragma omp for collapse(2)
         for (int y = 0; y < h; y++) {
+            const auto* coordRow = coords.template ptr<cv::Vec3f>(y);
+            auto* outRow = out.template ptr<T>(y);
             for (int x = 0; x < w; x++) {
-                const cv::Vec3f& bc = coords(y, x);
-                float base_vz = bc[2], base_vy = bc[1], base_vx = bc[0];
+                float base_vx = coordRow[x][0], base_vy = coordRow[x][1], base_vz = coordRow[x][2];
 
                 if (numLayers == 1) {
                     // Single-sample path
@@ -428,9 +429,9 @@ static void readVolumeImpl(
                         if constexpr (std::is_same_v<T, uint16_t>) {
                             if (v < 0.f) v = 0.f;
                             if (v > 65535.f) v = 65535.f;
-                            out(y, x) = static_cast<uint16_t>(v + 0.5f);
+                            outRow[x] = static_cast<uint16_t>(v + 0.5f);
                         } else {
-                            out(y, x) = static_cast<T>(v);
+                            outRow[x] = static_cast<T>(v);
                         }
                     } else if constexpr (Mode == SampleMode::Tricubic) {
                         if (!(base_vz < p.sz && base_vy < p.sy && base_vx < p.sx)) continue;
@@ -438,14 +439,14 @@ static void readVolumeImpl(
                         if constexpr (std::is_same_v<T, uint16_t>) {
                             if (v < 0.f) v = 0.f;
                             if (v > 65535.f) v = 65535.f;
-                            out(y, x) = static_cast<uint16_t>(v + 0.5f);
+                            outRow[x] = static_cast<uint16_t>(v + 0.5f);
                         } else {
-                            out(y, x) = static_cast<T>(v);
+                            outRow[x] = static_cast<T>(v);
                         }
                     } else {
                         if (!(base_vz < p.sz && base_vy < p.sy && base_vx < p.sx)) continue;
                         if ((static_cast<int>(base_vz + 0.5f) | static_cast<int>(base_vy + 0.5f) | static_cast<int>(base_vx + 0.5f)) < 0) continue;
-                        out(y, x) = samplerNoPrefetch.sampleNearest(base_vz, base_vy, base_vx);
+                        outRow[x] = samplerNoPrefetch.sampleNearest(base_vz, base_vy, base_vx);
                     }
                 } else {
                     // Composite path
@@ -511,7 +512,7 @@ static void readVolumeImpl(
                         result *= lightFactor;
                     }
 
-                    out(y, x) = static_cast<T>(std::max(0.0f, std::min(255.0f, result)));
+                    outRow[x] = static_cast<T>(std::max(0.0f, std::min(255.0f, result)));
                 }
             }
         }
@@ -780,7 +781,6 @@ static void readMultiSliceImpl(
         }
 
         if (anyMissing) {
-            #pragma omp parallel for schedule(dynamic, 1)
             for (size_t ci = 0; ci < neededChunks.size(); ci++)
                 cache.getBlocking(vc::cache::ChunkKey{level, neededChunks[ci][0], neededChunks[ci][1], neededChunks[ci][2]});
         }
@@ -794,12 +794,10 @@ static void readMultiSliceImpl(
     const int lczMask = p.czMask, lcyMask = p.cyMask, lcxMask = p.cxMask;
     const int lsz = p.sz, lsy = p.sy, lsx = p.sx;
 
-    #pragma omp parallel
     {
         ChunkSampler<T, 2> sampler(p, cache, level);
         const size_t ls0 = sampler.s0, ls1 = sampler.s1;
 
-        #pragma omp for schedule(static)
         for (int y = 0; y < h; y++) {
             for (int x = 0; x < w; x++) {
                 const cv::Vec3f& bp = basePoints(y, x);
@@ -1206,8 +1204,7 @@ cv::Mat_<cv::Vec3f> computeVolumeGradientsNative(
         return static_cast<float>(localVolume(static_cast<size_t>(lz), static_cast<size_t>(ly), static_cast<size_t>(lx)));
     };
 
-    // Step 3: Compute gradients in parallel at each raw grid point
-    #pragma omp parallel for collapse(2)
+    // Step 3: Compute gradients at each raw grid point
     for (int y = 0; y < h; ++y) {
         for (int x = 0; x < w; ++x) {
             const cv::Vec3f& c = rawPoints(y, x);

@@ -160,6 +160,7 @@ target_include_directories(VC3D
         ${CMAKE_SOURCE_DIR}/libs/edt
         ${CMAKE_SOURCE_DIR}/libs/cc3d
         ${CMAKE_SOURCE_DIR}/libs/djikstra3d
+        ${CMAKE_SOURCE_DIR}/libs/c-blosc/blosc
 )
 
 target_link_libraries(VC3D

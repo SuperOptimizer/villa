@@ -6,6 +6,7 @@
 #include <QColor>
 #include <QString>
 
+#include <chrono>
 #include <map>
 #include <memory>
 #include <set>
@@ -280,6 +281,9 @@ private:
     // Compute content extent in surface parameter space and rebuild the tile grid
     void rebuildContentGrid();
 
+    // Called on the main thread when pinCoarsestLevel completes (background thread)
+    void onPinComplete();
+
     // Called when data bounds become valid after async coarsest-level load
     void onDataBoundsReady();
 
@@ -312,7 +316,6 @@ private:
     bool _stretchValues = false;
     std::string _baseColormapId;
     bool _useFastInterpolation = false;
-    bool _skipImageFormatConv = false;
 
     // --- Overlay volume ---
     std::shared_ptr<Volume> _overlayVolume;
@@ -382,6 +385,7 @@ private:
     // --- Status ---
     QLabel* _lbl = nullptr;
     bool _dirtyWhileMinimized = false;
+    std::chrono::steady_clock::time_point _lastStatusUpdate;  // debounce status label
 
     // --- Zoom limits ---
     float _contentMinScale = TiledViewerCamera::MIN_SCALE;  // dynamic minimum so content fills viewport

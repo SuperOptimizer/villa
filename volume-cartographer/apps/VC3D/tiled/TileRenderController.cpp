@@ -11,10 +11,11 @@
 #include "vc/core/types/Volume.hpp"
 #include "vc/core/util/Surface.hpp"
 
-TileRenderController::TileRenderController(TileScene* tileScene, QObject* parent)
+TileRenderController::TileRenderController(TileScene* tileScene, RenderPool* sharedPool, QObject* parent)
     : QObject(parent)
     , _tileScene(tileScene)
-    , _renderPool(std::max(2, QThread::idealThreadCount()), this)
+    , _renderPool(sharedPool)
+    , _controllerId(_nextControllerId.fetch_add(1, std::memory_order_relaxed))
 {
     // Tick timer (~30 Hz) handles periodic work; started on-demand, auto-stops
     // when idle to avoid burning CPU.
@@ -24,14 +25,15 @@ TileRenderController::TileRenderController(TileScene* tileScene, QObject* parent
     // Not started here — ensureTickRunning() starts it when work arrives.
 
     // Also drain immediately when a tile completes (makes draining more responsive)
-    connect(&_renderPool, &RenderPool::tileReady, this, &TileRenderController::drainResults,
+    connect(_renderPool, &RenderPool::tileReady, this, &TileRenderController::drainResults,
             Qt::QueuedConnection);
 }
 
 TileRenderController::~TileRenderController()
 {
     _tickTimer->stop();
-    _renderPool.cancelAll();
+    // Bump epoch so our in-flight tasks are discarded on completion.
+    _currentEpoch.fetch_add(1, std::memory_order_relaxed);
 }
 
 void TileRenderController::ensureTickRunning()
@@ -48,9 +50,8 @@ void TileRenderController::onCameraChanged(
     const QRectF& viewportRect)
 {
     ensureTickRunning();
-    bool epochChanged = (camera.epoch != _currentEpoch);
-    _currentEpoch = camera.epoch;
-    _renderPool.setCurrentEpoch(_currentEpoch);
+    bool epochChanged = (camera.epoch != _currentEpoch.load(std::memory_order_relaxed));
+    _currentEpoch.store(camera.epoch, std::memory_order_relaxed);
     _desiredLevel = camera.dsScaleIdx;
 
     if (epochChanged && volume) {
@@ -74,7 +75,7 @@ void TileRenderController::onCameraChanged(
         // Check slice cache — apply best available immediately
         auto lookup = _cache.getBest(cacheKey);
         if (lookup.level >= 0) {
-            _tileScene->setTileWorld(wk, lookup.pixmap, _currentEpoch, lookup.level);
+            _tileScene->setTileWorld(wk, lookup.pixmap, _currentEpoch.load(std::memory_order_relaxed), lookup.level);
             if (lookup.level == camera.dsScaleIdx) {
                 continue;  // exact hit, no need to re-render
             }
@@ -82,7 +83,7 @@ void TileRenderController::onCameraChanged(
 
         // Submit to background pool (tiered cache handles progressive resolution)
         TileRenderParams params = buildParams(wk);
-        _renderPool.submit(params, surface, volume);
+        _renderPool->submit(params, surface, volume, _currentEpoch, _controllerId);
     }
 }
 
@@ -104,6 +105,10 @@ void TileRenderController::scheduleRender(
     const std::function<TileRenderParams(const WorldTileKey&)>& buildParams,
     const QRectF& viewportRect)
 {
+    // Coalescing: only the LATEST camera state matters.  Overwriting pending
+    // state is intentional — intermediate states are superseded by whichever
+    // call arrives last before tick() fires.  The _pendingDirty flag ensures
+    // tick() always dispatches exactly once per batch of rapid calls.
     _pendingCamera = camera;
     _pendingSurface = surface;
     _pendingVolume = volume;
@@ -115,13 +120,31 @@ void TileRenderController::scheduleRender(
 
 void TileRenderController::cancelAll()
 {
-    _renderPool.cancelAll();
+    // With a shared pool we can't cancel_pending() (it would kill other
+    // controllers' tasks).  Instead bump the epoch so our in-flight and
+    // queued tasks are discarded at completion time.
+    _currentEpoch.fetch_add(1, std::memory_order_relaxed);
+}
+
+void TileRenderController::clearState()
+{
+    _lastSurface.reset();
+    _lastVolume.reset();
+    _lastBuildParams = nullptr;
+    _lastViewportRect = QRectF();
+
+    _pendingDirty = false;
+    _pendingSurface.reset();
+    _pendingVolume.reset();
+    _pendingBuildParams = nullptr;
+
+    _chunkArrived = false;
 }
 
 void TileRenderController::drainResults()
 {
     // Take up to DRAIN_BATCH_SIZE results per drain cycle
-    auto results = _renderPool.drainCompleted(tiled_config::DRAIN_BATCH_SIZE, _currentEpoch);
+    auto results = _renderPool->drainCompleted(tiled_config::DRAIN_BATCH_SIZE, _currentEpoch.load(std::memory_order_relaxed), _controllerId);
 
     bool anyUpdated = false;
 
@@ -134,9 +157,8 @@ void TileRenderController::drainResults()
             continue;
         }
 
-        // QImage was already built on the worker thread (BGR→RGB + copy)
-        QPixmap pixmap = QPixmap::fromImage(
-            result.image, _skipImageFormatConv ? Qt::NoFormatConversion : Qt::AutoColor);
+        // QImage is Format_RGB32 (native pixmap format) — no conversion needed
+        QPixmap pixmap = QPixmap::fromImage(result.image, Qt::NoFormatConversion);
 
         // Always cache with world tile key (even if tile is no longer visible)
         TiledViewerCamera snapCamera;
@@ -196,7 +218,7 @@ void TileRenderController::tick()
     //    Without the chunksJustArrived guard, idle pool + stale tiles = infinite loop.
     if (_progressiveEnabled && chunksJustArrived) {
         if (_lastSurface && _lastVolume && _lastBuildParams) {
-            auto stale = _tileScene->staleTilesInRect(_desiredLevel, _currentEpoch, _lastViewportRect, tiled_config::VISIBLE_BUFFER_TILES);
+            auto stale = _tileScene->staleTilesInRect(_desiredLevel, _currentEpoch.load(std::memory_order_relaxed), _lastViewportRect, tiled_config::VISIBLE_BUFFER_TILES);
             if (!stale.empty()) {
                 // Sort by distance to viewport center so the user sees
                 // center-of-screen tiles refine first.
@@ -220,7 +242,7 @@ void TileRenderController::tick()
                                          tiled_config::DRAIN_BATCH_SIZE);
                 for (int i = 0; i < maxRefine; i++) {
                     TileRenderParams params = _lastBuildParams(stale[i]);
-                    _renderPool.submit(params, _lastSurface, _lastVolume);
+                    _renderPool->submit(params, _lastSurface, _lastVolume, _currentEpoch, _controllerId);
                 }
                 moreWork = true;
             }
@@ -244,8 +266,11 @@ void TileRenderController::tick()
         if (_overlayCallback) _overlayCallback();
     }
 
+    // Expire stuck pending counts (pool idle but pendingCount > 0 for too long)
+    _renderPool->expireTimedOut();
+
     // Still have in-flight renders? Keep ticking to drain them.
-    if (_renderPool.pendingCount() > 0 || _pendingDirty)
+    if (_renderPool->pendingCount() > 0 || _pendingDirty)
         moreWork = true;
 
     // Auto-stop when idle to avoid burning CPU

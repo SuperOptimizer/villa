@@ -1,16 +1,14 @@
 #pragma once
 
 #include <cstdint>
-#include <list>
-#include <mutex>
 #include <string>
-#include <unordered_map>
 
 #include <QPixmap>
 #include <opencv2/core.hpp>
 
 #include "TileScene.hpp"
 #include "TiledViewerCamera.hpp"
+#include <utils/lru_cache.hpp>
 
 // Cache key for a rendered tile.
 // World tile content is position-independent for both surface types
@@ -54,11 +52,15 @@ struct SliceCacheLookup {
 };
 
 // Thread-safe LRU cache for rendered tile pixmaps.
-// Default capacity: 2048 entries (~384MB at 256x256 BGR).
+// Default budget: 512MB. Entry weight is the actual pixmap byte size
+// (width * height * depth), so eviction is memory-aware.
 class SliceCache
 {
 public:
-    explicit SliceCache(size_t maxEntries = 2048);
+    // Budget in bytes (default 512MB).
+    static constexpr size_t DEFAULT_BUDGET_BYTES = 512ULL * 1024 * 1024;
+
+    explicit SliceCache(size_t maxBytes = DEFAULT_BUDGET_BYTES);
 
     // Find best available: checks requested level, then coarser.
     // Returns {pixmap, level} where level is the actual pyramid level found,
@@ -73,21 +75,9 @@ public:
 
     // Stats
     size_t size() const;
-    size_t hits() const { return _hits; }
-    size_t misses() const { return _misses; }
+    size_t hits() const { return cache_.hits(); }
+    size_t misses() const { return cache_.misses(); }
 
 private:
-    struct Entry {
-        SliceCacheKey key;
-        QPixmap pixmap;
-    };
-
-    using ListIt = std::list<Entry>::iterator;
-
-    mutable std::mutex _mutex;
-    std::list<Entry> _lruList;   // front = most recently used
-    std::unordered_map<SliceCacheKey, ListIt, SliceCacheKeyHash> _map;
-    size_t _maxEntries;
-    size_t _hits = 0;
-    size_t _misses = 0;
+    utils::LRUCache<SliceCacheKey, QPixmap, SliceCacheKeyHash> cache_;
 };

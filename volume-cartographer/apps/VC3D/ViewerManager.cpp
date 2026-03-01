@@ -15,6 +15,7 @@
 #include "vc/core/types/Volume.hpp"
 
 #include <QMdiArea>
+#include <QThread>
 #include <QMdiSubWindow>
 #include <QSettings>
 #include <QtConcurrent/QtConcurrent>
@@ -46,6 +47,7 @@ ViewerManager::ViewerManager(CState* state,
     : QObject(parent)
     , _state(state)
     , _points(points)
+    , _renderPool(std::clamp(QThread::idealThreadCount(), 2, 8), this)
 {
     using namespace vc3d::settings;
     QSettings settings(vc3d::settingsFilePath(), QSettings::IniFormat);

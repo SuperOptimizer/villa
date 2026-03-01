@@ -1,15 +1,54 @@
 #include "vc/core/cache/IOPool.hpp"
 #include "vc/core/cache/CacheDebugLog.hpp"
 
+#include <algorithm>
 #include <exception>
 
 namespace vc::cache {
 
-IOPool::IOPool(int numThreads)
+IOPool::IOPool(int numThreads, size_t maxQueueSize)
+    : maxQueueSize_(maxQueueSize)
 {
     workers_.reserve(numThreads);
     for (int i = 0; i < numThreads; i++) {
-        workers_.emplace_back(&IOPool::workerLoop, this);
+        workers_.emplace_back([this](std::stop_token stop) {
+            // consume_loop pattern: pop tasks until shutdown
+            for (;;) {
+                Task task;
+                try {
+                    task = queue_.pop();
+                } catch (const std::runtime_error&) {
+                    return; // shutdown signalled
+                }
+
+                // Fetch the chunk data
+                std::vector<uint8_t> data;
+                if (fetchFunc_) {
+                    try {
+                        data = fetchFunc_(task.key);
+                    } catch (const std::exception& e) {
+                        if (auto* log = cacheDebugLog())
+                            std::fprintf(log, "[IOPOOL] fetch exception for lvl=%d pos=(%d,%d,%d): %s\n",
+                                         task.key.level, task.key.iz, task.key.iy, task.key.ix, e.what());
+                        queue_.complete(task);
+                        continue;
+                    } catch (...) {
+                        if (auto* log = cacheDebugLog())
+                            std::fprintf(log, "[IOPOOL] unknown fetch exception for lvl=%d pos=(%d,%d,%d)\n",
+                                         task.key.level, task.key.iz, task.key.iy, task.key.ix);
+                        queue_.complete(task);
+                        continue;
+                    }
+                }
+
+                queue_.complete(task);
+
+                // Notify completion
+                if (onComplete_) {
+                    onComplete_(task.key, std::move(data));
+                }
+            }
+        });
     }
 }
 
@@ -17,13 +56,11 @@ IOPool::~IOPool() { stop(); }
 
 void IOPool::setFetchFunc(FetchFunc fn)
 {
-    std::lock_guard lock(mutex_);
     fetchFunc_ = std::move(fn);
 }
 
 void IOPool::setCompletionCallback(CompletionCallback cb)
 {
-    std::lock_guard lock(mutex_);
     onComplete_ = std::move(cb);
 }
 
@@ -34,122 +71,60 @@ void IOPool::setCurrentEpoch(uint64_t epoch)
 
 void IOPool::submit(const ChunkKey& key)
 {
-    {
-        std::lock_guard lock(mutex_);
-        // Deduplicate: skip if already in-flight or already queued
-        if (inFlightKeys_.count(key) || !queued_.insert(key).second) return;
-        queue_.push(
-            Task{key, nextSeq_.fetch_add(1, std::memory_order_relaxed),
-                 currentEpoch_.load(std::memory_order_relaxed)});
+    // Backpressure: if queue is at capacity, flush all pending (queued but
+    // not in-flight) tasks to make room.  New requests are more relevant
+    // than old ones since the user has likely navigated elsewhere.
+    if (queue_.queued_count() >= maxQueueSize_) {
+        queue_.cancel_pending();
     }
-    cv_.notify_one();
+
+    queue_.submit(Task{
+        key,
+        nextSeq_.fetch_add(1, std::memory_order_relaxed),
+        currentEpoch_.load(std::memory_order_relaxed)
+    });
 }
 
 void IOPool::submit(const std::vector<ChunkKey>& keys)
 {
-    {
-        std::lock_guard lock(mutex_);
-        uint64_t epoch = currentEpoch_.load(std::memory_order_relaxed);
-        for (auto& key : keys) {
-            if (!inFlightKeys_.count(key) && queued_.insert(key).second) {
-                queue_.push(Task{
-                    key, nextSeq_.fetch_add(1, std::memory_order_relaxed),
-                    epoch});
-            }
-        }
+    // Backpressure: if adding this batch would exceed capacity, flush all
+    // pending tasks first.  In-flight downloads continue uninterrupted.
+    size_t currentSize = queue_.queued_count();
+    if (currentSize + keys.size() > maxQueueSize_) {
+        queue_.cancel_pending();
     }
-    cv_.notify_all();
+
+    uint64_t epoch = currentEpoch_.load(std::memory_order_relaxed);
+    std::vector<Task> tasks;
+    tasks.reserve(keys.size());
+    for (const auto& k : keys) {
+        tasks.push_back(Task{
+            k,
+            nextSeq_.fetch_add(1, std::memory_order_relaxed),
+            epoch
+        });
+    }
+    queue_.submit_batch(tasks.begin(), tasks.end());
 }
 
 void IOPool::cancelPending()
 {
-    std::lock_guard lock(mutex_);
-    while (!queue_.empty()) queue_.pop();
-    queued_.clear();
+    queue_.cancel_pending();
 }
 
 size_t IOPool::pendingCount() const
 {
-    std::lock_guard lock(mutex_);
-    return queue_.size() + inFlight_.load(std::memory_order_relaxed);
+    return queue_.queued_count() + queue_.in_flight_count();
 }
 
 void IOPool::stop()
 {
-    stopped_.store(true, std::memory_order_release);
-    cv_.notify_all();
-    for (auto& t : workers_) {
-        if (t.joinable()) t.join();
+    queue_.shutdown();
+    for (auto& w : workers_) {
+        w.request_stop();
     }
-    workers_.clear();
-}
-
-void IOPool::workerLoop()
-{
-    while (true) {
-        Task task;
-        {
-            std::unique_lock lock(mutex_);
-            cv_.wait(lock, [this] {
-                return stopped_.load(std::memory_order_acquire) ||
-                       !queue_.empty();
-            });
-
-            if (stopped_.load(std::memory_order_acquire) && queue_.empty())
-                return;
-
-            if (queue_.empty()) continue;
-
-            task = queue_.top();
-            queue_.pop();
-            queued_.erase(task.key);
-            inFlightKeys_.insert(task.key);
-        }
-
-        inFlight_.fetch_add(1, std::memory_order_relaxed);
-
-        // Fetch the chunk data — fetchFunc_ and onComplete_ are set once
-        // before any tasks are submitted, so we reference them directly
-        // without copying under lock.
-        std::vector<uint8_t> data;
-
-        if (fetchFunc_) {
-            try {
-                data = fetchFunc_(task.key);
-            } catch (const std::exception& e) {
-                if (auto* log = cacheDebugLog())
-                    std::fprintf(log, "[IOPOOL] fetch exception for lvl=%d pos=(%d,%d,%d): %s\n",
-                                 task.key.level, task.key.iz, task.key.iy, task.key.ix, e.what());
-                {
-                    std::lock_guard lock(mutex_);
-                    inFlightKeys_.erase(task.key);
-                }
-                inFlight_.fetch_sub(1, std::memory_order_relaxed);
-                continue;
-            } catch (...) {
-                if (auto* log = cacheDebugLog())
-                    std::fprintf(log, "[IOPOOL] unknown fetch exception for lvl=%d pos=(%d,%d,%d)\n",
-                                 task.key.level, task.key.iz, task.key.iy, task.key.ix);
-                {
-                    std::lock_guard lock(mutex_);
-                    inFlightKeys_.erase(task.key);
-                }
-                inFlight_.fetch_sub(1, std::memory_order_relaxed);
-                continue;
-            }
-        }
-
-        {
-            std::lock_guard lock(mutex_);
-            inFlightKeys_.erase(task.key);
-        }
-        inFlight_.fetch_sub(1, std::memory_order_relaxed);
-
-        // Notify completion
-        if (onComplete_) {
-            onComplete_(task.key, std::move(data));
-        }
-    }
+    // Workers will unblock from queue_.pop() due to shutdown
+    workers_.clear(); // jthread destructors join
 }
 
 }  // namespace vc::cache

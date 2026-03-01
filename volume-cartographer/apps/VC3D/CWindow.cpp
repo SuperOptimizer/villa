@@ -344,7 +344,13 @@ CWindow::CWindow(size_t cacheSizeGB) :
     _cacheSizeBytes = cacheSizeGB * 1024ULL * 1024ULL * 1024ULL;
     std::cout << "chunk cache budget is " << cacheSizeGB << " gigabytes" << std::endl;
 
-    _state = new CState(_cacheSizeBytes, this);
+    // Disk cache size from settings
+    size_t diskCacheSizeGB = settings.value(vc3d::settings::perf::DISK_CACHE_SIZE_GB,
+                                            vc3d::settings::perf::DISK_CACHE_SIZE_GB_DEFAULT).toULongLong();
+    size_t diskCacheSizeBytes = diskCacheSizeGB * 1024ULL * 1024ULL * 1024ULL;
+    std::cout << "disk cache budget is " << diskCacheSizeGB << " gigabytes" << std::endl;
+
+    _state = new CState(_cacheSizeBytes, diskCacheSizeBytes, this);
     connect(_state, &CState::poiChanged, this, &CWindow::onFocusPOIChanged);
     connect(_state, &CState::surfaceWillBeDeleted, this, &CWindow::onSurfaceWillBeDeleted);
 
@@ -936,14 +942,8 @@ void CWindow::setVolume(std::shared_ptr<Volume> newvol)
 
     if (_state->currentVolume() && _state) {
         auto [w, h, d] = _state->currentVolume()->shape();
-        const auto& db = _state->currentVolume()->dataBounds();
         float x0 = 0, y0 = 0, z0 = 0;
         float x1 = static_cast<float>(w - 1), y1 = static_cast<float>(h - 1), z1 = static_cast<float>(d - 1);
-        if (db.valid) {
-            x0 = static_cast<float>(db.minX); x1 = static_cast<float>(db.maxX);
-            y0 = static_cast<float>(db.minY); y1 = static_cast<float>(db.maxY);
-            z0 = static_cast<float>(db.minZ); z1 = static_cast<float>(db.maxZ);
-        }
 
         POI* poi = existingFocusPoi;
         const bool createdPoi = (poi == nullptr);
@@ -3419,16 +3419,10 @@ void CWindow::onManualLocationChanged()
         return;
     }
 
-    // Clamp values to data bounds
+    // Clamp values to physical volume bounds
     auto [w, h, d] = _state->currentVolume()->shape();
     int cx0 = 0, cy0 = 0, cz0 = 0;
     int cx1 = w - 1, cy1 = h - 1, cz1 = d - 1;
-    const auto& db = _state->currentVolume()->dataBounds();
-    if (db.valid) {
-        cx0 = db.minX; cx1 = db.maxX;
-        cy0 = db.minY; cy1 = db.maxY;
-        cz0 = db.minZ; cz1 = db.maxZ;
-    }
 
     x = std::max(cx0, std::min(x, cx1));
     y = std::max(cy0, std::min(y, cy1));

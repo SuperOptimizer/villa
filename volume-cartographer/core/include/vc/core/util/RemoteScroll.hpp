@@ -34,7 +34,7 @@ RemoteScrollInfo discoverRemoteScroll(const std::string& httpsUrl, const cache::
 // Download a single remote segment's tifxyz files to a local cache directory.
 // For Paths source: downloads from paths/<segId>/{meta.json, x.tif, y.tif, z.tif}
 // For Segments source: downloads from segments/<segId>/mesh/tifxyz/{...}
-// Stores to: cacheDir/segments/<segId>/
+// Stores to: cacheDir/{paths|segments}/<segId>/
 // Skips download if all 4 files already exist locally.
 // Returns the local directory containing the downloaded segment files.
 std::filesystem::path downloadRemoteSegment(

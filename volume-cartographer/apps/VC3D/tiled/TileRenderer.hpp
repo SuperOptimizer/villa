@@ -47,7 +47,7 @@ struct TileRenderParams {
 // Result from rendering a single tile
 struct TileRenderResult {
     WorldTileKey worldKey;
-    QImage image;        // RGB QImage (converted on worker thread)
+    QImage image;        // Format_RGB32 QImage (produced directly on worker thread)
     uint64_t epoch = 0;
 
     // Camera state snapshot for cache key reconstruction
@@ -57,6 +57,9 @@ struct TileRenderResult {
 
     // Actual pyramid level used (may differ from requested if best-effort)
     int actualLevel = 0;
+
+    // Identifies which controller submitted this task (for shared pool routing)
+    int controllerId = -1;
 };
 
 // Stateless tile renderer. Thread-safe (no Qt objects, no mutable state).

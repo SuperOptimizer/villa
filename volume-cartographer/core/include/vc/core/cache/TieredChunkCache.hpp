@@ -19,6 +19,9 @@
 #include "ChunkSource.hpp"
 #include "DiskStore.hpp"
 #include "IOPool.hpp"
+#include <utils/lock_pool.hpp>
+#include <utils/lru_cache.hpp>
+#include <utils/thread_pool.hpp>
 
 namespace vc::cache {
 
@@ -49,7 +52,7 @@ public:
         size_t hotMaxBytes = 10ULL << 30;    // 10 GB
         size_t warmMaxBytes = 2ULL << 30;    // 2 GB
         std::string volumeId;                // for disk store keying
-        int ioThreads = 32;
+        int ioThreads = 8;
     };
 
     // source: where to fetch chunks (filesystem, HTTP, etc.)
@@ -180,38 +183,17 @@ public:
     [[nodiscard]] Stats stats() const;
 
 private:
-    // --- Hot tier ---
-    struct HotEntry {
-        ChunkDataPtr data;
-        size_t bytes;
-        uint64_t generation;
-        bool pinned;
-    };
+    // --- Hot tier (decompressed in RAM) ---
+    utils::LRUCache<ChunkKey, ChunkDataPtr, ChunkKeyHash> hotCache_;
 
     [[nodiscard]] ChunkDataPtr hotGet(const ChunkKey& key);
     void hotPut(const ChunkKey& key, ChunkDataPtr data, bool pinned = false);
-    void hotEvictIfNeeded();
 
-    mutable std::shared_mutex hotMutex_;
-    std::unordered_map<ChunkKey, HotEntry, ChunkKeyHash> hot_;
-    std::atomic<size_t> hotBytes_{0};
-    std::atomic<uint64_t> hotGen_{0};
-    std::mutex hotEvictMutex_;
-
-    // --- Warm tier ---
-    struct WarmEntry {
-        CompressedChunk chunk;
-        uint64_t generation;
-    };
+    // --- Warm tier (compressed in RAM) ---
+    utils::LRUCache<ChunkKey, CompressedChunk, ChunkKeyHash> warmCache_;
 
     [[nodiscard]] std::optional<CompressedChunk> warmGet(const ChunkKey& key);
     void warmPut(const ChunkKey& key, std::vector<uint8_t> compressed);
-    void warmEvictIfNeeded();
-
-    mutable std::shared_mutex warmMutex_;
-    std::unordered_map<ChunkKey, WarmEntry, ChunkKeyHash> warm_;
-    size_t warmBytes_ = 0;
-    uint64_t warmGen_ = 0;
 
     // --- Config (must be declared before ioPool_ for initialization order) ---
     Config config_;
@@ -228,6 +210,9 @@ private:
     // --- I/O pool ---
     IOPool ioPool_;
 
+    // --- Decompression pool (shared across all caches to cap total threads) ---
+    std::shared_ptr<utils::ThreadPool> decompPool_;
+
     // --- Negative cache: chunks confirmed not to exist at the source ---
     // Prevents repeated S3 round-trips for out-of-bounds / sparse chunks.
     // Persisted to disk alongside the cold tier so it survives restarts.
@@ -241,12 +226,7 @@ private:
     std::unordered_set<ChunkKey, ChunkKeyHash> pendingPinKeys_;
 
     // --- Per-key lock pool (prevents duplicate loads) ---
-    static constexpr int kLockPoolSize = 64;
-    std::mutex lockPool_[kLockPoolSize];
-    size_t lockIndex(const ChunkKey& key) const noexcept
-    {
-        return ChunkKeyHash()(key) % kLockPoolSize;
-    }
+    utils::LockPool<64> lockPool_;
 
     // --- Promotion helpers ---
 
@@ -276,8 +256,6 @@ private:
     std::atomic<uint64_t> statColdHits_{0};
     std::atomic<uint64_t> statIceFetches_{0};
     mutable std::atomic<uint64_t> statMisses_{0};
-    std::atomic<uint64_t> statHotEvictions_{0};
-    std::atomic<uint64_t> statWarmEvictions_{0};
 };
 
 }  // namespace vc::cache

@@ -98,6 +98,10 @@ public:
     // Must be called before first tieredCache() access.
     void setDiskStore(std::shared_ptr<vc::cache::DiskStore> store);
 
+    // Set the maximum size for the auto-created disk cache (remote volumes).
+    // Must be called before first tieredCache() access.
+    void setDiskCacheMaxBytes(size_t bytes);
+
     // --- Sampling API ---
 
     // Single-slice blocking sample (uint8)
@@ -212,6 +216,7 @@ protected:
     mutable std::once_flag cacheOnce_;
     size_t cacheBudgetHot_ = 8ULL << 30;   // 8 GB default
     size_t cacheBudgetWarm_ = 2ULL << 30;   // 2 GB default
+    size_t diskCacheMaxBytes_ = 100ULL << 30; // 100 GB default
     std::shared_ptr<vc::cache::DiskStore> pendingDiskStore_;
 
     void ensureTieredCache() const;

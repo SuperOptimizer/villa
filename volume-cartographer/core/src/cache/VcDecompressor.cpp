@@ -1,7 +1,6 @@
 #include "vc/core/cache/VcDecompressor.hpp"
 #include "vc/core/types/VcDataset.hpp"
 
-#include <cstring>
 #include <stdexcept>
 
 namespace vc::cache {
@@ -28,24 +27,24 @@ DecompressFn makeVcDecompressor(const std::vector<vc::VcDataset*>& datasets)
             static_cast<int>(chunkShape[1]),
             static_cast<int>(chunkShape[2])};
 
-        // The compressed buffer needs to be char-based for VcDataset API
-        auto compressedCopy =
-            std::vector<char>(compressed.begin(), compressed.end());
-
         if (dtype == vc::VcDtype::uint8) {
             result->elementSize = 1;
             result->bytes.resize(chunkSize);
-            ds.decompress(compressedCopy, result->bytes.data(), chunkSize);
+            ds.decompress(compressed, result->bytes.data(), chunkSize);
         } else if (dtype == vc::VcDtype::uint16) {
-            // Decompress as uint16 then convert to uint8 (divide by 257)
+            // Decompress uint16 directly into the result buffer (which is
+            // large enough for uint16 data), then convert in-place to uint8.
             result->elementSize = 1;
-            std::vector<uint16_t> tmp(chunkSize);
-            ds.decompress(compressedCopy, tmp.data(), chunkSize);
+            result->bytes.resize(chunkSize * 2);
+            ds.decompress(compressed, result->bytes.data(), chunkSize);
 
-            result->bytes.resize(chunkSize);
+            // Convert uint16 -> uint8 in-place (read from front, write
+            // from front; source stride is 2x dest so no overlap issues).
+            auto* src = reinterpret_cast<const uint16_t*>(result->bytes.data());
             for (size_t i = 0; i < chunkSize; i++) {
-                result->bytes[i] = static_cast<uint8_t>(tmp[i] / 257);
+                result->bytes[i] = static_cast<uint8_t>(src[i] / 257);
             }
+            result->bytes.resize(chunkSize);
         } else {
             return nullptr;  // unsupported dtype
         }

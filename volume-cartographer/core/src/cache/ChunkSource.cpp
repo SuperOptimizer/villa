@@ -189,6 +189,8 @@ std::vector<uint8_t> HttpChunkSource::fetch(const ChunkKey& key)
         if (c) {
             // One-time options that survive curl_easy_reset()
             curl_easy_setopt(c, CURLOPT_NOSIGNAL, 1L);
+            // Enable HTTP/2 — allows multiplexing over shared connections
+            curl_easy_setopt(c, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_2_0);
         }
         return c;
     }();
@@ -196,6 +198,9 @@ std::vector<uint8_t> HttpChunkSource::fetch(const ChunkKey& key)
 
     // Reset clears per-request state but keeps the connection alive
     curl_easy_reset(curl);
+    // curl_easy_reset clears all options — re-apply protocol preferences
+    curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+    curl_easy_setopt(curl, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_2_0);
 
     std::string url = chunkUrl(key);
     std::vector<uint8_t> response;

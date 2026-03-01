@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdio>
 #include <mutex>
+#include <thread>
 
 #include <opencv2/imgcodecs.hpp>
 #include <nlohmann/json.hpp>
@@ -255,6 +256,7 @@ std::unique_ptr<vc::cache::TieredChunkCache> Volume::createTieredCache(
             dsCfg.root = path_;
             dsCfg.directMode = true;
             dsCfg.delimiter = remoteDelimiter_;
+            dsCfg.maxBytes = diskCacheMaxBytes_;
             diskStore = std::make_shared<vc::cache::DiskStore>(std::move(dsCfg));
         }
     } else {
@@ -275,7 +277,11 @@ std::unique_ptr<vc::cache::TieredChunkCache> Volume::createTieredCache(
     config.hotMaxBytes = cacheBudgetHot_;
     config.warmMaxBytes = cacheBudgetWarm_;
     if (isRemote_) {
-        config.ioThreads = 32;
+        // Cap IO threads to avoid oversubscription — multiple volumes each
+        // create their own pool.  8 threads is enough to saturate most
+        // network links while keeping context-switch overhead manageable.
+        int cores = static_cast<int>(std::thread::hardware_concurrency());
+        config.ioThreads = std::clamp(cores, 2, 8);
     }
 
     return std::make_unique<vc::cache::TieredChunkCache>(
@@ -317,6 +323,11 @@ void Volume::setDiskStore(std::shared_ptr<vc::cache::DiskStore> store)
         return;
     }
     pendingDiskStore_ = std::move(store);
+}
+
+void Volume::setDiskCacheMaxBytes(size_t bytes)
+{
+    diskCacheMaxBytes_ = bytes;
 }
 
 // ============================================================================
@@ -744,14 +755,17 @@ void Volume::computeDataBounds()
         return;
     }
 
-    // Scale back to level-0 coordinates
+    // Scale back to level-0 coordinates.
+    // Dilate by 1 coarsest-level voxel on each side — downsampling can
+    // average boundary voxels to zero even when the full-resolution data
+    // is non-zero there.
     int scaleFactor = 1 << coarsest;
-    dataBounds_.minX = cMinX * scaleFactor;
-    dataBounds_.minY = cMinY * scaleFactor;
-    dataBounds_.minZ = cMinZ * scaleFactor;
-    dataBounds_.maxX = std::min((cMaxX + 1) * scaleFactor - 1, _width - 1);
-    dataBounds_.maxY = std::min((cMaxY + 1) * scaleFactor - 1, _height - 1);
-    dataBounds_.maxZ = std::min((cMaxZ + 1) * scaleFactor - 1, _slices - 1);
+    dataBounds_.minX = std::max(0, cMinX - 1) * scaleFactor;
+    dataBounds_.minY = std::max(0, cMinY - 1) * scaleFactor;
+    dataBounds_.minZ = std::max(0, cMinZ - 1) * scaleFactor;
+    dataBounds_.maxX = std::min((cMaxX + 2) * scaleFactor - 1, _width - 1);
+    dataBounds_.maxY = std::min((cMaxY + 2) * scaleFactor - 1, _height - 1);
+    dataBounds_.maxZ = std::min((cMaxZ + 2) * scaleFactor - 1, _slices - 1);
     dataBounds_.valid = true;
 
     // Push to cache so ChunkSampler can skip chunks in zero-padded regions
@@ -807,19 +821,46 @@ Volume::ChunkBBox Volume::coordsToChunkBBox(
     float hiY = std::numeric_limits<float>::lowest();
     float hiZ = std::numeric_limits<float>::lowest();
 
-    for (auto it = coords.begin(); it != coords.end(); ++it) {
-        const auto& v = *it;
+    // Sample border pixels + a sparse grid instead of iterating every pixel.
+    // Coords come from surface gen on a regular grid, so the bounding box
+    // is determined by border pixels.  Interior pixels on curved surfaces
+    // are covered by the interpolation margin below.
+    const int h = coords.rows;
+    const int w = coords.cols;
+
+    auto updateBounds = [&](const cv::Vec3f& v) {
         float sx = v[0] * scale;
         float sy = v[1] * scale;
         float sz = v[2] * scale;
         loX = std::min(loX, sx); hiX = std::max(hiX, sx);
         loY = std::min(loY, sy); hiY = std::max(hiY, sy);
         loZ = std::min(loZ, sz); hiZ = std::max(hiZ, sz);
+    };
+
+    // All 4 borders (using raw pointers)
+    const auto* topRow = coords.ptr<cv::Vec3f>(0);
+    const auto* botRow = coords.ptr<cv::Vec3f>(h - 1);
+    for (int x = 0; x < w; ++x) {
+        updateBounds(topRow[x]);
+        updateBounds(botRow[x]);
+    }
+    for (int y = 1; y < h - 1; ++y) {
+        const auto* row = coords.ptr<cv::Vec3f>(y);
+        updateBounds(row[0]);
+        updateBounds(row[w - 1]);
     }
 
-    // Add 1-voxel margin for interpolation
-    loX -= 1.0f; loY -= 1.0f; loZ -= 1.0f;
-    hiX += 1.0f; hiY += 1.0f; hiZ += 1.0f;
+    // Sparse interior grid (every 32 pixels) to catch curved surfaces
+    for (int y = 32; y < h - 1; y += 32) {
+        const auto* row = coords.ptr<cv::Vec3f>(y);
+        for (int x = 32; x < w - 1; x += 32) {
+            updateBounds(row[x]);
+        }
+    }
+
+    // Add margin for interpolation + any interior curvature we may have missed
+    loX -= 2.0f; loY -= 2.0f; loZ -= 2.0f;
+    hiX += 2.0f; hiY += 2.0f; hiZ += 2.0f;
 
     const auto& shape = ds->shape();  // {z, y, x}
     ChunkBBox bb;

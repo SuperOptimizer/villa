@@ -27,7 +27,7 @@ class CState : public QObject
     Q_OBJECT
 
 public:
-    explicit CState(size_t cacheSizeBytes, QObject* parent = nullptr);
+    explicit CState(size_t cacheSizeBytes, size_t diskCacheSizeBytes = 100ULL << 30, QObject* parent = nullptr);
     ~CState();
 
     // --- VolumePkg ---
@@ -101,6 +101,7 @@ private:
     VCCollection* _pointCollection;
 
     size_t _cacheSizeBytes;
+    size_t _diskCacheSizeBytes;
 
     // Surface/POI data (formerly in CSurfaceCollection)
     std::unordered_map<std::string, std::shared_ptr<Surface>> _surfs;

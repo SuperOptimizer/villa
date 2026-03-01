@@ -105,6 +105,7 @@ namespace viewer {
 
     // Remote volume chunk cache directory
     constexpr auto REMOTE_CACHE_DIR = "viewer/remote_cache_dir";
+    // Default: ~/.VC3D/remote_cache (resolved at runtime via QDir::homePath())
 
     // Recent remote volume URLs
     constexpr auto REMOTE_RECENT_URLS = "viewer/remote_recent_urls";
@@ -142,20 +143,22 @@ namespace viewer {
 // -----------------------------------------------------------------------------
 namespace perf {
     constexpr auto PRELOADED_SLICES = "perf/preloaded_slices";
-    constexpr auto SKIP_IMAGE_FORMAT_CONV = "perf/chkSkipImageFormatConvExp";
     constexpr auto PARALLEL_PROCESSES = "perf/parallel_processes";
     constexpr auto ITERATION_COUNT = "perf/iteration_count";
     constexpr auto DOWNSCALE_OVERRIDE = "perf/downscale_override";
     constexpr auto FAST_INTERPOLATION = "perf/fast_interpolation";
     constexpr auto ENABLE_FILE_WATCHING = "perf/enable_file_watching";
+    constexpr auto RAM_CACHE_SIZE_GB = "perf/ram_cache_size_gb";
+    constexpr auto DISK_CACHE_SIZE_GB = "perf/disk_cache_size_gb";
 
     constexpr int PRELOADED_SLICES_DEFAULT = 200;
-    constexpr bool SKIP_IMAGE_FORMAT_CONV_DEFAULT = false;
     constexpr int PARALLEL_PROCESSES_DEFAULT = 8;
     constexpr int ITERATION_COUNT_DEFAULT = 1000;
     constexpr int DOWNSCALE_OVERRIDE_DEFAULT = 0;
     constexpr bool FAST_INTERPOLATION_DEFAULT = false;
     constexpr bool ENABLE_FILE_WATCHING_DEFAULT = true;
+    constexpr int RAM_CACHE_SIZE_GB_DEFAULT = 10;
+    constexpr int DISK_CACHE_SIZE_GB_DEFAULT = 100;
 }
 
 // -----------------------------------------------------------------------------

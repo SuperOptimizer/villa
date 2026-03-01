@@ -18,7 +18,7 @@ set(CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake)
 set(CMAKE_EXPORT_COMPILE_COMMANDS on)
 
 # ---- Options -----------------------------------------------------------------
-option(VC_USE_OPENMP        "Enable OpenMP support"                              ON)
+option(VC_USE_OPENMP        "Enable OpenMP support"                              OFF)
 option(VC_USE_VALGRIND      "Enable Valgrind support"                            OFF)
 option(VC_USE_PCH           "Enable precompiled headers (faster incremental builds, but disables ccache)" OFF)
 option(VC_INSTALL_APPS      "Install VC core programs"                           ON)
@@ -44,6 +44,8 @@ include_directories(core/include)
 
 add_subdirectory(misc)
 add_subdirectory(libs/OpenABF)
+
+add_subdirectory(utils)
 add_subdirectory(core)
 add_subdirectory(apps)
 

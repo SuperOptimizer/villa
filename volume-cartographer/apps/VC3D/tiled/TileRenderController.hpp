@@ -4,6 +4,7 @@
 #include <QPixmap>
 #include <QRectF>
 
+#include <atomic>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -28,7 +29,7 @@ class TileRenderController : public QObject
     Q_OBJECT
 
 public:
-    explicit TileRenderController(TileScene* tileScene, QObject* parent = nullptr);
+    explicit TileRenderController(TileScene* tileScene, RenderPool* sharedPool, QObject* parent = nullptr);
     ~TileRenderController() override;
 
     // Called when camera state changes (pan, zoom, slice offset).
@@ -60,6 +61,10 @@ public:
     // Cancel all in-flight renders and clear results.
     void cancelAll();
 
+    // Clear cached render state (_last* and _pending*) so stale callbacks
+    // (e.g. chunk-arrival) cannot re-trigger renders with an old volume.
+    void clearState();
+
     // Access the slice cache (for stats, manual invalidation, etc.)
     SliceCache& sliceCache() { return _cache; }
 
@@ -67,9 +72,6 @@ public:
     // Should be recomputed whenever window/level, colormap, composite settings change.
     void setParamsHash(uint64_t hash) { _paramsHash = hash; }
     uint64_t paramsHash() const { return _paramsHash; }
-
-    // Whether to skip Qt image format conversion (performance setting)
-    void setSkipImageFormatConv(bool skip) { _skipImageFormatConv = skip; }
 
     // Progressive rendering: show coarse previews while full-res loads
     void setProgressiveEnabled(bool enabled) { _progressiveEnabled = enabled; }
@@ -102,13 +104,14 @@ private slots:
 private:
     TileScene* _tileScene;
     SliceCache _cache;
-    RenderPool _renderPool;
+    RenderPool* _renderPool;  // shared, not owned
     QTimer* _tickTimer;
 
-    uint64_t _currentEpoch = 0;
+    std::atomic<uint64_t> _currentEpoch{0};
+    int _controllerId;
+    static inline std::atomic<int> _nextControllerId{0};
     uint64_t _paramsHash = 0;
     QRectF _lastViewportRect;
-    bool _skipImageFormatConv = false;
     bool _progressiveEnabled = true;
 
     // Desired pyramid level for current render pass

@@ -3,6 +3,7 @@
 
 #include <cstdio>
 #include <fstream>
+#include <future>
 #include <optional>
 #include <nlohmann/json.hpp>
 
@@ -27,10 +28,23 @@ static size_t stringWriteCallback(
 std::string httpGetString(const std::string& url, const HttpAuth& auth)
 {
 #ifdef VC_USE_CURL
-    std::string response;
-
-    CURL* curl = curl_easy_init();
+    // Thread-local CURL handle: reuses TCP+TLS connections across requests
+    thread_local CURL* curl = [] {
+        CURL* c = curl_easy_init();
+        if (c) {
+            curl_easy_setopt(c, CURLOPT_NOSIGNAL, 1L);
+            curl_easy_setopt(c, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_2_0);
+        }
+        return c;
+    }();
     if (!curl) return {};
+
+    // Reset clears all options but keeps the connection alive
+    curl_easy_reset(curl);
+    curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+    curl_easy_setopt(curl, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_2_0);
+
+    std::string response;
 
     curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, stringWriteCallback);
@@ -43,7 +57,6 @@ std::string httpGetString(const std::string& url, const HttpAuth& auth)
     auto authGuard = applyCurlAuth(curl, auth);
 
     CURLcode res = curl_easy_perform(curl);
-    curl_easy_cleanup(curl);
 
     if (res != CURLE_OK) return {};
     return response;
@@ -115,15 +128,28 @@ S3ListResult s3ListObjects(const std::string& httpsBaseUrl, const HttpAuth& auth
     if (auto* log = cacheDebugLog())
         std::fprintf(log, "[S3] ListObjects: %s\n", listUrl.c_str());
 
-    // Use our own curl handle without FAILONERROR so we can log the status
+    // Thread-local CURL handle without FAILONERROR so we can log the status
+    thread_local CURL* curl = [] {
+        CURL* c = curl_easy_init();
+        if (c) {
+            curl_easy_setopt(c, CURLOPT_NOSIGNAL, 1L);
+            curl_easy_setopt(c, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_2_0);
+        }
+        return c;
+    }();
+
     std::string xml;
     {
-        CURL* curl = curl_easy_init();
         if (!curl) {
             if (auto* log = cacheDebugLog())
                 std::fprintf(log, "[S3] Failed to init curl\n");
             return result;
         }
+
+        // Reset clears all options but keeps the connection alive
+        curl_easy_reset(curl);
+        curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+        curl_easy_setopt(curl, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_2_0);
 
         curl_easy_setopt(curl, CURLOPT_URL, listUrl.c_str());
         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, stringWriteCallback);
@@ -138,8 +164,6 @@ S3ListResult s3ListObjects(const std::string& httpsBaseUrl, const HttpAuth& auth
 
         long httpCode = 0;
         curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
-
-        curl_easy_cleanup(curl);
 
         if (res != CURLE_OK) {
             if (auto* log = cacheDebugLog())
@@ -249,11 +273,24 @@ bool httpDownloadFile(const std::string& url, const std::filesystem::path& dest,
     std::FILE* fp = std::fopen(tempPath.c_str(), "wb");
     if (!fp) return false;
 
-    CURL* curl = curl_easy_init();
+    // Thread-local CURL handle: reuses TCP+TLS connections across requests
+    thread_local CURL* curl = [] {
+        CURL* c = curl_easy_init();
+        if (c) {
+            curl_easy_setopt(c, CURLOPT_NOSIGNAL, 1L);
+            curl_easy_setopt(c, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_2_0);
+        }
+        return c;
+    }();
     if (!curl) {
         std::fclose(fp);
         return false;
     }
+
+    // Reset clears all options but keeps the connection alive
+    curl_easy_reset(curl);
+    curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+    curl_easy_setopt(curl, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_2_0);
 
     curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, fileWriteCallback);
@@ -266,7 +303,6 @@ bool httpDownloadFile(const std::string& url, const std::filesystem::path& dest,
     auto authGuard = applyCurlAuth(curl, auth);
 
     CURLcode res = curl_easy_perform(curl);
-    curl_easy_cleanup(curl);
     std::fclose(fp);
 
     if (res != CURLE_OK) {
@@ -412,40 +448,65 @@ RemoteZarrInfo fetchRemoteZarrMetadata(
         writeFile(stagingDir / ".zattrs", zattrs);
     }
 
-    // Probe levels: 0, 1, 2, ... until 404
+    // Probe levels concurrently in batches of 8.
+    // Most volumes have fewer than 8 pyramid levels, so the first batch
+    // typically discovers all of them in a single round-trip.
     std::string delimiter = ".";
     int numLevels = 0;
     nlohmann::json level0Meta;
 
-    for (int lvl = 0; lvl < 20; lvl++) {
-        std::string levelStr = std::to_string(lvl);
-        auto zarray = httpGetString(baseUrl + "/" + levelStr + "/.zarray", auth);
-        if (zarray.empty()) {
-            if (auto* log = cacheDebugLog())
-                std::fprintf(log, "[REMOTE] Level %d: no .zarray, stopping\n", lvl);
-            break;
+    constexpr int kBatchSize = 8;
+    constexpr int kMaxLevels = 20;
+
+    for (int batchStart = 0; batchStart < kMaxLevels; batchStart += kBatchSize) {
+        int batchEnd = std::min(batchStart + kBatchSize, kMaxLevels);
+
+        // Launch async probes for this batch
+        std::vector<std::future<std::string>> futures;
+        futures.reserve(batchEnd - batchStart);
+        for (int lvl = batchStart; lvl < batchEnd; lvl++) {
+            std::string lvlUrl = baseUrl + "/" + std::to_string(lvl) + "/.zarray";
+            futures.push_back(std::async(std::launch::async,
+                [lvlUrl, &auth]() { return httpGetString(lvlUrl, auth); }));
         }
 
-        auto levelDir = stagingDir / levelStr;
-        writeFile(levelDir / ".zarray", zarray);
-        numLevels++;
+        // Collect results in order
+        bool batchHadMiss = false;
+        for (int i = 0; i < static_cast<int>(futures.size()); i++) {
+            int lvl = batchStart + i;
+            auto zarray = futures[i].get();
 
-        if (auto* log = cacheDebugLog())
-            std::fprintf(log, "[REMOTE] Level %d: fetched .zarray (%zu bytes)\n",
-                         lvl, zarray.size());
-
-        // Parse level 0 for shape and delimiter
-        if (lvl == 0) {
-            try {
-                level0Meta = nlohmann::json::parse(zarray);
-                if (level0Meta.contains("dimension_separator")) {
-                    delimiter = level0Meta["dimension_separator"].get<std::string>();
-                }
-            } catch (const std::exception& e) {
+            if (zarray.empty()) {
                 if (auto* log = cacheDebugLog())
-                    std::fprintf(log, "[REMOTE] Warning: failed to parse level 0 .zarray: %s\n", e.what());
+                    std::fprintf(log, "[REMOTE] Level %d: no .zarray\n", lvl);
+                batchHadMiss = true;
+                break;  // Stop at first gap — levels must be contiguous
+            }
+
+            auto levelDir = stagingDir / std::to_string(lvl);
+            writeFile(levelDir / ".zarray", zarray);
+            numLevels++;
+
+            if (auto* log = cacheDebugLog())
+                std::fprintf(log, "[REMOTE] Level %d: fetched .zarray (%zu bytes)\n",
+                             lvl, zarray.size());
+
+            // Parse level 0 for shape and delimiter
+            if (lvl == 0) {
+                try {
+                    level0Meta = nlohmann::json::parse(zarray);
+                    if (level0Meta.contains("dimension_separator")) {
+                        delimiter = level0Meta["dimension_separator"].get<std::string>();
+                    }
+                } catch (const std::exception& e) {
+                    if (auto* log = cacheDebugLog())
+                        std::fprintf(log, "[REMOTE] Warning: failed to parse level 0 .zarray: %s\n", e.what());
+                }
             }
         }
+
+        // If any level in this batch was missing, no need to probe further
+        if (batchHadMiss) break;
     }
 
     if (numLevels == 0) {

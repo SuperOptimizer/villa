@@ -1,5 +1,5 @@
 #include "CTiledVolumeViewer.hpp"
-#include "tiled/FnvHash.hpp"
+#include <utils/hash.hpp>
 
 #include "ViewerManager.hpp"
 #include "VCSettings.hpp"
@@ -82,8 +82,8 @@ CTiledVolumeViewer::CTiledVolumeViewer(CState* state,
     // Create tile scene manager
     _tileScene = new TileScene(_scene);
 
-    // Create render controller (async tile rendering)
-    _renderController = new TileRenderController(_tileScene, this);
+    // Create render controller (async tile rendering, shared pool from ViewerManager)
+    _renderController = new TileRenderController(_tileScene, manager->renderPool(), this);
 
     // Set the scene on the view
     fGraphicsView->setScene(_scene);
@@ -98,10 +98,8 @@ CTiledVolumeViewer::CTiledVolumeViewer(CState* state,
     // Read settings
     using namespace vc3d::settings;
     QSettings settings(vc3d::settingsFilePath(), QSettings::IniFormat);
-    _skipImageFormatConv = settings.value(perf::SKIP_IMAGE_FORMAT_CONV, perf::SKIP_IMAGE_FORMAT_CONV_DEFAULT).toBool();
     _camera.downscaleOverride = settings.value(perf::DOWNSCALE_OVERRIDE, perf::DOWNSCALE_OVERRIDE_DEFAULT).toInt();
     _useFastInterpolation = settings.value(perf::FAST_INTERPOLATION, perf::FAST_INTERPOLATION_DEFAULT).toBool();
-    _renderController->setSkipImageFormatConv(_skipImageFormatConv);
 
     auto* layout = new QVBoxLayout;
     layout->addWidget(fGraphicsView);
@@ -173,6 +171,7 @@ void CTiledVolumeViewer::OnVolumeChanged(std::shared_ptr<Volume> vol)
 {
     // Invalidate all caches and cancel in-flight work from the old volume
     _renderController->cancelAll();
+    _renderController->clearState();
     _renderController->sliceCache().clear();
     _tileScene->resetMetadata();
 
@@ -203,88 +202,37 @@ void CTiledVolumeViewer::OnVolumeChanged(std::shared_ptr<Volume> vol)
                     ctrl->markChunkArrived();
                     cache->clearChunkArrivedFlag();
                 }, Qt::QueuedConnection);
-                // Track coarsest-level pin progress for remote volumes
+                // Track coarsest-level pin progress for status display
                 if (key.level == coarsestLevel && viewer->_pinTotal > 0) {
                     QMetaObject::invokeMethod(viewer, [viewer]() {
                         viewer->_pinReceived++;
                         viewer->updateStatusLabel();
                     }, Qt::QueuedConnection);
                 }
-                // Check if data bounds just became available
-                if (!viewer->_hadValidDataBounds) {
-                    QMetaObject::invokeMethod(viewer, [viewer]() {
-                        if (!viewer->_hadValidDataBounds && viewer->_volume &&
-                            viewer->_volume->dataBounds().valid) {
-                            viewer->_hadValidDataBounds = true;
-                            viewer->onDataBoundsReady();
-                        }
-                    }, Qt::QueuedConnection);
-                }
             });
 
-        // Pin coarsest pyramid level in hot tier.
-        // For local volumes this blocks (fast), ensuring sampleBestEffort
-        // always has fallback data. For remote volumes, pin non-blocking
-        // to avoid freezing the UI during HTTP downloads.
-        const bool isRemote = _volume->isRemote();
-        if (isRemote) {
-            // Set up progress tracking before pin so we can show download progress
-            auto* tc = _volume->tieredCache();
-            auto shape = tc->levelShape(coarsestLevel);
-            auto chunks = tc->chunkShape(coarsestLevel);
-            if (chunks[0] > 0 && chunks[1] > 0 && chunks[2] > 0) {
-                _pinTotal = static_cast<int>(
-                    ((shape[0] + chunks[0] - 1) / chunks[0]) *
-                    ((shape[1] + chunks[1] - 1) / chunks[1]) *
-                    ((shape[2] + chunks[2] - 1) / chunks[2]));
-                _pinReceived = 0;
-                _pinLevel = coarsestLevel;
-            }
-        }
-        _volume->pinCoarsestLevel(!isRemote);
+        // Compute total coarsest-level chunks for pin progress tracking
+        auto levelShape = cache->levelShape(coarsestLevel);
+        auto chunkShape = cache->chunkShape(coarsestLevel);
+        int gridZ = (levelShape[0] + chunkShape[0] - 1) / chunkShape[0];
+        int gridY = (levelShape[1] + chunkShape[1] - 1) / chunkShape[1];
+        int gridX = (levelShape[2] + chunkShape[2] - 1) / chunkShape[2];
+        _pinTotal = gridZ * gridY * gridX;
+        _pinLevel = coarsestLevel;
+        _pinReceived = 0;
 
-        // Record whether data bounds are already valid (e.g. local volumes)
-        _hadValidDataBounds = _volume->dataBounds().valid;
+        // Pin coarsest level on a background thread so the UI stays responsive.
+        // Once pinning completes, post back to the main thread to finish setup.
+        auto vol = _volume;  // prevent capture of `this` preventing move
+        std::thread([this, vol]() {
+            vol->pinCoarsestLevel(/*blocking=*/true);
+            QMetaObject::invokeMethod(this, [this]() {
+                onPinComplete();
+            }, Qt::QueuedConnection);
+        }).detach();
     }
-
-    // For remote volumes with no surface, create a default PlaneSurface
-    // centered in the volume so the axis-aligned viewers can render.
-    // The segmentation viewer should stay blank until a segment is loaded.
-    if (!_surfWeak.lock() && _volume && isAxisAlignedView()) {
-        auto shape = _volume->shape();  // (z, y, x) at scale 0
-        const auto& db = _volume->dataBounds();
-        cv::Vec3f center;
-        if (db.valid) {
-            center = cv::Vec3f((db.minZ + db.maxZ) * 0.5f,
-                               (db.minY + db.maxY) * 0.5f,
-                               (db.minX + db.maxX) * 0.5f);
-        } else {
-            center = cv::Vec3f(shape[2] * 0.5f, shape[1] * 0.5f, shape[0] * 0.5f);
-        }
-        cv::Vec3f normal;
-        if (_surfName == "xy plane") normal = cv::Vec3f(0, 0, 1);
-        else if (_surfName == "xz plane" || _surfName == "seg xz") normal = cv::Vec3f(0, 1, 0);
-        else normal = cv::Vec3f(1, 0, 0);  // yz plane / seg yz
-        auto defaultSurf = std::make_shared<PlaneSurface>(center, normal);
-        _defaultSurface = defaultSurf;
-        _surfWeak = defaultSurf;
-    }
-
-    _camera.recalcPyramidLevel(_volume->numScales());
-    updateContentMinScale();
-
-    // Initialize zoom debounce tracking
 
     updateStatusLabel();
-
-    rebuildContentGrid();
-    centerViewport();
-
-    submitRender();
-
-    // Update scalebar
-    double vs = _volume->voxelSize() / _camera.dsScale;
-    fGraphicsView->setVoxelSize(vs, vs);
 }
 
 void CTiledVolumeViewer::onSurfaceChanged(std::string name, std::shared_ptr<Surface> surf,
@@ -339,6 +287,9 @@ void CTiledVolumeViewer::onSurfaceChanged(std::string name, std::shared_ptr<Surf
 
 void CTiledVolumeViewer::onVolumeClosing()
 {
+    _renderController->cancelAll();
+    _renderController->clearState();
+
     if (_surfName == "segmentation") {
         onSurfaceChanged(_surfName, nullptr);
     } else if (isAxisAlignedView()) {
@@ -382,12 +333,6 @@ void CTiledVolumeViewer::updateContentMinScale()
 
     if (_volume && isAxisAlignedView()) {
         auto [w, h, d] = _volume->shape();
-        const auto& db = _volume->dataBounds();
-        if (db.valid) {
-            w = db.maxX - db.minX + 1;
-            h = db.maxY - db.minY + 1;
-            d = db.maxZ - db.minZ + 1;
-        }
         if (_surfName == "xy plane") {
             contentW = static_cast<float>(w);
             contentH = static_cast<float>(h);
@@ -430,12 +375,6 @@ void CTiledVolumeViewer::rebuildContentGrid()
             // Project volume bounding box corners onto the plane
             auto [w, h, d] = _volume->shape();
             float x0 = 0, x1 = (float)w, y0 = 0, y1 = (float)h, z0 = 0, z1 = (float)d;
-            const auto& db = _volume->dataBounds();
-            if (db.valid) {
-                x0 = (float)db.minX; x1 = (float)db.maxX;
-                y0 = (float)db.minY; y1 = (float)db.maxY;
-                z0 = (float)db.minZ; z1 = (float)db.maxZ;
-            }
             float corners[][3] = {
                 {x0,y0,z0}, {x1,y0,z0}, {x0,y1,z0}, {x1,y1,z0},
                 {x0,y0,z1}, {x1,y0,z1}, {x0,y1,z1}, {x1,y1,z1}
@@ -486,6 +425,48 @@ void CTiledVolumeViewer::centerViewport()
     if (!fGraphicsView || !_tileScene) return;
     QPointF scenePos = _tileScene->surfaceToScene(_camera.surfacePtr[0], _camera.surfacePtr[1]);
     fGraphicsView->centerOn(scenePos);
+}
+
+void CTiledVolumeViewer::onPinComplete()
+{
+    if (!_volume) return;
+
+    _hadValidDataBounds = _volume->dataBounds().valid;
+
+    // For remote volumes with no surface, create a default PlaneSurface
+    // centered in the volume so the axis-aligned viewers can render.
+    if (!_surfWeak.lock() && _volume && isAxisAlignedView()) {
+        auto shape = _volume->shape();  // (z, y, x) at scale 0
+        const auto& db = _volume->dataBounds();
+        cv::Vec3f center;
+        if (db.valid) {
+            center = cv::Vec3f((db.minZ + db.maxZ) * 0.5f,
+                               (db.minY + db.maxY) * 0.5f,
+                               (db.minX + db.maxX) * 0.5f);
+        } else {
+            center = cv::Vec3f(shape[2] * 0.5f, shape[1] * 0.5f, shape[0] * 0.5f);
+        }
+        cv::Vec3f normal;
+        if (_surfName == "xy plane") normal = cv::Vec3f(0, 0, 1);
+        else if (_surfName == "xz plane" || _surfName == "seg xz") normal = cv::Vec3f(0, 1, 0);
+        else normal = cv::Vec3f(1, 0, 0);  // yz plane / seg yz
+        auto defaultSurf = std::make_shared<PlaneSurface>(center, normal);
+        _defaultSurface = defaultSurf;
+        _surfWeak = defaultSurf;
+    }
+
+    _camera.recalcPyramidLevel(_volume->numScales());
+    updateContentMinScale();
+
+    rebuildContentGrid();
+    centerViewport();
+
+    // Update scalebar
+    double vs = _volume->voxelSize() / _camera.dsScale;
+    fGraphicsView->setVoxelSize(vs, vs);
+
+    submitRender();
+    updateStatusLabel();
 }
 
 void CTiledVolumeViewer::onDataBoundsReady()
@@ -653,12 +634,6 @@ void CTiledVolumeViewer::onZoom(int steps, QPointF scene_point, Qt::KeyboardModi
                 auto [w, h, d] = _volume->shape();
                 float cx0 = 0, cy0 = 0, cz0 = 0;
                 float cx1 = static_cast<float>(w - 1), cy1 = static_cast<float>(h - 1), cz1 = static_cast<float>(d - 1);
-                const auto& db = _volume->dataBounds();
-                if (db.valid) {
-                    cx0 = static_cast<float>(db.minX); cx1 = static_cast<float>(db.maxX);
-                    cy0 = static_cast<float>(db.minY); cy1 = static_cast<float>(db.maxY);
-                    cz0 = static_cast<float>(db.minZ); cz1 = static_cast<float>(db.maxZ);
-                }
                 newPosition[0] = std::clamp(newPosition[0], cx0, cx1);
                 newPosition[1] = std::clamp(newPosition[1], cy0, cy1);
                 newPosition[2] = std::clamp(newPosition[2], cz0, cz1);
@@ -769,14 +744,17 @@ bool CTiledVolumeViewer::isAxisAlignedView() const
 bool CTiledVolumeViewer::clampToDataBounds(cv::Vec3f& lo, cv::Vec3f& hi) const
 {
     if (!_volume) return false;
-    const auto& db = _volume->dataBounds();
-    if (!db.valid) return true;  // no bounds to clamp against — keep as-is
-    lo[0] = std::max(lo[0], static_cast<float>(db.minX));
-    lo[1] = std::max(lo[1], static_cast<float>(db.minY));
-    lo[2] = std::max(lo[2], static_cast<float>(db.minZ));
-    hi[0] = std::min(hi[0], static_cast<float>(db.maxX));
-    hi[1] = std::min(hi[1], static_cast<float>(db.maxY));
-    hi[2] = std::min(hi[2], static_cast<float>(db.maxZ));
+    // Use full physical volume bounds for prefetch — data bounds are only
+    // an approximation (derived from the coarsest pyramid level) and can
+    // miss real data near boundaries.  The chunk-level skip in Slicing.cpp
+    // still avoids I/O for truly empty regions.
+    auto [w, h, d] = _volume->shape();
+    lo[0] = std::max(lo[0], 0.f);
+    lo[1] = std::max(lo[1], 0.f);
+    lo[2] = std::max(lo[2], 0.f);
+    hi[0] = std::min(hi[0], static_cast<float>(w - 1));
+    hi[1] = std::min(hi[1], static_cast<float>(h - 1));
+    hi[2] = std::min(hi[2], static_cast<float>(d - 1));
     return lo[0] <= hi[0] && lo[1] <= hi[1] && lo[2] <= hi[2];
 }
 
@@ -825,8 +803,10 @@ void CTiledVolumeViewer::submitRender()
         QPointF delta = currentCenter - _lastPanScenePos;
         _lastPanScenePos = currentCenter;
 
-        // Extend viewport by 1 tile width in the direction of pan movement
-        const float tileExtent = static_cast<float>(TileScene::TILE_PX);
+        // Extend viewport by 3 tile widths in the direction of pan movement
+        // so prefetch stays ahead of rapid panning.
+        constexpr int PREFETCH_TILES_AHEAD = 3;
+        const float tileExtent = static_cast<float>(TileScene::TILE_PX) * PREFETCH_TILES_AHEAD;
         if (std::abs(delta.x()) > 0.5 || std::abs(delta.y()) > 0.5) {
             // Normalize delta and scale by tile extent
             double len = std::sqrt(delta.x() * delta.x() + delta.y() * delta.y());
@@ -866,10 +846,10 @@ bool CTiledVolumeViewer::computePlanePrefetchBBox(PlaneSurface* plane,
     cv::Vec2f vpTopLeft = _tileScene->sceneToSurface(QPointF(prefetchRect.left(), prefetchRect.top()));
     cv::Vec2f vpBotRight = _tileScene->sceneToSurface(QPointF(prefetchRect.right(), prefetchRect.bottom()));
 
-    const float uMin = vpTopLeft[0] - margin * invScale;
-    const float uMax = vpBotRight[0] + margin * invScale;
-    const float vMin = vpTopLeft[1] - margin * invScale;
-    const float vMax = vpBotRight[1] + margin * invScale;
+    const float uMin = vpTopLeft[0] - margin;
+    const float uMax = vpBotRight[0] + margin;
+    const float vMin = vpTopLeft[1] - margin;
+    const float vMax = vpBotRight[1] + margin;
 
     const cv::Vec3f o = plane->origin();
     const cv::Vec3f bx = plane->basisX();
@@ -941,19 +921,14 @@ bool CTiledVolumeViewer::computeQuadPrefetchBBox(const std::shared_ptr<Surface>&
 
 void CTiledVolumeViewer::updateParamsHash()
 {
-    // Simple hash combining rendering parameters that affect output
-    uint64_t h = fnv::BASIS;
-    fnv::mix(h, std::hash<float>{}(_baseWindowLow));
-    fnv::mix(h, std::hash<float>{}(_baseWindowHigh));
-    fnv::mix(h, std::hash<bool>{}(_stretchValues));
-    fnv::mix(h, std::hash<std::string>{}(_baseColormapId));
-    fnv::mix(h, std::hash<bool>{}(_useFastInterpolation));
-    fnv::mix(h, std::hash<bool>{}(_compositeSettings.enabled));
-    fnv::mix(h, std::hash<int>{}(_compositeSettings.layersFront));
-    fnv::mix(h, std::hash<int>{}(_compositeSettings.layersBehind));
-    fnv::mix(h, std::hash<bool>{}(_compositeSettings.planeEnabled));
-    fnv::mix(h, std::hash<std::string>{}(_compositeSettings.params.method));
-    fnv::mix(h, std::hash<uint8_t>{}(_compositeSettings.params.isoCutoff));
+    auto h = utils::hash_combine_values(
+        _baseWindowLow, _baseWindowHigh, _stretchValues,
+        _baseColormapId, _useFastInterpolation,
+        _compositeSettings.enabled,
+        _compositeSettings.layersFront, _compositeSettings.layersBehind,
+        _compositeSettings.planeEnabled,
+        _compositeSettings.params.method,
+        _compositeSettings.params.isoCutoff);
 
     _renderController->setParamsHash(h);
 }
@@ -1057,21 +1032,30 @@ void CTiledVolumeViewer::onCursorMove(QPointF scene_loc)
         uint64_t oldHighlighted = _highlightedPointId;
         _highlightedPointId = 0;
 
-        const float threshold = 10.0f;
-        float minDistSq = threshold * threshold;
-
         const auto& collections = _pointCollection->getAllCollections();
-        for (const auto& [colId, col] : collections) {
-            for (const auto& [ptId, pt] : col.points) {
-                QPointF ptScene = volumeToScene(pt.p);
-                QPointF diff = scene_loc - ptScene;
-                float distSq = QPointF::dotProduct(diff, diff);
-                if (distSq < minDistSq) {
-                    minDistSq = distSq;
-                    _highlightedPointId = pt.id;
+        if (!collections.empty()) {
+            const float threshold = 10.0f;
+            const float thresholdSq = threshold * threshold;
+            // If we find a point within this radius, accept it immediately
+            // without searching for the absolute closest.
+            const float earlyOutSq = 3.0f * 3.0f;
+            float minDistSq = thresholdSq;
+
+            for (const auto& [colId, col] : collections) {
+                for (const auto& [ptId, pt] : col.points) {
+                    QPointF ptScene = volumeToScene(pt.p);
+                    QPointF diff = scene_loc - ptScene;
+                    float distSq = QPointF::dotProduct(diff, diff);
+                    if (distSq < minDistSq) {
+                        minDistSq = distSq;
+                        _highlightedPointId = pt.id;
+                        if (distSq < earlyOutSq)
+                            goto highlight_done;
+                    }
                 }
             }
         }
+        highlight_done:
 
         if (oldHighlighted != _highlightedPointId) {
             emit overlaysUpdated();
@@ -1272,6 +1256,12 @@ void CTiledVolumeViewer::onPOIChanged(std::string name, POI* poi)
 
 void CTiledVolumeViewer::updateStatusLabel()
 {
+    // Debounce: skip if less than 100ms since last update
+    auto now = std::chrono::steady_clock::now();
+    if (std::chrono::duration_cast<std::chrono::milliseconds>(now - _lastStatusUpdate).count() < 100)
+        return;
+    _lastStatusUpdate = now;
+
     QString status = QString("%1x").arg(_camera.scale, 0, 'f', 2);
 
     status += QString(" z=%1").arg(_camera.zOff, 0, 'f', 1);
@@ -1284,19 +1274,21 @@ void CTiledVolumeViewer::updateStatusLabel()
     }
 
     // Cache stats
+    {
+        auto& sc = _renderController->sliceCache();
+        size_t scTotal = sc.hits() + sc.misses();
+        if (scTotal > 0) {
+            int scPct = static_cast<int>(100 * sc.hits() / scTotal);
+            status += QString(" | S%1").arg(scPct);
+        }
+    }
     if (_volume && _volume->tieredCache()) {
         auto s = _volume->tieredCache()->stats();
         uint64_t total = s.hotHits + s.warmHits + s.coldHits + s.iceFetches + s.misses;
         if (total > 0) {
-            int hitPct = static_cast<int>(100 * (s.hotHits + s.warmHits) / total);
-            status += QString(" | cache %1%").arg(hitPct);
-        }
-    } else {
-        auto& sc = _renderController->sliceCache();
-        size_t total = sc.hits() + sc.misses();
-        if (total > 0) {
-            int hitPct = static_cast<int>(100 * sc.hits() / total);
-            status += QString(" | tile$ %1%").arg(hitPct);
+            auto pct = [&](uint64_t n) { return static_cast<int>(100 * n / total); };
+            status += QString(" | H%1 W%2 D%3")
+                .arg(pct(s.hotHits)).arg(pct(s.warmHits)).arg(pct(s.coldHits));
         }
     }
 

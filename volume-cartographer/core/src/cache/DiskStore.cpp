@@ -1,6 +1,7 @@
 #include "vc/core/cache/DiskStore.hpp"
 #include "vc/core/cache/CacheDebugLog.hpp"
 #include "vc/core/cache/CacheUtils.hpp"
+#include <utils/hash.hpp>
 
 #include <algorithm>
 #include <cerrno>
@@ -40,13 +41,10 @@ std::filesystem::path DiskStore::chunkPath(
     return base / std::to_string(key.level) / chunkFilename(key, config_.delimiter);
 }
 
-size_t DiskStore::lockIndex(
-    const std::string& volumeId,
-    const ChunkKey& key) const noexcept
+// Lock key combines volumeId and chunk key for per-key serialization.
+static size_t diskLockKey(const std::string& volumeId, const ChunkKey& key) noexcept
 {
-    size_t h = std::hash<std::string>()(volumeId);
-    h ^= ChunkKeyHash()(key);
-    return h % kLockPoolSize;
+    return utils::hash_combine(std::hash<std::string>()(volumeId), ChunkKeyHash()(key));
 }
 
 std::optional<std::vector<uint8_t>> DiskStore::get(
@@ -65,7 +63,7 @@ void DiskStore::put(
     auto path = chunkPath(volumeId, key);
 
     // Serialize writes to same key
-    std::lock_guard lock(lockPool_[lockIndex(volumeId, key)]);
+    auto lock = lockPool_.lock<size_t>(diskLockKey(volumeId, key));
 
     // Create parent directories
     std::error_code ec;
@@ -118,7 +116,34 @@ void DiskStore::put(
                          tmpPath.c_str(), path.c_str(), ec.message().c_str());
         ::unlink(tmpPath.c_str());
     } else {
-        totalBytes_.fetch_add(size, std::memory_order_relaxed);
+        // Update in-memory index
+        size_t oldSize = 0;
+        auto mtime = std::filesystem::last_write_time(path, ec);
+        if (!ec) {
+            std::lock_guard<std::mutex> lk(indexMtx_);
+            // Remove old entry if overwriting an existing file
+            auto pit = pathIndex_.find(path.string());
+            if (pit != pathIndex_.end()) {
+                oldSize = pit->second->second.bytes;
+                timeIndex_.erase(pit->second);
+                pathIndex_.erase(pit);
+            }
+            auto it = timeIndex_.emplace(mtime, IndexEntry{path, size});
+            pathIndex_.emplace(path.string(), it);
+        }
+        // Adjust totalBytes_: add new size, subtract old if overwriting
+        if (oldSize > 0 && oldSize <= size) {
+            totalBytes_.fetch_add(size - oldSize, std::memory_order_relaxed);
+        } else if (oldSize > size) {
+            auto prev = totalBytes_.load(std::memory_order_relaxed);
+            auto sub = oldSize - size;
+            while (prev >= sub &&
+                   !totalBytes_.compare_exchange_weak(
+                       prev, prev - sub, std::memory_order_relaxed))
+                ;
+        } else {
+            totalBytes_.fetch_add(size, std::memory_order_relaxed);
+        }
     }
 }
 
@@ -139,6 +164,12 @@ void DiskStore::remove(
 
     std::filesystem::remove(path, ec);
     if (!ec) {
+        // Remove from in-memory index
+        {
+            std::lock_guard<std::mutex> lk(indexMtx_);
+            removeFromIndex(path);
+        }
+
         auto prev = totalBytes_.load(std::memory_order_relaxed);
         auto sub = static_cast<size_t>(sz);
         // Clamp to avoid underflow
@@ -153,57 +184,37 @@ void DiskStore::evictToSize(size_t targetBytes)
 {
     if (config_.root.empty()) return;
 
-    // Fast path: if tracked total is already within budget, skip the scan
+    // Fast path: if tracked total is already within budget, skip eviction
     size_t tracked = totalBytes_.load(std::memory_order_relaxed);
     if (tracked > 0 && tracked <= targetBytes) return;
 
-    // Collect all chunk files with their sizes and modification times
-    struct FileInfo {
-        std::filesystem::path path;
-        size_t bytes;
-        std::filesystem::file_time_type mtime;
-    };
-
-    std::vector<FileInfo> files;
-    size_t totalSize = 0;
+    // Use in-memory index to evict oldest entries (already sorted by mtime)
+    std::lock_guard<std::mutex> lk(indexMtx_);
 
     std::error_code ec;
-    for (auto& entry :
-         std::filesystem::recursive_directory_iterator(config_.root, ec)) {
-        if (!entry.is_regular_file()) continue;
-        auto name = entry.path().filename().string();
-        if (name.starts_with(".") || name.ends_with(".tmp") ||
-            name.ends_with(".json"))
-            continue;
+    auto it = timeIndex_.begin();
+    while (it != timeIndex_.end()) {
+        tracked = totalBytes_.load(std::memory_order_relaxed);
+        if (tracked <= targetBytes) break;
 
-        auto sz = entry.file_size();
-        totalSize += sz;
-        files.push_back(
-            {entry.path(), static_cast<size_t>(sz), entry.last_write_time()});
-    }
-
-    // Sync tracked total with the scanned value
-    totalBytes_.store(totalSize, std::memory_order_relaxed);
-
-    if (totalSize <= targetBytes) return;
-
-    // Sort oldest first
-    std::sort(files.begin(), files.end(),
-              [](const FileInfo& a, const FileInfo& b) {
-                  return a.mtime < b.mtime;
-              });
-
-    // Remove oldest files until under target
-    for (auto& fi : files) {
-        if (totalSize <= targetBytes) break;
-        std::filesystem::remove(fi.path, ec);
+        auto& entry = it->second;
+        std::filesystem::remove(entry.path, ec);
         if (!ec) {
-            totalSize -= fi.bytes;
+            // Update totalBytes_, clamping to avoid underflow
+            auto prev = totalBytes_.load(std::memory_order_relaxed);
+            while (prev >= entry.bytes &&
+                   !totalBytes_.compare_exchange_weak(
+                       prev, prev - entry.bytes, std::memory_order_relaxed))
+                ;
+
+            pathIndex_.erase(entry.path.string());
+            it = timeIndex_.erase(it);
+        } else {
+            // File already gone or inaccessible; remove stale index entry
+            pathIndex_.erase(entry.path.string());
+            it = timeIndex_.erase(it);
         }
     }
-
-    // Update tracked total after eviction
-    totalBytes_.store(totalSize, std::memory_order_relaxed);
 }
 
 size_t DiskStore::totalBytes() const
@@ -219,14 +230,33 @@ void DiskStore::initTotalBytes()
     }
 
     size_t total = 0;
+    size_t fileCount = 0;
     std::error_code ec;
+
+    std::lock_guard<std::mutex> lk(indexMtx_);
+    timeIndex_.clear();
+    pathIndex_.clear();
+
     for (auto& entry :
          std::filesystem::recursive_directory_iterator(config_.root, ec)) {
-        if (entry.is_regular_file()) {
-            total += static_cast<size_t>(entry.file_size());
-        }
+        if (!entry.is_regular_file()) continue;
+        auto name = entry.path().filename().string();
+        // Skip hidden, temp, and metadata files
+        if (name.starts_with(".") || name.ends_with(".tmp") ||
+            name.ends_with(".json"))
+            continue;
+
+        auto sz = static_cast<size_t>(entry.file_size());
+        total += sz;
+        fileCount++;
+
+        auto mtime = entry.last_write_time();
+        auto it = timeIndex_.emplace(mtime, IndexEntry{entry.path(), sz});
+        pathIndex_.emplace(entry.path().string(), it);
     }
     totalBytes_.store(total, std::memory_order_relaxed);
+    std::fprintf(stderr, "[DiskStore] initTotalBytes: root=%s files=%zu bytes=%zu (%.1f MB)\n",
+                 config_.root.c_str(), fileCount, total, total / (1024.0 * 1024.0));
 }
 
 void DiskStore::clearVolume(const std::string& volumeId)
@@ -245,7 +275,22 @@ void DiskStore::clearAll()
     for (auto& entry : std::filesystem::directory_iterator(config_.root, ec)) {
         std::filesystem::remove_all(entry.path(), ec);
     }
+    {
+        std::lock_guard<std::mutex> lk(indexMtx_);
+        timeIndex_.clear();
+        pathIndex_.clear();
+    }
     totalBytes_.store(0, std::memory_order_relaxed);
+}
+
+void DiskStore::removeFromIndex(const std::filesystem::path& path)
+{
+    // Caller must hold indexMtx_
+    auto pit = pathIndex_.find(path.string());
+    if (pit != pathIndex_.end()) {
+        timeIndex_.erase(pit->second);
+        pathIndex_.erase(pit);
+    }
 }
 
 }  // namespace vc::cache

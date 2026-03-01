@@ -87,10 +87,9 @@ struct VcDataset::Impl {
     std::string delimiter_ = ".";
     CompressorConfig compressor_;
 
-    // utils zarr array for read_region / write_region / write_chunk
-    std::shared_ptr<utils::FilesystemStore> store_;
+    // utils zarr array for chunk I/O
+    std::shared_ptr<utils::FileSystemStore> store_;
     std::unique_ptr<utils::ZarrArray> zarrArray_;
-    std::string arrayPathInStore_;  // relative path within store (e.g. "" or "0")
 
     void parseZarray(const std::filesystem::path& path)
     {
@@ -142,25 +141,9 @@ struct VcDataset::Impl {
 
     void openZarrArray()
     {
-        // Open the parent directory as a FilesystemStore, then open the array
-        // at the relative path within it.
-        auto parentPath = fsPath.parent_path();
-        auto arrayName = fsPath.filename().string();
-
-        auto storeResult = utils::FilesystemStore::open(parentPath);
-        if (!storeResult) {
-            throw std::runtime_error("Failed to open store at " +
-                                     parentPath.string() + ": " + storeResult.error());
-        }
-        store_ = std::shared_ptr<utils::FilesystemStore>(storeResult->release());
-        arrayPathInStore_ = arrayName;
-
-        auto arrResult = utils::ZarrArray::open(*store_, arrayPathInStore_);
-        if (!arrResult) {
-            throw std::runtime_error("Failed to open zarr array at " +
-                                     fsPath.string() + ": " + arrResult.error());
-        }
-        zarrArray_ = std::make_unique<utils::ZarrArray>(std::move(*arrResult));
+        // Open the zarr array directly from its path using utils
+        zarrArray_ = std::make_unique<utils::ZarrArray>(
+            utils::ZarrArray::open(fsPath));
     }
 };
 
@@ -188,10 +171,11 @@ size_t VcDataset::dtypeSize() const { return impl_->dtypeSize_; }
 const std::filesystem::path& VcDataset::path() const { return impl_->fsPath; }
 const std::string& VcDataset::delimiter() const { return impl_->delimiter_; }
 
-void VcDataset::decompress(const std::vector<char>& compressed,
+void VcDataset::decompress(std::span<const uint8_t> compressed,
                             void* output, size_t nElements) const
 {
     const size_t outBytes = nElements * impl_->dtypeSize_;
+    const auto* src = reinterpret_cast<const char*>(compressed.data());
 
     switch (impl_->compressor_.id) {
         case CompressorId::None:
@@ -199,8 +183,7 @@ void VcDataset::decompress(const std::vector<char>& compressed,
             break;
 
         case CompressorId::Blosc: {
-            int ret = blosc_decompress(compressed.data(), output,
-                                        outBytes);
+            int ret = blosc_decompress(src, output, outBytes);
             if (ret < 0) {
                 throw std::runtime_error("blosc_decompress failed with code " +
                                           std::to_string(ret));
@@ -226,7 +209,7 @@ void VcDataset::decompress(const std::vector<char>& compressed,
             uint32_t origSize;
             std::memcpy(&origSize, compressed.data(), 4);
             int ret = LZ4_decompress_safe(
-                compressed.data() + 4,
+                src + 4,
                 static_cast<char*>(output),
                 static_cast<int>(compressed.size() - 4),
                 static_cast<int>(origSize));
@@ -242,8 +225,8 @@ void VcDataset::decompress(const std::vector<char>& compressed,
                 throw std::runtime_error("inflateInit2 failed");
             }
             strm.avail_in = static_cast<uInt>(compressed.size());
-            strm.next_in = reinterpret_cast<Bytef*>(
-                const_cast<char*>(compressed.data()));
+            strm.next_in = const_cast<Bytef*>(
+                reinterpret_cast<const Bytef*>(compressed.data()));
             strm.avail_out = static_cast<uInt>(outBytes);
             strm.next_out = static_cast<Bytef*>(output);
             int ret = inflate(&strm, Z_FINISH);
@@ -269,7 +252,7 @@ bool VcDataset::chunkExists(size_t iz, size_t iy, size_t ix) const
 
 bool VcDataset::readChunk(size_t iz, size_t iy, size_t ix, void* output) const
 {
-    std::vector<size_t> indices = {iz, iy, ix};
+    std::array<size_t, 3> indices = {iz, iy, ix};
     auto result = impl_->zarrArray_->read_chunk(indices);
     if (!result) return false;
 
@@ -284,27 +267,222 @@ bool VcDataset::readChunk(size_t iz, size_t iy, size_t ix, void* output) const
 bool VcDataset::writeChunk(size_t iz, size_t iy, size_t ix,
                             const void* input, size_t nbytes)
 {
-    std::vector<size_t> indices = {iz, iy, ix};
-    auto data = std::span<const uint8_t>(
-        static_cast<const uint8_t*>(input), nbytes);
-    auto result = impl_->zarrArray_->write_chunk(indices, data);
-    return result.has_value();
+    std::array<size_t, 3> indices = {iz, iy, ix};
+    auto data = std::span<const std::byte>(
+        static_cast<const std::byte*>(input), nbytes);
+    impl_->zarrArray_->write_chunk(indices, data);
+    return true;
 }
 
 bool VcDataset::readRegion(const std::vector<size_t>& offset,
                             const std::vector<size_t>& regionShape,
                             void* output) const
 {
-    auto result = impl_->zarrArray_->read_region(offset, regionShape, output);
-    return result.has_value();
+    const size_t ndim = offset.size();
+    const auto& chunkShape = impl_->chunkShape_;
+    const size_t elemSize = impl_->dtypeSize_;
+    auto* outBytes = static_cast<uint8_t*>(output);
+
+    // Total elements per chunk
+    size_t chunkElems = 1;
+    for (size_t d = 0; d < ndim; ++d) chunkElems *= chunkShape[d];
+
+    // Compute chunk index ranges
+    std::vector<size_t> chunkStart(ndim), chunkEnd(ndim);
+    for (size_t d = 0; d < ndim; ++d) {
+        chunkStart[d] = offset[d] / chunkShape[d];
+        chunkEnd[d] = (offset[d] + regionShape[d] - 1) / chunkShape[d];
+    }
+
+    // Region strides (C-order)
+    std::vector<size_t> regionStrides(ndim);
+    regionStrides[ndim - 1] = elemSize;
+    for (int d = static_cast<int>(ndim) - 2; d >= 0; --d)
+        regionStrides[d] = regionStrides[d + 1] * regionShape[d + 1];
+
+    // Chunk strides (C-order)
+    std::vector<size_t> chunkStrides(ndim);
+    chunkStrides[ndim - 1] = elemSize;
+    for (int d = static_cast<int>(ndim) - 2; d >= 0; --d)
+        chunkStrides[d] = chunkStrides[d + 1] * chunkShape[d + 1];
+
+    // Temp buffer for one chunk
+    std::vector<uint8_t> chunkBuf(chunkElems * elemSize);
+
+    // Iterate over all chunks that overlap the region
+    std::vector<size_t> ci(ndim);
+    std::function<bool(size_t)> iterChunks = [&](size_t dim) -> bool {
+        if (dim == ndim) {
+            // Read this chunk
+            std::array<size_t, 3> indices;
+            for (size_t d = 0; d < ndim && d < 3; ++d) indices[d] = ci[d];
+            auto result = impl_->zarrArray_->read_chunk(
+                std::span<const size_t>(indices.data(), ndim));
+            const uint8_t* src = nullptr;
+            if (result) {
+                if (result->size() >= chunkElems * elemSize) {
+                    src = reinterpret_cast<const uint8_t*>(result->data());
+                }
+            }
+
+            // Copy overlapping portion to output
+            // Compute overlap in each dimension
+            std::vector<size_t> copyStart(ndim), copySize(ndim);
+            for (size_t d = 0; d < ndim; ++d) {
+                size_t chunkGlobalStart = ci[d] * chunkShape[d];
+                size_t chunkGlobalEnd = chunkGlobalStart + chunkShape[d];
+                size_t regStart = offset[d];
+                size_t regEnd = offset[d] + regionShape[d];
+                size_t overlapStart = std::max(chunkGlobalStart, regStart);
+                size_t overlapEnd = std::min(chunkGlobalEnd, regEnd);
+                copyStart[d] = overlapStart;
+                copySize[d] = overlapEnd - overlapStart;
+            }
+
+            // Copy element rows (innermost dimension contiguous)
+            std::vector<size_t> pos(ndim, 0);
+            std::function<void(size_t)> copyLoop = [&](size_t d) {
+                if (d == ndim - 1) {
+                    // Copy a contiguous row
+                    size_t srcOff = 0, dstOff = 0;
+                    for (size_t dd = 0; dd < ndim; ++dd) {
+                        size_t chunkLocal = copyStart[dd] + pos[dd] - ci[dd] * chunkShape[dd];
+                        size_t regLocal = copyStart[dd] + pos[dd] - offset[dd];
+                        srcOff += chunkLocal * chunkStrides[dd];
+                        dstOff += regLocal * regionStrides[dd];
+                    }
+                    if (src) {
+                        std::memcpy(outBytes + dstOff, src + srcOff, copySize[d] * elemSize);
+                    } else {
+                        std::memset(outBytes + dstOff, 0, copySize[d] * elemSize);
+                    }
+                    return;
+                }
+                for (size_t i = 0; i < copySize[d]; ++i) {
+                    pos[d] = i;
+                    copyLoop(d + 1);
+                }
+            };
+            copyLoop(0);
+            return true;
+        }
+        for (ci[dim] = chunkStart[dim]; ci[dim] <= chunkEnd[dim]; ++ci[dim]) {
+            if (!iterChunks(dim + 1)) return false;
+        }
+        return true;
+    };
+    return iterChunks(0);
 }
 
 bool VcDataset::writeRegion(const std::vector<size_t>& offset,
                              const std::vector<size_t>& regionShape,
                              const void* data)
 {
-    auto result = impl_->zarrArray_->write_region(offset, regionShape, data);
-    return result.has_value();
+    const size_t ndim = offset.size();
+    const auto& chunkShape = impl_->chunkShape_;
+    const size_t elemSize = impl_->dtypeSize_;
+    const auto* inBytes = static_cast<const uint8_t*>(data);
+
+    size_t chunkElems = 1;
+    for (size_t d = 0; d < ndim; ++d) chunkElems *= chunkShape[d];
+
+    std::vector<size_t> chunkStart(ndim), chunkEnd(ndim);
+    for (size_t d = 0; d < ndim; ++d) {
+        chunkStart[d] = offset[d] / chunkShape[d];
+        chunkEnd[d] = (offset[d] + regionShape[d] - 1) / chunkShape[d];
+    }
+
+    std::vector<size_t> regionStrides(ndim);
+    regionStrides[ndim - 1] = elemSize;
+    for (int d = static_cast<int>(ndim) - 2; d >= 0; --d)
+        regionStrides[d] = regionStrides[d + 1] * regionShape[d + 1];
+
+    std::vector<size_t> chunkStrides(ndim);
+    chunkStrides[ndim - 1] = elemSize;
+    for (int d = static_cast<int>(ndim) - 2; d >= 0; --d)
+        chunkStrides[d] = chunkStrides[d + 1] * chunkShape[d + 1];
+
+    std::vector<uint8_t> chunkBuf(chunkElems * elemSize);
+
+    std::vector<size_t> ci(ndim);
+    std::function<bool(size_t)> iterChunks = [&](size_t dim) -> bool {
+        if (dim == ndim) {
+            std::array<size_t, 3> indices;
+            for (size_t d = 0; d < ndim && d < 3; ++d) indices[d] = ci[d];
+            auto idxSpan = std::span<const size_t>(indices.data(), ndim);
+
+            // Check if we're writing a full chunk
+            bool fullChunk = true;
+            for (size_t d = 0; d < ndim; ++d) {
+                size_t chunkGlobalStart = ci[d] * chunkShape[d];
+                if (chunkGlobalStart < offset[d] ||
+                    chunkGlobalStart + chunkShape[d] > offset[d] + regionShape[d]) {
+                    fullChunk = false;
+                    break;
+                }
+            }
+
+            // If partial, read existing chunk first
+            if (!fullChunk) {
+                auto existing = impl_->zarrArray_->read_chunk(idxSpan);
+                if (existing && existing->size() >= chunkElems * elemSize) {
+                    std::memcpy(chunkBuf.data(), existing->data(), chunkElems * elemSize);
+                } else {
+                    std::memset(chunkBuf.data(), 0, chunkElems * elemSize);
+                }
+            }
+
+            // Compute overlap
+            std::vector<size_t> copyStart(ndim), copySize(ndim);
+            for (size_t d = 0; d < ndim; ++d) {
+                size_t chunkGlobalStart = ci[d] * chunkShape[d];
+                size_t chunkGlobalEnd = chunkGlobalStart + chunkShape[d];
+                size_t regStart = offset[d];
+                size_t regEnd = offset[d] + regionShape[d];
+                copyStart[d] = std::max(chunkGlobalStart, regStart);
+                copySize[d] = std::min(chunkGlobalEnd, regEnd) - copyStart[d];
+            }
+
+            // Copy from input to chunk buffer
+            std::vector<size_t> pos(ndim, 0);
+            std::function<void(size_t)> copyLoop = [&](size_t d) {
+                if (d == ndim - 1) {
+                    size_t srcOff = 0, dstOff = 0;
+                    for (size_t dd = 0; dd < ndim; ++dd) {
+                        size_t regLocal = copyStart[dd] + pos[dd] - offset[dd];
+                        size_t chunkLocal = copyStart[dd] + pos[dd] - ci[dd] * chunkShape[dd];
+                        srcOff += regLocal * regionStrides[dd];
+                        dstOff += chunkLocal * chunkStrides[dd];
+                    }
+                    std::memcpy(chunkBuf.data() + dstOff, inBytes + srcOff, copySize[d] * elemSize);
+                    return;
+                }
+                for (size_t i = 0; i < copySize[d]; ++i) {
+                    pos[d] = i;
+                    copyLoop(d + 1);
+                }
+            };
+
+            if (fullChunk) {
+                // For full chunks, copy directly into chunkBuf
+                copyLoop(0);
+            } else {
+                copyLoop(0);
+            }
+
+            // Write the chunk
+            auto byteSpan = std::span<const std::byte>(
+                reinterpret_cast<const std::byte*>(chunkBuf.data()),
+                chunkElems * elemSize);
+            impl_->zarrArray_->write_chunk(idxSpan, byteSpan);
+            return true;
+        }
+        for (ci[dim] = chunkStart[dim]; ci[dim] <= chunkEnd[dim]; ++ci[dim]) {
+            if (!iterChunks(dim + 1)) return false;
+        }
+        return true;
+    };
+    return iterChunks(0);
 }
 
 // ============================================================================

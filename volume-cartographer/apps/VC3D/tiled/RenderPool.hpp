@@ -1,41 +1,25 @@
 #pragma once
 
 #include <QObject>
-#include <QRunnable>
 
 #include <atomic>
+#include <chrono>
 #include <memory>
 #include <mutex>
 #include <vector>
 
 #include "TileRenderer.hpp"
+#include <utils/thread_pool.hpp>
 
-class QThreadPool;
 class Surface;
 class Volume;
-
-// A single render task submitted to the pool.
-// Inherits QRunnable so QThreadPool can execute it.
-class TileRenderTask : public QRunnable
-{
-public:
-    TileRenderTask(TileRenderParams params,
-                   std::shared_ptr<Surface> surface,
-                   std::shared_ptr<Volume> volume,
-                   class RenderPool* pool);
-
-    void run() override;
-
-private:
-    TileRenderParams _params;
-    std::shared_ptr<Surface> _surface;
-    std::shared_ptr<Volume> _volume;
-    RenderPool* _pool;
-};
 
 // Background tile rendering pool.
 // Workers render tiles off the main thread. Completed results are
 // collected by the main thread via drainCompleted().
+//
+// Internally uses utils::PriorityThreadPool with epoch-based stale
+// task filtering to replace QThreadPool.
 class RenderPool : public QObject
 {
     Q_OBJECT
@@ -45,23 +29,30 @@ public:
     ~RenderPool() override;
 
     // Submit a tile for background rendering.
+    // The epochRef atomic is checked before and after rendering to skip stale tasks.
+    // controllerId tags results so drainCompleted can filter by owner.
     void submit(const TileRenderParams& params,
                 const std::shared_ptr<Surface>& surface,
-                const std::shared_ptr<Volume>& volume);
+                const std::shared_ptr<Volume>& volume,
+                const std::atomic<uint64_t>& epochRef,
+                int controllerId);
 
-    // Take up to maxResults completed results (main thread).
+    // Take up to maxResults completed results belonging to controllerId.
     // Results with epoch < minEpoch are discarded.
-    std::vector<TileRenderResult> drainCompleted(int maxResults, uint64_t minEpoch);
+    std::vector<TileRenderResult> drainCompleted(int maxResults, uint64_t minEpoch, int controllerId);
 
-    // Cancel all pending work and clear results.
+    // Cancel all pending work and clear results.  With a shared pool this
+    // only resets bookkeeping — it does NOT call cancel_pending on the
+    // underlying thread pool (that would kill other controllers' tasks).
     void cancelAll();
-
-    // Epoch management: workers check this to skip stale renders.
-    void setCurrentEpoch(uint64_t epoch);
-    uint64_t currentEpoch() const;
 
     // Number of pending + in-flight tasks
     int pendingCount() const;
+
+    // Check for timed-out tasks. If pending tasks have been waiting longer
+    // than the timeout and the pool is idle, reset the pending count.
+    // Returns true if any tasks were expired.
+    bool expireTimedOut(std::chrono::steady_clock::duration timeout = std::chrono::seconds(5));
 
 signals:
     // Emitted (from worker thread) when a result is ready.
@@ -69,14 +60,16 @@ signals:
     void tileReady();
 
 private:
-    friend class TileRenderTask;
-
-    // Called by TileRenderTask::run() from a worker thread.
+    // Called from worker threads when a render completes.
     void pushResult(TileRenderResult result);
 
-    QThreadPool* _pool;
-    std::mutex _resultsMutex;
-    std::vector<TileRenderResult> _completedResults;
-    std::atomic<int> _pendingCount{0};
-    std::atomic<uint64_t> _currentEpoch{0};
+    std::unique_ptr<utils::PriorityThreadPool> pool_;
+    std::mutex resultsMutex_;
+    std::vector<TileRenderResult> completedResults_;
+    std::atomic<int> pendingCount_{0};
+
+    // Track the oldest submission time to detect timed-out renders.
+    std::mutex timeMutex_;
+    std::chrono::steady_clock::time_point oldestSubmitTime_;
+    bool hasSubmissions_{false};
 };

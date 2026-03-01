@@ -2,7 +2,9 @@
 #include <QCommandLineParser>
 
 #include "CWindow.hpp"
+#include "VCSettings.hpp"
 #include "vc/core/Version.hpp"
+#include <QSettings>
 #include "vc/core/types/Volume.hpp"
 #include "vc/core/types/VolumePkg.hpp"
 
@@ -19,9 +21,12 @@
 // so env vars are visible when OpenBLAS/OpenMP create their thread pools.
 static void setThreadPoliciesEarly()
 {
-    // overwrite=0: respect user's explicit env settings if present.
-    setenv("OMP_WAIT_POLICY", "passive", 0);
-    setenv("KMP_BLOCKTIME", "0", 0);        // LLVM/Intel OpenMP: sleep immediately
+    // Force passive wait policy so OpenMP threads sleep instead of
+    // spin-waiting with sched_yield.  overwrite=1 is intentional —
+    // spin-waiting on 500+ OMP threads kills the machine.
+    setenv("OMP_WAIT_POLICY", "passive", 1);
+    setenv("OMP_NUM_THREADS", "1", 0);       // limit OpenMP parallelism
+    setenv("KMP_BLOCKTIME", "0", 1);         // LLVM/Intel OpenMP: sleep immediately
     setenv("KMP_AFFINITY", "disabled", 0);   // skip sched_setaffinity per fork/join
     setenv("OPENBLAS_NUM_THREADS", "1", 0);
     setenv("GOTO_NUM_THREADS", "1", 0);      // legacy name for OpenBLAS
@@ -36,6 +41,9 @@ auto main(int argc, char* argv[]) -> int
     // parallel regions. dlsym avoids weak-symbol issues under LTO.
     if (auto fn = reinterpret_cast<void(*)(int)>(dlsym(RTLD_DEFAULT, "kmp_set_blocktime")))
         fn(0);
+
+    // GNU libgomp: no runtime API for wait policy, but env vars set in
+    // preinit should have taken effect by now.
 
     // Also call openblas_set_num_threads(1) at runtime in case the env var
     // was too late for this particular build's init order.
@@ -105,7 +113,13 @@ auto main(int argc, char* argv[]) -> int
         }
     }
 
+    // RAM cache size: CLI flag > QSettings > CMake default
     size_t cacheSizeGB = CHUNK_CACHE_SIZE_GB;
+    {
+        using namespace vc3d::settings;
+        QSettings settings(vc3d::settingsFilePath(), QSettings::IniFormat);
+        cacheSizeGB = settings.value(perf::RAM_CACHE_SIZE_GB, perf::RAM_CACHE_SIZE_GB_DEFAULT).toULongLong();
+    }
     if (parser.isSet(cacheSizeOption)) {
         bool ok = false;
         const qulonglong parsed = parser.value(cacheSizeOption).toULongLong(&ok);

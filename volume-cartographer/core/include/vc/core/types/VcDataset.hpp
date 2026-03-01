@@ -1,8 +1,10 @@
 #pragma once
 
 #include <array>
+#include <cstdint>
 #include <filesystem>
 #include <memory>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -33,7 +35,7 @@ public:
     // --- Decompression ---
     // Decompress raw compressed bytes into output buffer.
     // nElements = expected number of elements (NOT bytes).
-    void decompress(const std::vector<char>& compressed,
+    void decompress(std::span<const uint8_t> compressed,
                     void* output, size_t nElements) const;
 
     // --- Chunk I/O ---

@@ -70,8 +70,9 @@ std::filesystem::path downloadRemoteSegment(
 {
     namespace fs = std::filesystem;
 
-    // Local destination: cacheDir/segments/<segId>/
-    auto localDir = cacheDir / "segments" / segmentId;
+    // Local destination: cacheDir/{paths|segments}/<segId>/
+    const char* subdir = (source == RemoteSegmentSource::Segments) ? "segments" : "paths";
+    auto localDir = cacheDir / subdir / segmentId;
     fs::create_directories(localDir);
 
     // Files to download from the remote tifxyz directory

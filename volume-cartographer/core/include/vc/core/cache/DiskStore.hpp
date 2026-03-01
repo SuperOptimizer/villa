@@ -4,12 +4,15 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <map>
 #include <mutex>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "ChunkKey.hpp"
+#include <utils/lock_pool.hpp>
 
 namespace vc::cache {
 
@@ -83,16 +86,29 @@ private:
         const std::string& volumeId,
         const ChunkKey& key) const;
 
+    // Remove the index entry for a file path (caller must hold indexMtx_).
+    void removeFromIndex(const std::filesystem::path& path);
+
     // Per-key lock pool to serialize same-key writes
-    static constexpr int kLockPoolSize = 32;
-    mutable std::mutex lockPool_[kLockPoolSize];
-    size_t lockIndex(const std::string& volumeId, const ChunkKey& key) const noexcept;
+    mutable utils::LockPool<64> lockPool_;
 
     Config config_;
 
     // Incrementally tracked total bytes on disk.
     // Initialized to 0; populated by initTotalBytes() on construction.
     std::atomic<size_t> totalBytes_{0};
+
+    // In-memory index of cached files, ordered by modification time.
+    // Enables O(1) eviction of the oldest entry instead of O(n) dir scan.
+    struct IndexEntry {
+        std::filesystem::path path;
+        size_t bytes;
+    };
+    std::mutex indexMtx_;
+    // mtime -> entry (oldest first via default ordering)
+    std::multimap<std::filesystem::file_time_type, IndexEntry> timeIndex_;
+    // path -> iterator into timeIndex_ for O(1) lookup/removal by path
+    std::unordered_map<std::string, decltype(timeIndex_)::iterator> pathIndex_;
 };
 
 }  // namespace vc::cache

@@ -52,22 +52,19 @@ target_link_libraries(vc_core
         CURL::libcurl
 )
 
-# Compression libraries for VcDataset::decompress() — vendored by utils
-# Wrapped in BUILD_INTERFACE so they don't leak into the install export set
+# utils header-only library + vendored blosc1 compression
+target_link_libraries(vc_core PUBLIC
+    $<BUILD_INTERFACE:utils>
+)
 target_link_libraries(vc_core PRIVATE
-    $<BUILD_INTERFACE:utils_zarr>
     $<BUILD_INTERFACE:blosc_static>
-    $<BUILD_INTERFACE:libzstd_static>
-    $<BUILD_INTERFACE:lz4_static>
-    $<BUILD_INTERFACE:zlibstatic>
 )
 target_include_directories(vc_core PRIVATE
-    ${c-blosc_SOURCE_DIR}/blosc
-    ${c-blosc_BINARY_DIR}/blosc
-    ${zstd_SOURCE_DIR}/lib
-    ${lz4_SOURCE_DIR}/lib
-    ${zlib_SOURCE_DIR}
-    ${zlib_BINARY_DIR}
+    ${CMAKE_SOURCE_DIR}/libs/c-blosc/blosc
+    ${CMAKE_BINARY_DIR}/libs/c-blosc/blosc
+    ${CMAKE_SOURCE_DIR}/libs/c-blosc/internal-complibs/zstd-1.5.6
+    ${CMAKE_SOURCE_DIR}/libs/c-blosc/internal-complibs/lz4-1.10.0
+    ${CMAKE_SOURCE_DIR}/libs/c-blosc/internal-complibs/zlib-1.3.1
 )
 
 target_compile_definitions(vc_core PUBLIC VC_USE_CURL)

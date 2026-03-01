@@ -1,22 +1,22 @@
 #pragma once
 
 #include <atomic>
-#include <condition_variable>
 #include <cstdint>
 #include <functional>
-#include <mutex>
-#include <queue>
 #include <thread>
-#include <unordered_set>
 #include <vector>
 
 #include "ChunkKey.hpp"
+#include <utils/priority_queue.hpp>
 
 namespace vc::cache {
 
 // Background I/O thread pool for async chunk fetching.
-// Tasks are prioritized: lower pyramid level = higher priority (coarse data first).
+// Tasks are prioritized: coarser pyramid level = higher priority.
 // Duplicate submissions for the same key are deduplicated.
+//
+// Internally uses utils::DeduplicatingPriorityQueue for thread-safe
+// dedup + priority ordering, and std::jthread workers running consume_loop.
 class IOPool {
 public:
     // Callback signature: called from a worker thread when a chunk is fetched.
@@ -28,7 +28,7 @@ public:
     // Called from worker threads. Must be thread-safe.
     using FetchFunc = std::function<std::vector<uint8_t>(const ChunkKey&)>;
 
-    explicit IOPool(int numThreads = 4);
+    explicit IOPool(int numThreads = 4, size_t maxQueueSize = 1000);
     ~IOPool();
 
     IOPool(const IOPool&) = delete;
@@ -60,41 +60,44 @@ public:
     void stop();
 
 private:
-    void workerLoop();
-
+    // Internal task type — stored in the priority queue.
     struct Task {
         ChunkKey key;
-        // Higher level = higher priority (coarse first for progressive rendering).
-        // Level 0 = finest, level N = coarsest. We want coarse data loaded first
-        // so tiles can show coarse previews while fine data loads.
-        // Within same level, FIFO order via sequence number.
         uint64_t seq = 0;
-        uint64_t epoch = 0;  // epoch when this task was submitted
+        uint64_t epoch = 0;
 
+        // Priority ordering: coarser level first, then newer epoch, then FIFO.
         bool operator>(const Task& o) const noexcept
         {
             if (key.level != o.key.level) return key.level < o.key.level;
-            // Within same level, prefer newer epoch (higher = newer)
             if (epoch != o.epoch) return epoch < o.epoch;
             return seq > o.seq;
         }
     };
 
+    // Hash/Equal that operate only on the ChunkKey for dedup.
+    struct TaskHash {
+        size_t operator()(const Task& t) const noexcept {
+            return ChunkKeyHash()(t.key);
+        }
+    };
+    struct TaskEqual {
+        bool operator()(const Task& a, const Task& b) const noexcept {
+            return a.key == b.key;
+        }
+    };
+
+    using Queue = utils::DeduplicatingPriorityQueue<Task, TaskHash, TaskEqual, std::greater<Task>>;
+
     FetchFunc fetchFunc_;
     CompletionCallback onComplete_;
 
-    // Priority queue: min-heap by (level, seq)
-    std::priority_queue<Task, std::vector<Task>, std::greater<Task>> queue_;
-    std::unordered_set<ChunkKey, ChunkKeyHash> queued_;  // dedup set for queued tasks
-    std::unordered_set<ChunkKey, ChunkKeyHash> inFlightKeys_;  // keys currently being fetched
+    Queue queue_;
+    size_t maxQueueSize_;
     std::atomic<uint64_t> nextSeq_{0};
     std::atomic<uint64_t> currentEpoch_{0};
-    mutable std::mutex mutex_;
-    std::condition_variable cv_;
 
-    std::vector<std::thread> workers_;
-    std::atomic<bool> stopped_{false};
-    std::atomic<size_t> inFlight_{0};
+    std::vector<std::jthread> workers_;
 };
 
 }  // namespace vc::cache

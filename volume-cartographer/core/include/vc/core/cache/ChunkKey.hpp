@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <utils/hash.hpp>
 
 namespace vc::cache {
 
@@ -32,17 +33,7 @@ struct ChunkKey {
 struct ChunkKeyHash {
     size_t operator()(const ChunkKey& k) const noexcept
     {
-        // FNV-1a
-        uint64_t h = 14695981039346656037ULL;
-        h ^= static_cast<uint64_t>(k.level);
-        h *= 1099511628211ULL;
-        h ^= static_cast<uint64_t>(k.iz);
-        h *= 1099511628211ULL;
-        h ^= static_cast<uint64_t>(k.iy);
-        h *= 1099511628211ULL;
-        h ^= static_cast<uint64_t>(k.ix);
-        h *= 1099511628211ULL;
-        return static_cast<size_t>(h);
+        return utils::hash_combine_values(k.level, k.iz, k.iy, k.ix);
     }
 };
 

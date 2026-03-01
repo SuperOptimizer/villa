@@ -3,9 +3,10 @@
 #include "vc/core/util/PlaneSurface.hpp"
 #include "vc/core/util/Slicing.hpp"
 
-CState::CState(size_t cacheSizeBytes, QObject* parent)
+CState::CState(size_t cacheSizeBytes, size_t diskCacheSizeBytes, QObject* parent)
     : QObject(parent)
     , _cacheSizeBytes(cacheSizeBytes)
+    , _diskCacheSizeBytes(diskCacheSizeBytes)
 {
     _pointCollection = new VCCollection(this);
 
@@ -89,6 +90,7 @@ void CState::applyCacheBudget(const std::shared_ptr<Volume>& vol) const
         size_t hotBytes = _cacheSizeBytes * 8 / 10;
         size_t warmBytes = _cacheSizeBytes - hotBytes;
         vol->setCacheBudget(hotBytes, warmBytes);
+        vol->setDiskCacheMaxBytes(_diskCacheSizeBytes);
     }
 }
 

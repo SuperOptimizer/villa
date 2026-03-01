@@ -882,9 +882,17 @@ void MenuActionController::openRemoteScroll(
                 [baseUrl, volumeName, segIds, cachePath, scrollAuth, segSource, segBaseUrl]() -> ScrollOpenResult {
                     ScrollOpenResult result;
                     try {
+                        // Derive volpkg name from base URL (last path component)
+                        std::string volpkgName = baseUrl;
+                        while (!volpkgName.empty() && volpkgName.back() == '/') volpkgName.pop_back();
+                        auto slash = volpkgName.rfind('/');
+                        if (slash != std::string::npos) volpkgName = volpkgName.substr(slash + 1);
+
+                        std::filesystem::path volpkgCache = std::filesystem::path(cachePath) / volpkgName;
+
                         // Open the volume
                         std::string volumeUrl = baseUrl + "/volumes/" + volumeName;
-                        result.volume = Volume::NewFromUrl(volumeUrl, cachePath, scrollAuth);
+                        result.volume = Volume::NewFromUrl(volumeUrl, (volpkgCache / "volumes").string(), scrollAuth);
 
                         // Pick the right base URL for segment downloads
                         const std::string& dlBase = (segSource == vc::RemoteSegmentSource::Direct)
@@ -894,7 +902,7 @@ void MenuActionController::openRemoteScroll(
                         for (const auto& segId : segIds) {
                             try {
                                 auto localDir = vc::downloadRemoteSegment(
-                                    dlBase, segId, cachePath, scrollAuth, segSource);
+                                    dlBase, segId, volpkgCache, scrollAuth, segSource);
 
                                 // Check that meta.json exists (download succeeded)
                                 if (!std::filesystem::exists(localDir / "meta.json")) {

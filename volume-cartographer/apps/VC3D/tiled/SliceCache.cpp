@@ -1,5 +1,5 @@
 #include "SliceCache.hpp"
-#include "FnvHash.hpp"
+#include <utils/hash.hpp>
 #include <cmath>
 
 // ============================================================================
@@ -26,90 +26,66 @@ SliceCacheKey SliceCacheKey::make(const WorldTileKey& worldTile, const TiledView
 
 size_t SliceCacheKeyHash::operator()(const SliceCacheKey& k) const
 {
-    uint64_t h = fnv::BASIS;
-    fnv::mix(h, static_cast<uint64_t>(k.worldTile.worldCol));
-    fnv::mix(h, static_cast<uint64_t>(k.worldTile.worldRow));
-    fnv::mix(h, static_cast<uint64_t>(k.scaleQ));
-    fnv::mix(h, static_cast<uint64_t>(k.zOffQ));
-    fnv::mix(h, static_cast<uint64_t>(k.dsScaleIdx));
-    fnv::mix(h, k.paramsHash);
-    return static_cast<size_t>(h);
+    return utils::hash_combine_values(
+        k.worldTile.worldCol, k.worldTile.worldRow,
+        k.scaleQ, k.zOffQ, k.dsScaleIdx, k.paramsHash);
 }
 
 // ============================================================================
 // SliceCache
 // ============================================================================
 
-SliceCache::SliceCache(size_t maxEntries)
-    : _maxEntries(maxEntries)
+SliceCache::SliceCache(size_t maxBytes)
+    : cache_({
+        .max_bytes = maxBytes,
+        .evict_ratio = 15.0 / 16.0,
+        .promote_on_read = true,
+        .size_fn = [](const QPixmap& pm) -> std::size_t {
+            // Estimate actual pixmap memory: width * height * bytes-per-pixel.
+            // Null pixmaps get a minimum weight of 1 to avoid zero-cost entries.
+            if (pm.isNull())
+                return 1;
+            int bpp = pm.depth() / 8;  // depth() returns bits per pixel
+            if (bpp <= 0) bpp = 4;     // fallback to 32-bit ARGB
+            return static_cast<std::size_t>(pm.width()) * pm.height() * bpp;
+        },
+    })
 {
 }
 
 SliceCacheLookup SliceCache::getBest(const SliceCacheKey& key, int maxCoarserLevels)
 {
-    std::lock_guard<std::mutex> lock(_mutex);
-
     // Try exact match first
-    auto it = _map.find(key);
-    if (it != _map.end()) {
-        _lruList.splice(_lruList.begin(), _lruList, it->second);
-        ++_hits;
-        return {it->second->pixmap, key.dsScaleIdx};
+    auto result = cache_.get(key);
+    if (result) {
+        return {std::move(*result), key.dsScaleIdx};
     }
 
     // Try coarser levels
     for (int delta = 1; delta <= maxCoarserLevels; delta++) {
         SliceCacheKey coarser = key;
         coarser.dsScaleIdx = key.dsScaleIdx + delta;
-        // Recompute scaleQ for the coarser level — the camera scale is the
-        // same, only the pyramid level changes, so scaleQ stays the same.
-        // dsScaleIdx is the only difference in the key.
 
-        auto cit = _map.find(coarser);
-        if (cit != _map.end()) {
-            _lruList.splice(_lruList.begin(), _lruList, cit->second);
-            ++_hits;
-            return {cit->second->pixmap, coarser.dsScaleIdx};
+        auto cresult = cache_.get(coarser);
+        if (cresult) {
+            return {std::move(*cresult), coarser.dsScaleIdx};
         }
     }
 
-    ++_misses;
     return {QPixmap(), -1};
 }
 
 void SliceCache::put(const SliceCacheKey& key, const QPixmap& pixmap)
 {
-    std::lock_guard<std::mutex> lock(_mutex);
-
-    auto it = _map.find(key);
-    if (it != _map.end()) {
-        // Update existing entry and move to front
-        it->second->pixmap = pixmap;
-        _lruList.splice(_lruList.begin(), _lruList, it->second);
-        return;
-    }
-
-    // Evict oldest entries if at capacity
-    while (_lruList.size() >= _maxEntries) {
-        auto& back = _lruList.back();
-        _map.erase(back.key);
-        _lruList.pop_back();
-    }
-
-    // Insert new entry at front
-    _lruList.push_front({key, pixmap});
-    _map[key] = _lruList.begin();
+    cache_.put(key, pixmap);
 }
 
 void SliceCache::clear()
 {
-    std::lock_guard<std::mutex> lock(_mutex);
-    _map.clear();
-    _lruList.clear();
+    cache_.clear();
 }
 
 size_t SliceCache::size() const
 {
-    std::lock_guard<std::mutex> lock(_mutex);
-    return _lruList.size();
+    return cache_.size();
 }

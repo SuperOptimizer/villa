@@ -16,44 +16,8 @@ function(vc_suppress_warnings dir)
     endforeach()
 endfunction()
 
-# ---- SuperOptimizer/utils (zarr I/O) ----------------------------------------
-# c-blosc vendored by utils has cmake_minimum_required < 3.5; newer CMake rejects it.
-if(NOT DEFINED CMAKE_POLICY_VERSION_MINIMUM)
-    set(CMAKE_POLICY_VERSION_MINIMUM 3.5 CACHE STRING "" FORCE)
-endif()
-set(UTILS_COMPONENT_ZARR    ON  CACHE BOOL "" FORCE)
-set(UTILS_COMPONENT_TENSOR  ON  CACHE BOOL "" FORCE)
-set(UTILS_COMPONENT_JSON    ON  CACHE BOOL "" FORCE)
-# Disable components we don't need
-set(UTILS_COMPONENT_TIFF               OFF CACHE BOOL "" FORCE)
-set(UTILS_COMPONENT_INTERPOLATION      OFF CACHE BOOL "" FORCE)
-set(UTILS_COMPONENT_CONNECTED_COMPONENTS OFF CACHE BOOL "" FORCE)
-set(UTILS_COMPONENT_DISTANCE_TRANSFORM OFF CACHE BOOL "" FORCE)
-set(UTILS_COMPONENT_LINALG             OFF CACHE BOOL "" FORCE)
-set(UTILS_COMPONENT_LOGGING            OFF CACHE BOOL "" FORCE)
-set(UTILS_COMPONENT_TIMER              OFF CACHE BOOL "" FORCE)
-set(UTILS_BUILD_TESTS       OFF CACHE BOOL "" FORCE)
-set(UTILS_BUILD_BENCHMARKS  OFF CACHE BOOL "" FORCE)
-set(UTILS_BUILD_PYTHON      OFF CACHE BOOL "" FORCE)
-
-FetchContent_Declare(
-    utils
-    GIT_REPOSITORY https://github.com/SuperOptimizer/utils.git
-    GIT_TAG        5127793c32813d176cbb16c9308dc21390c30814
-)
-FetchContent_MakeAvailable(utils)
-vc_suppress_warnings("${utils_SOURCE_DIR}")
-
-# Mark utils headers as SYSTEM to suppress warnings
-foreach(_target utils_zarr utils_tensor utils_json)
-    if(TARGET ${_target})
-        get_target_property(_inc_dirs ${_target} INTERFACE_INCLUDE_DIRECTORIES)
-        if(_inc_dirs)
-            set_target_properties(${_target} PROPERTIES INTERFACE_INCLUDE_DIRECTORIES "")
-            target_include_directories(${_target} SYSTEM INTERFACE ${_inc_dirs})
-        endif()
-    endif()
-endforeach()
+# ---- utils is now vendored in utils/ and added via add_subdirectory() ------
+# (see top-level CMakeLists.txt)
 
 # ---- xtl / xsimd / xtensor (chunk buffer type, used throughout) --------------
 set(XTENSOR_USE_XSIMD 1)
@@ -181,6 +145,32 @@ if (NOT json_POPULATED)
     FetchContent_Populate(json)
     add_subdirectory(${json_SOURCE_DIR} ${json_BINARY_DIR} EXCLUDE_FROM_ALL)
     vc_suppress_warnings("${json_SOURCE_DIR}")
+endif()
+
+# ---- c-blosc (compression for zarr chunks) -----------------------------------
+set(BUILD_TESTS      OFF CACHE BOOL "" FORCE)
+set(BUILD_FUZZERS    OFF CACHE BOOL "" FORCE)
+set(BUILD_BENCHMARKS OFF CACHE BOOL "" FORCE)
+set(BUILD_SHARED     OFF CACHE BOOL "" FORCE)
+set(BUILD_STATIC     ON  CACHE BOOL "" FORCE)
+set(PREFER_EXTERNAL_ZLIB OFF CACHE BOOL "" FORCE)
+set(PREFER_EXTERNAL_ZSTD OFF CACHE BOOL "" FORCE)
+set(PREFER_EXTERNAL_LZ4  OFF CACHE BOOL "" FORCE)
+set(DEACTIVATE_SNAPPY ON CACHE BOOL "" FORCE)
+# c-blosc has cmake_minimum_required < 3.5; newer CMake rejects it.
+if(NOT DEFINED CMAKE_POLICY_VERSION_MINIMUM)
+    set(CMAKE_POLICY_VERSION_MINIMUM 3.5 CACHE STRING "" FORCE)
+endif()
+FetchContent_Declare(
+    c-blosc
+    DOWNLOAD_EXTRACT_TIMESTAMP ON
+    URL https://github.com/Blosc/c-blosc/archive/refs/tags/v1.21.6.tar.gz
+)
+FetchContent_GetProperties(c-blosc)
+if(NOT c-blosc_POPULATED)
+    FetchContent_Populate(c-blosc)
+    add_subdirectory(${c-blosc_SOURCE_DIR} ${c-blosc_BINARY_DIR} EXCLUDE_FROM_ALL)
+    vc_suppress_warnings("${c-blosc_SOURCE_DIR}")
 endif()
 
 # ---- CURL (for HTTP chunk source / remote volumes) ---------------------------

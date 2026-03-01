@@ -5,19 +5,67 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <thread>
 
 namespace vc::cache {
+
+// Process-wide shared decompression pool.  All TieredChunkCache instances
+// share this pool so total thread count stays bounded regardless of how many
+// volumes are loaded.
+static std::shared_ptr<utils::ThreadPool> sharedDecompPool()
+{
+    static std::mutex mtx;
+    static std::weak_ptr<utils::ThreadPool> weakPool;
+
+    std::lock_guard lk(mtx);
+    auto pool = weakPool.lock();
+    if (!pool) {
+        auto n = std::max<std::size_t>(2, std::thread::hardware_concurrency() / 2);
+        pool = std::make_shared<utils::ThreadPool>(n);
+        weakPool = pool;
+    }
+    return pool;
+}
+
+// Helper to build LRUCache config for the hot tier
+static auto makeHotConfig(const TieredChunkCache::Config& cfg) {
+    using HotCache = utils::LRUCache<ChunkKey, ChunkDataPtr, ChunkKeyHash>;
+    typename HotCache::Config c;
+    c.max_bytes = cfg.hotMaxBytes;
+    c.evict_ratio = 15.0 / 16.0;
+    c.promote_on_read = false;  // VC3D pattern: no LRU churn on reads
+    c.size_fn = [](const ChunkDataPtr& p) -> std::size_t {
+        return p ? p->totalBytes() : 0;
+    };
+    return c;
+}
+
+// Helper to build LRUCache config for the warm tier
+static auto makeWarmConfig(const TieredChunkCache::Config& cfg) {
+    using WarmCache = utils::LRUCache<ChunkKey, CompressedChunk, ChunkKeyHash>;
+    typename WarmCache::Config c;
+    c.max_bytes = cfg.warmMaxBytes;
+    c.evict_ratio = 15.0 / 16.0;
+    c.promote_on_read = false;
+    c.size_fn = [](const CompressedChunk& ch) -> std::size_t {
+        return ch.data.size();
+    };
+    return c;
+}
 
 TieredChunkCache::TieredChunkCache(
     Config config,
     std::unique_ptr<ChunkSource> source,
     DecompressFn decompress,
     std::shared_ptr<DiskStore> diskStore)
-    : config_(std::move(config))
+    : hotCache_(makeHotConfig(config))
+    , warmCache_(makeWarmConfig(config))
+    , config_(std::move(config))
     , diskStore_(std::move(diskStore))
     , source_(std::move(source))
     , decompress_(std::move(decompress))
     , ioPool_(config_.ioThreads)
+    , decompPool_(sharedDecompPool())
 {
     // Wire up the IO pool: fetch = check cold first, then ice
     ioPool_.setFetchFunc([this](const ChunkKey& key) -> std::vector<uint8_t> {
@@ -28,8 +76,11 @@ TieredChunkCache::TieredChunkCache(
         if (diskStore_) {
             auto diskData = diskStore_->get(config_.volumeId, key);
             if (diskData && !diskData->empty()) {
-                statColdHits_.fetch_add(1, std::memory_order_relaxed);
+                auto n = statColdHits_.fetch_add(1, std::memory_order_relaxed);
                 auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - t0).count();
+                if (n < 3)
+                    std::fprintf(stderr, "[Cache] cold-hit #%lu lvl=%d (%d,%d,%d) bytes=%zu %ldms\n",
+                                 n + 1, key.level, key.iz, key.iy, key.ix, diskData->size(), ms);
                 if (auto* log = cacheDebugLog())
                     std::fprintf(log, "FETCH cold-hit lvl=%d (%d,%d,%d) bytes=%zu %ldms\n",
                                  key.level, key.iz, key.iy, key.ix, diskData->size(), ms);
@@ -60,7 +111,10 @@ TieredChunkCache::TieredChunkCache(
             return {};
         }
 
-        statIceFetches_.fetch_add(1, std::memory_order_relaxed);
+        auto n = statIceFetches_.fetch_add(1, std::memory_order_relaxed);
+        if (n < 3)
+            std::fprintf(stderr, "[Cache] ice-fetch #%lu lvl=%d (%d,%d,%d) bytes=%zu %ldms\n",
+                         n + 1, key.level, key.iz, key.iy, key.ix, data.size(), fetchMs);
 
         // Store to cold (disk cache) for persistence
         if (diskStore_) {
@@ -74,15 +128,23 @@ TieredChunkCache::TieredChunkCache(
         return data;
     });
 
-    // Wire up IO completion: compressed bytes → warm → hot
+    // Wire up IO completion: compressed bytes → warm, then hand off
+    // decompression to the dedicated decompression pool so I/O threads
+    // stay free to fetch more chunks.
     ioPool_.setCompletionCallback(
         [this](const ChunkKey& key, std::vector<uint8_t>&& compressed) {
             if (compressed.empty()) {
                 // Remember that this chunk doesn't exist so we never refetch
                 {
                     std::unique_lock lock(negativeMutex_);
-                    if (negativeCache_.size() > 500000) {
-                        negativeCache_.clear();
+                    constexpr size_t maxNegative = 500000;
+                    if (negativeCache_.size() >= maxNegative) {
+                        // Evict ~25% of entries (arbitrary iteration order is fine)
+                        size_t toEvict = maxNegative / 4;
+                        auto it = negativeCache_.begin();
+                        for (size_t i = 0; i < toEvict && it != negativeCache_.end(); i++) {
+                            it = negativeCache_.erase(it);
+                        }
                     }
                     negativeCache_.insert(key);
                 }
@@ -92,48 +154,47 @@ TieredChunkCache::TieredChunkCache(
                 return;
             }
 
-            using Clock = std::chrono::steady_clock;
-            auto t0 = Clock::now();
-
-            // Store in warm tier
+            // Step 1: Store in warm tier (fast, stays on I/O thread)
             warmPut(key, std::move(compressed));
 
-            // Decompress and store in hot tier
-            auto warmEntry = warmGet(key);
-            if (warmEntry && decompress_) {
-                auto td0 = Clock::now();
-                auto data = decompress_(warmEntry->data, key);
-                auto decompMs = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - td0).count();
-                if (data) {
-                    // Check if this key should be pinned
-                    bool shouldPin = false;
-                    {
-                        std::lock_guard plock(pinnedKeysMutex_);
-                        shouldPin = pendingPinKeys_.count(key) > 0;
-                    }
-                    size_t decompBytes = data->totalBytes();
-                    hotPut(key, std::move(data), shouldPin);
-                    auto totalMs = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - t0).count();
-                    if (auto* log = cacheDebugLog())
-                        std::fprintf(log, "COMPLETE hot-put lvl=%d (%d,%d,%d) decompBytes=%zu decomp=%ldms total=%ldms\n",
-                                     key.level, key.iz, key.iy, key.ix, decompBytes, decompMs, totalMs);
-                } else {
-                    if (auto* log = cacheDebugLog())
-                        std::fprintf(log, "COMPLETE decompress-fail lvl=%d (%d,%d,%d)\n",
-                                     key.level, key.iz, key.iy, key.ix);
-                }
-            }
+            // Steps 2-4: Decompress and promote on the decompression pool
+            decompPool_->enqueue([this, key]() {
+                using Clock = std::chrono::steady_clock;
+                auto t0 = Clock::now();
 
-            // Notify listeners (e.g., to trigger UI refresh).
-            // Use atomic flag to debounce: only fire callbacks if they
-            // haven't been fired since the last time a consumer cleared it.
-            // This batches rapid chunk arrivals into a single notification.
-            if (!chunkArrivedFlag_.exchange(true, std::memory_order_acq_rel)) {
-                std::lock_guard cbLock(callbackMutex_);
-                for (const auto& [id, cb] : chunkReadyListeners_) {
-                    cb(key);
+                auto warmEntry = warmGet(key);
+                if (warmEntry && decompress_) {
+                    auto td0 = Clock::now();
+                    auto data = decompress_(warmEntry->data, key);
+                    auto decompMs = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - td0).count();
+                    if (data) {
+                        // Check if this key should be pinned
+                        bool shouldPin = false;
+                        {
+                            std::lock_guard plock(pinnedKeysMutex_);
+                            shouldPin = pendingPinKeys_.count(key) > 0;
+                        }
+                        size_t decompBytes = data->totalBytes();
+                        hotPut(key, std::move(data), shouldPin);
+                        auto totalMs = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - t0).count();
+                        if (auto* log = cacheDebugLog())
+                            std::fprintf(log, "COMPLETE hot-put lvl=%d (%d,%d,%d) decompBytes=%zu decomp=%ldms total=%ldms\n",
+                                         key.level, key.iz, key.iy, key.ix, decompBytes, decompMs, totalMs);
+                    } else {
+                        if (auto* log = cacheDebugLog())
+                            std::fprintf(log, "COMPLETE decompress-fail lvl=%d (%d,%d,%d)\n",
+                                         key.level, key.iz, key.iy, key.ix);
+                    }
                 }
-            }
+
+                // Notify listeners (e.g., to trigger UI refresh).
+                if (!chunkArrivedFlag_.exchange(true, std::memory_order_acq_rel)) {
+                    std::lock_guard cbLock(callbackMutex_);
+                    for (const auto& [id, cb] : chunkReadyListeners_) {
+                        cb(key);
+                    }
+                }
+            });
         });
 
     loadNegativeCache();
@@ -142,6 +203,19 @@ TieredChunkCache::TieredChunkCache(
 TieredChunkCache::~TieredChunkCache()
 {
     ioPool_.stop();
+    // Wait for any in-flight decompression tasks from this cache before
+    // tearing down.  The pool is shared, so we just wait for idle (which
+    // covers our tasks since the IO pool — our only producer — is stopped).
+    if (decompPool_) decompPool_->wait_idle();
+
+    // Print final fetch stats summary
+    auto cold = statColdHits_.load(std::memory_order_relaxed);
+    auto ice = statIceFetches_.load(std::memory_order_relaxed);
+    if (cold > 0 || ice > 0) {
+        std::fprintf(stderr, "[Cache] session summary: coldHits=%lu iceFetches=%lu (%.0f%% from disk)\n",
+                     cold, ice, (cold + ice) > 0 ? 100.0 * cold / (cold + ice) : 0.0);
+    }
+    decompPool_.reset();  // Release our reference (pool lives if others hold it)
     saveNegativeCache();
 }
 
@@ -216,7 +290,7 @@ ChunkDataPtr TieredChunkCache::getBlocking(const ChunkKey& key)
     }
 
     // Per-key lock to prevent duplicate loads
-    std::lock_guard diskLock(lockPool_[lockIndex(key)]);
+    auto diskLock = lockPool_.lock<ChunkKey, ChunkKeyHash>(key);
 
     // Re-check hot after acquiring lock (another thread may have loaded)
     hot = hotGet(key);
@@ -245,8 +319,8 @@ ChunkDataPtr TieredChunkCache::getBlocking(const ChunkKey& key)
 void TieredChunkCache::prefetch(const ChunkKey& key)
 {
     // Already in hot or warm? No-op.
-    if (hotGet(key)) return;
-    if (warmGet(key).has_value()) return;
+    if (hotCache_.contains(key)) return;
+    if (warmCache_.contains(key)) return;
 
     // Known non-existent? Don't waste an IO round-trip.
     {
@@ -273,34 +347,16 @@ void TieredChunkCache::prefetchRegion(
         }
     }
 
-    // Phase 1: Filter out hot-cached keys (single lock acquisition)
-    std::vector<ChunkKey> missingHot;
-    {
-        std::shared_lock lock(hotMutex_);
-        for (const auto& key : allKeys) {
-            if (hot_.find(key) == hot_.end()) {
-                missingHot.push_back(key);
-            }
-        }
-    }
+    // Use LRUCache batch operations to filter efficiently
+    auto missingHot = hotCache_.missing_keys(allKeys.begin(), allKeys.end());
+    auto missingBoth = warmCache_.missing_keys(missingHot.begin(), missingHot.end());
 
-    // Phase 2: Filter out warm-cached keys (single lock acquisition)
-    std::vector<ChunkKey> candidates;
-    {
-        std::shared_lock lock(warmMutex_);
-        for (const auto& key : missingHot) {
-            if (warm_.find(key) == warm_.end()) {
-                candidates.push_back(key);
-            }
-        }
-    }
-
-    // Phase 3: Filter out negative-cached keys (single lock acquisition)
+    // Filter out negative-cached keys
     std::vector<ChunkKey> keys;
-    if (!candidates.empty()) {
-        keys.reserve(candidates.size());
+    if (!missingBoth.empty()) {
+        keys.reserve(missingBoth.size());
         std::shared_lock lock(negativeMutex_);
-        for (const auto& key : candidates) {
+        for (const auto& key : missingBoth) {
             if (!negativeCache_.count(key)) {
                 keys.push_back(key);
             }
@@ -389,16 +445,8 @@ void TieredChunkCache::pinLevel(
 
 void TieredChunkCache::clearMemory()
 {
-    {
-        std::unique_lock lock(hotMutex_);
-        hot_.clear();
-        hotBytes_.store(0, std::memory_order_relaxed);
-    }
-    {
-        std::unique_lock lock(warmMutex_);
-        warm_.clear();
-        warmBytes_ = 0;
-    }
+    hotCache_.clear();
+    warmCache_.clear();
 }
 
 void TieredChunkCache::clearAll()
@@ -454,37 +502,22 @@ bool TieredChunkCache::areAllCachedInRegion(
     int iz0, int iy0, int ix0,
     int iz1, int iy1, int ix1) const
 {
-    // Single shared-lock acquisition for hot tier
-    std::vector<ChunkKey> missingHot;
-    missingHot.reserve(static_cast<size_t>(iz1 - iz0 + 1) * (iy1 - iy0 + 1) * (ix1 - ix0 + 1));
-    {
-        std::shared_lock hotLock(hotMutex_);
-        for (int iz = iz0; iz <= iz1; iz++) {
-            for (int iy = iy0; iy <= iy1; iy++) {
-                for (int ix = ix0; ix <= ix1; ix++) {
-                    ChunkKey key{level, iz, iy, ix};
-                    if (hot_.find(key) == hot_.end()) {
-                        missingHot.push_back(key);
-                    }
-                }
+    // Build keys for the region
+    std::vector<ChunkKey> allKeys;
+    allKeys.reserve(static_cast<size_t>(iz1 - iz0 + 1) * (iy1 - iy0 + 1) * (ix1 - ix0 + 1));
+    for (int iz = iz0; iz <= iz1; iz++) {
+        for (int iy = iy0; iy <= iy1; iy++) {
+            for (int ix = ix0; ix <= ix1; ix++) {
+                allKeys.push_back(ChunkKey{level, iz, iy, ix});
             }
         }
     }
 
+    // Use LRUCache batch operations
+    auto missingHot = hotCache_.missing_keys(allKeys.begin(), allKeys.end());
     if (missingHot.empty()) return true;
 
-    // Check warm tier for chunks missing from hot (warm = compressed in RAM,
-    // fast to decompress — still counts as "cached")
-    std::vector<ChunkKey> missingBoth;
-    {
-        std::shared_lock warmLock(warmMutex_);
-        for (const auto& key : missingHot) {
-            if (warm_.find(key) == warm_.end()) {
-                missingBoth.push_back(key);
-            }
-        }
-    }
-
+    auto missingBoth = warmCache_.missing_keys(missingHot.begin(), missingHot.end());
     if (missingBoth.empty()) return true;
 
     // Check negative cache for remaining misses
@@ -531,215 +564,47 @@ auto TieredChunkCache::stats() const -> Stats
     s.coldHits = statColdHits_.load(std::memory_order_relaxed);
     s.iceFetches = statIceFetches_.load(std::memory_order_relaxed);
     s.misses = statMisses_.load(std::memory_order_relaxed);
-    s.hotEvictions = statHotEvictions_.load(std::memory_order_relaxed);
-    s.warmEvictions = statWarmEvictions_.load(std::memory_order_relaxed);
-    s.hotBytes = hotBytes_.load(std::memory_order_relaxed);
-    {
-        std::shared_lock lock(warmMutex_);
-        s.warmBytes = warmBytes_;
-    }
+    s.hotEvictions = hotCache_.evictions();
+    s.warmEvictions = warmCache_.evictions();
+    s.hotBytes = hotCache_.byte_size();
+    s.warmBytes = warmCache_.byte_size();
     s.ioPending = ioPool_.pendingCount();
     return s;
 }
 
 // =============================================================================
-// Hot tier
+// Hot tier — delegates to utils::LRUCache
 // =============================================================================
 
 ChunkDataPtr TieredChunkCache::hotGet(const ChunkKey& key)
 {
-    std::shared_lock lock(hotMutex_);
-    auto it = hot_.find(key);
-    if (it == hot_.end()) return nullptr;
-    // No generation update under shared_lock — hotPut() generation is
-    // sufficient for LRU eviction ordering, and skipping it here avoids
-    // a data race (generation is not atomic, multiple readers would race).
-    return it->second.data;
+    return hotCache_.get_or(key, nullptr);
 }
 
 void TieredChunkCache::hotPut(
     const ChunkKey& key, ChunkDataPtr data, bool pinned)
 {
-    size_t bytes = data ? data->totalBytes() : 0;
-
-    {
-        std::unique_lock lock(hotMutex_);
-        auto [it, inserted] = hot_.try_emplace(
-            key,
-            HotEntry{data, bytes,
-                     hotGen_.fetch_add(1, std::memory_order_relaxed), pinned});
-        if (!inserted) {
-            // Update existing entry
-            size_t oldBytes = it->second.bytes;
-            it->second.data = data;
-            it->second.bytes = bytes;
-            it->second.generation =
-                hotGen_.fetch_add(1, std::memory_order_relaxed);
-            it->second.pinned = it->second.pinned || pinned;
-            hotBytes_.fetch_sub(oldBytes, std::memory_order_relaxed);
-        }
-        hotBytes_.fetch_add(bytes, std::memory_order_relaxed);
-    }
-
-    hotEvictIfNeeded();
-}
-
-void TieredChunkCache::hotEvictIfNeeded()
-{
-    if (config_.hotMaxBytes == 0) return;
-    size_t current = hotBytes_.load(std::memory_order_relaxed);
-    if (current <= config_.hotMaxBytes) return;
-
-    std::lock_guard evictLock(hotEvictMutex_);
-
-    // Re-check after acquiring eviction lock
-    current = hotBytes_.load(std::memory_order_relaxed);
-    if (current <= config_.hotMaxBytes) return;
-
-    struct Candidate {
-        ChunkKey key;
-        size_t bytes;
-        uint64_t generation;
-    };
-
-    std::vector<Candidate> candidates;
-    {
-        std::shared_lock lock(hotMutex_);
-        candidates.reserve(hot_.size());
-        for (const auto& [k, e] : hot_) {
-            if (e.pinned) continue;  // never evict pinned entries
-            candidates.push_back({k, e.bytes, e.generation});
-        }
-    }
-
-    if (candidates.empty()) return;
-
-    // Sort by generation (oldest first)
-    std::sort(candidates.begin(), candidates.end(),
-              [](const Candidate& a, const Candidate& b) {
-                  return a.generation < b.generation;
-              });
-
-    size_t target = config_.hotMaxBytes * 15 / 16;  // evict to 15/16 capacity
-    size_t evictedBytes = 0;
-    size_t evictedCount = 0;
-
-    std::vector<ChunkKey> toRemove;
-    for (const auto& c : candidates) {
-        if (current - evictedBytes <= target) break;
-        toRemove.push_back(c.key);
-        evictedBytes += c.bytes;
-        evictedCount++;
-    }
-
-    if (!toRemove.empty()) {
-        std::unique_lock lock(hotMutex_);
-        for (const auto& k : toRemove) {
-            hot_.erase(k);
-        }
-        hotBytes_.fetch_sub(evictedBytes, std::memory_order_relaxed);
-        statHotEvictions_.fetch_add(evictedCount, std::memory_order_relaxed);
+    if (pinned) {
+        hotCache_.put_pinned(key, std::move(data));
+    } else {
+        hotCache_.put(key, std::move(data));
     }
 }
 
 // =============================================================================
-// Warm tier
+// Warm tier — delegates to utils::LRUCache
 // =============================================================================
 
 std::optional<CompressedChunk> TieredChunkCache::warmGet(const ChunkKey& key)
 {
-    std::shared_lock lock(warmMutex_);
-    auto it = warm_.find(key);
-    if (it == warm_.end()) return std::nullopt;
-    // No generation update under shared_lock — the warmPut() generation is
-    // sufficient for LRU eviction ordering, and skipping it here avoids a
-    // data race (the generation field is not atomic).
-    return it->second.chunk;  // copy while lock is held
+    return warmCache_.get(key);
 }
 
 void TieredChunkCache::warmPut(
     const ChunkKey& key,
     std::vector<uint8_t> compressed)
 {
-    size_t bytes = compressed.size();
-
-    {
-        std::unique_lock lock(warmMutex_);
-        auto it = warm_.find(key);
-        if (it != warm_.end()) {
-            // Update existing entry
-            warmBytes_ -= it->second.chunk.data.size();
-            it->second.chunk.data = std::move(compressed);
-            it->second.generation = warmGen_++;
-        } else {
-            warm_.emplace(
-                key,
-                WarmEntry{
-                    CompressedChunk{std::move(compressed)},
-                    warmGen_++});
-        }
-        warmBytes_ += bytes;
-    }
-
-    warmEvictIfNeeded();
-}
-
-void TieredChunkCache::warmEvictIfNeeded()
-{
-    if (config_.warmMaxBytes == 0) return;
-
-    // Fast check without exclusive lock
-    {
-        std::shared_lock lock(warmMutex_);
-        if (warmBytes_ <= config_.warmMaxBytes) return;
-    }
-
-    struct Candidate {
-        ChunkKey key;
-        size_t bytes;
-        uint64_t generation;
-    };
-
-    // Snapshot under shared lock
-    std::vector<Candidate> candidates;
-    size_t currentBytes;
-    {
-        std::shared_lock lock(warmMutex_);
-        currentBytes = warmBytes_;
-        if (currentBytes <= config_.warmMaxBytes) return;
-        candidates.reserve(warm_.size());
-        for (const auto& [k, e] : warm_) {
-            candidates.push_back({k, e.chunk.data.size(), e.generation});
-        }
-    }
-
-    // Sort outside lock
-    std::sort(candidates.begin(), candidates.end(),
-              [](const Candidate& a, const Candidate& b) {
-                  return a.generation < b.generation;
-              });
-
-    size_t target = config_.warmMaxBytes * 15 / 16;
-    std::vector<ChunkKey> toRemove;
-    size_t evictedBytes = 0;
-    for (const auto& c : candidates) {
-        if (currentBytes - evictedBytes <= target) break;
-        toRemove.push_back(c.key);
-        evictedBytes += c.bytes;
-    }
-
-    // Re-acquire for erasure
-    if (!toRemove.empty()) {
-        std::unique_lock lock(warmMutex_);
-        for (const auto& k : toRemove) {
-            auto it = warm_.find(k);
-            if (it != warm_.end()) {
-                warmBytes_ -= it->second.chunk.data.size();
-                warm_.erase(it);
-                statWarmEvictions_.fetch_add(1, std::memory_order_relaxed);
-            }
-        }
-    }
+    warmCache_.put(key, CompressedChunk{std::move(compressed)});
 }
 
 // =============================================================================

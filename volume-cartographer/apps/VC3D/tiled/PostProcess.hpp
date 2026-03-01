@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QImage>
 #include <opencv2/core.hpp>
 #include <string>
 #include <cstdint>
@@ -24,7 +25,7 @@ struct PostProcessParams {
     // ISO cutoff: zero out values below threshold (0 = disabled)
     uint8_t isoCutoff = 0;
 
-    // Colormap (empty = grayscale->BGR) — Qt-dependent, stays in app layer
+    // Colormap (empty = grayscale) — Qt-dependent, stays in app layer
     std::string colormapId;
 
     // Convert to core params (without colormap)
@@ -41,12 +42,12 @@ struct PostProcessParams {
     }
 };
 
-// Apply all post-processing steps in canonical order:
+// Apply all post-processing steps and produce a QImage::Format_RGB32 directly.
+// The input gray mat is modified in-place (caller should not reuse it).
 //   1. ISO cutoff
 //   2. Composite post-stretch (if enabled)
 //   3. Composite component removal (if enabled)
 //   4. Window/level or value stretch
-//   5. Colormap application
-// Input: single-channel uint8 grayscale. Output: BGR cv::Mat.
-cv::Mat applyPostProcess(const cv::Mat_<uint8_t>& gray,
-                         const PostProcessParams& params);
+//   5. Colormap or grayscale → RGB32
+QImage applyPostProcess(cv::Mat_<uint8_t>& gray,
+                        const PostProcessParams& params);

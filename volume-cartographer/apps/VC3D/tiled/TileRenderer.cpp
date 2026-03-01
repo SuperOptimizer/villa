@@ -7,7 +7,6 @@
 #include "vc/core/types/Volume.hpp"
 #include "vc/core/types/Sampling.hpp"
 
-#include <opencv2/imgproc.hpp>
 #include <algorithm>
 #include <cmath>
 
@@ -138,7 +137,8 @@ TileRenderResult TileRenderer::renderTile(
         return result;
     }
 
-    // Unified post-processing
+    // Unified post-processing: produces QImage::Format_RGB32 directly,
+    // bypassing all cvtColor conversions and RGB888→RGB32 expansion.
     PostProcessParams pp;
     pp.isoCutoff = params.compositeSettings.params.isoCutoff;
     pp.windowLow = params.windowLow;
@@ -148,24 +148,7 @@ TileRenderResult TileRenderer::renderTile(
     pp.postStretchValues = params.compositeSettings.postStretchValues;
     pp.removeSmallComponents = params.compositeSettings.postRemoveSmallComponents;
     pp.minComponentSize = params.compositeSettings.postMinComponentSize;
-    cv::Mat bgr = applyPostProcess(gray, pp);
-
-    // Convert BGR→RGB and build QImage on the worker thread
-    // (keeps the expensive cvtColor + memcpy off the main thread)
-    if (!bgr.empty()) {
-        cv::Mat rgb;
-        cv::cvtColor(bgr, rgb, cv::COLOR_BGR2RGB);
-        // Transfer ownership of the cv::Mat buffer to QImage via cleanup callback.
-        // This avoids the extra deep copy — QImage will free the Mat when done.
-        auto* matPtr = new cv::Mat(std::move(rgb));
-        result.image = QImage(
-            static_cast<const uint8_t*>(matPtr->data),
-            matPtr->cols, matPtr->rows,
-            static_cast<qsizetype>(matPtr->step),
-            QImage::Format_RGB888,
-            [](void* p) { delete static_cast<cv::Mat*>(p); },
-            matPtr);
-    }
+    result.image = applyPostProcess(gray, pp);
     return result;
 }
 
