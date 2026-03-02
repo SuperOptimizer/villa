@@ -20,6 +20,7 @@
 #include <filesystem>
 #include <fstream>
 #include <atomic>
+#include <mutex>
 #include <thread>
 #include <cstdlib>
 #include <cstring>
@@ -429,6 +430,7 @@ private:
                                         std::span<const std::byte> put_data,
                                         std::string_view content_type,
                                         std::string range = {}) const {
+        std::lock_guard lk(mu_);
         auto resolved = resolve_url(url);
         HttpResponse resp;
 
@@ -543,6 +545,7 @@ private:
 
     Config config_;
     detail::CurlHandle handle_;
+    mutable std::mutex mu_;
 };
 
 } // namespace utils

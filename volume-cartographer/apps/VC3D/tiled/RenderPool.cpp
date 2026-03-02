@@ -17,13 +17,15 @@ RenderPool::RenderPool(int numThreads, QObject* parent)
 
 RenderPool::~RenderPool()
 {
-    cancelAll();
+    // Do NOT call cancelAll() here — that calls pool_->cancel_pending()
+    // which would kill other controllers' tasks if this pool is shared.
+    // The unique_ptr<PriorityThreadPool> destructor handles shutdown.
 }
 
 void RenderPool::submit(const TileRenderParams& params,
                         const std::shared_ptr<Surface>& surface,
                         const std::shared_ptr<Volume>& volume,
-                        const std::atomic<uint64_t>& epochRef,
+                        const std::shared_ptr<std::atomic<uint64_t>>& epochRef,
                         int controllerId)
 {
     pendingCount_.fetch_add(1, std::memory_order_relaxed);
@@ -45,10 +47,11 @@ void RenderPool::submit(const TileRenderParams& params,
     // Submit without pool-level epoch filtering (the pool is shared across
     // multiple controllers with independent epoch counters).  Instead, check
     // the controller's epoch before and after rendering.
+    // epochRef is captured by shared_ptr so the atomic outlives the controller.
     pool_->submit(priority,
-        [this, params, surface, volume, &epochRef, controllerId]() {
+        [this, params, surface, volume, epochRef, controllerId]() {
             // Pre-render staleness check
-            if (params.epoch < epochRef.load(std::memory_order_relaxed)) {
+            if (params.epoch < epochRef->load(std::memory_order_relaxed)) {
                 pendingCount_.fetch_sub(1, std::memory_order_relaxed);
                 return;
             }
@@ -57,7 +60,7 @@ void RenderPool::submit(const TileRenderParams& params,
             result.controllerId = controllerId;
 
             // Post-render staleness check
-            if (params.epoch < epochRef.load(std::memory_order_relaxed)) {
+            if (params.epoch < epochRef->load(std::memory_order_relaxed)) {
                 pendingCount_.fetch_sub(1, std::memory_order_relaxed);
                 return;
             }

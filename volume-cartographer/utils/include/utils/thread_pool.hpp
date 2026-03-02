@@ -97,7 +97,7 @@ public:
     void wait_idle() {
         std::unique_lock lk(mu_);
         idle_cv_.wait(lk, [this] {
-            return queue_.empty() && active_.load(std::memory_order_relaxed) == 0;
+            return queue_.empty() && active_.load(std::memory_order_acquire) == 0;
         });
     }
 
@@ -119,10 +119,10 @@ private:
                     continue;
                 task = std::move(queue_.front());
                 queue_.pop();
-                active_.fetch_add(1, std::memory_order_relaxed);
+                active_.fetch_add(1, std::memory_order_acq_rel);
             }
             task();
-            active_.fetch_sub(1, std::memory_order_relaxed);
+            active_.fetch_sub(1, std::memory_order_release);
             idle_cv_.notify_all();
         }
     }
@@ -228,7 +228,7 @@ public:
     void wait_idle() {
         std::unique_lock lk(mu_);
         idle_cv_.wait(lk, [this] {
-            return queue_.empty() && active_.load(std::memory_order_relaxed) == 0;
+            return queue_.empty() && active_.load(std::memory_order_acquire) == 0;
         });
     }
 
@@ -277,10 +277,10 @@ private:
                 // but we need to move the function out before popping.
                 task = std::move(const_cast<Entry&>(queue_.top()).func);
                 queue_.pop();
-                active_.fetch_add(1, std::memory_order_relaxed);
+                active_.fetch_add(1, std::memory_order_acq_rel);
             }
             task();
-            active_.fetch_sub(1, std::memory_order_relaxed);
+            active_.fetch_sub(1, std::memory_order_release);
             idle_cv_.notify_all();
         }
     }

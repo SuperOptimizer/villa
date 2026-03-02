@@ -8,9 +8,14 @@ namespace vc::cache {
 
 IOPool::IOPool(int numThreads, size_t maxQueueSize)
     : maxQueueSize_(maxQueueSize)
+    , numThreads_(numThreads)
 {
-    workers_.reserve(numThreads);
-    for (int i = 0; i < numThreads; i++) {
+}
+
+void IOPool::start()
+{
+    workers_.reserve(numThreads_);
+    for (int i = 0; i < numThreads_; i++) {
         workers_.emplace_back([this](std::stop_token stop) {
             // consume_loop pattern: pop tasks until shutdown
             for (;;) {

@@ -15,6 +15,7 @@
 #include "vc/core/types/Sampling.hpp"
 #include "vc/core/types/SampleParams.hpp"
 #include "vc/core/cache/HttpMetadataFetcher.hpp"  // HttpAuth
+#include "vc/core/util/NetworkFilesystem.hpp"
 
 // Forward declarations
 namespace vc { class VcDataset; }
@@ -39,7 +40,7 @@ public:
     };
 
     // Static flag to skip zarr shape validation against meta.json
-    static inline bool skipShapeCheck = false;
+    static inline thread_local bool skipShapeCheck = false;
 
     Volume() = delete;
 
@@ -65,8 +66,11 @@ public:
         const vc::cache::HttpAuth& auth = {});
 
     [[nodiscard]] bool isRemote() const noexcept { return isRemote_; }
-    [[nodiscard]] std::string id() const noexcept;
-    [[nodiscard]] std::string name() const noexcept;
+    [[nodiscard]] bool isNetworkMount() const noexcept { return mountInfo_.type == vc::FilesystemType::NetworkMount; }
+    [[nodiscard]] std::string filesystemLabel() const { return mountInfo_.label; }
+    [[nodiscard]] const vc::NetworkMountInfo& mountInfo() const noexcept { return mountInfo_; }
+    [[nodiscard]] std::string id() const;
+    [[nodiscard]] std::string name() const;
     void setName(const std::string& n);
     [[nodiscard]] std::filesystem::path path() const noexcept { return path_; }
     void saveMetadata();
@@ -75,7 +79,7 @@ public:
     [[nodiscard]] int sliceHeight() const noexcept;
     [[nodiscard]] int numSlices() const noexcept;
     [[nodiscard]] std::array<int, 3> shape() const noexcept;
-    [[nodiscard]] double voxelSize() const noexcept;
+    [[nodiscard]] double voxelSize() const;
 
     [[nodiscard]] vc::VcDataset *zarrDataset(int level = 0) const;
     [[nodiscard]] size_t numScales() const noexcept;
@@ -244,6 +248,9 @@ protected:
                                  int zStart, int zEnd, int level);
 
     void loadMetadata();
+
+    // Filesystem mount info (detected once at construction)
+    vc::NetworkMountInfo mountInfo_;
 
     // Remote volume state
     bool isRemote_ = false;

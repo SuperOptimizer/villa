@@ -163,7 +163,7 @@ private:
     std::unordered_set<std::string> _indexedSurfaceIds;
     std::vector<std::string> _pendingSurfacePatchIndexSurfaceIds;
     std::vector<std::string> _surfacesQueuedDuringRebuildIds;
-    std::vector<std::string> _surfacesQueuedForRemovalDuringRebuildIds;
+    std::vector<std::pair<std::string, std::shared_ptr<Surface>>> _surfacesQueuedForRemovalDuringRebuild;
     QFutureWatcher<std::shared_ptr<SurfacePatchIndex>>* _surfacePatchIndexWatcher{nullptr};
 
     void rebuildSurfacePatchIndexIfNeeded();

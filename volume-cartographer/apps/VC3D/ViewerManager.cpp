@@ -131,6 +131,13 @@ CTiledVolumeViewer* ViewerManager::createViewer(const std::string& surfaceName,
 
     _viewers.push_back(viewer);
 
+    // Clean up when viewer is destroyed (e.g. MDI sub-window closed)
+    connect(viewer, &QObject::destroyed, this, [this](QObject* obj) {
+        auto* v = static_cast<CTiledVolumeViewer*>(obj);
+        _viewers.erase(std::remove(_viewers.begin(), _viewers.end(), v), _viewers.end());
+        _resetDefaults.erase(v);
+    });
+
     for (auto* overlay : _allOverlays) {
         overlay->attachViewer(viewer);
     }
@@ -497,7 +504,7 @@ void ViewerManager::primeSurfacePatchIndicesAsync()
 
     // Clear any surfaces queued from a previous rebuild cycle
     _surfacesQueuedDuringRebuildIds.clear();
-    _surfacesQueuedForRemovalDuringRebuildIds.clear();
+    _surfacesQueuedForRemovalDuringRebuild.clear();
 
     // Build task captures shared_ptrs - surfaces stay alive throughout async operation
     const int stride = _surfacePatchSamplingStride;
@@ -566,16 +573,16 @@ void ViewerManager::handleSurfacePatchIndexPrimeFinished()
     _indexedSurfaceIds.insert(_pendingSurfacePatchIndexSurfaceIds.begin(),
                               _pendingSurfacePatchIndexSurfaceIds.end());
 
-    // Process any surfaces that were removed during the async rebuild
-    for (const std::string& idToRemove : _surfacesQueuedForRemovalDuringRebuildIds) {
-        // Look up the surface by ID to remove from index
-        auto surf = _state ? _state->surface(idToRemove) : nullptr;
+    // Process any surfaces that were removed during the async rebuild.
+    // We stored the shared_ptr at queue time since the surface may no longer
+    // be available by ID lookup after deletion.
+    for (const auto& [id, surf] : _surfacesQueuedForRemovalDuringRebuild) {
         if (auto quad = std::dynamic_pointer_cast<QuadSurface>(surf)) {
             _surfacePatchIndex.removeSurface(quad);
         }
-        _indexedSurfaceIds.erase(idToRemove);
+        _indexedSurfaceIds.erase(id);
     }
-    _surfacesQueuedForRemovalDuringRebuildIds.clear();
+    _surfacesQueuedForRemovalDuringRebuild.clear();
 
     // Merge any surfaces that were added during the async rebuild
     for (const std::string& queuedId : _surfacesQueuedDuringRebuildIds) {
@@ -715,15 +722,23 @@ void ViewerManager::handleSurfaceWillBeDeleted(std::string name, std::shared_ptr
         // Remove from indexed surface IDs
         _indexedSurfaceIds.erase(name);
 
-        // Remove from queued IDs
+        // Remove from queued-for-add IDs
         auto removeFromVector = [&name](std::vector<std::string>& vec) {
             vec.erase(std::remove(vec.begin(), vec.end(), name), vec.end());
         };
         removeFromVector(_pendingSurfacePatchIndexSurfaceIds);
         removeFromVector(_surfacesQueuedDuringRebuildIds);
-        removeFromVector(_surfacesQueuedForRemovalDuringRebuildIds);
 
-        // Remove from the R-tree index
+        // If an async rebuild is in progress, queue for removal from the new
+        // index when it completes. Store the shared_ptr so the surface stays
+        // alive for the R-tree removal even after CState drops it.
+        bool asyncRebuildInProgress = _surfacePatchIndexWatcher &&
+                                       _surfacePatchIndexWatcher->isRunning();
+        if (asyncRebuildInProgress) {
+            _surfacesQueuedForRemovalDuringRebuild.emplace_back(name, surf);
+        }
+
+        // Remove from the current R-tree index
         _surfacePatchIndex.removeSurface(quad);
     }
 }

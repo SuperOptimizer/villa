@@ -34,7 +34,7 @@ public:
     void submit(const TileRenderParams& params,
                 const std::shared_ptr<Surface>& surface,
                 const std::shared_ptr<Volume>& volume,
-                const std::atomic<uint64_t>& epochRef,
+                const std::shared_ptr<std::atomic<uint64_t>>& epochRef,
                 int controllerId);
 
     // Take up to maxResults completed results belonging to controllerId.

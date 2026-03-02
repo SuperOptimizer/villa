@@ -61,6 +61,7 @@ bool httpDownloadFile(const std::string& url, const std::filesystem::path& dest,
 struct CurlAuthGuard {
     struct curl_slist* headers = nullptr;
     std::string userpwd;
+    std::string sigv4;
 
     CurlAuthGuard() = default;
     ~CurlAuthGuard() { if (headers) curl_slist_free_all(headers); }
@@ -68,12 +69,13 @@ struct CurlAuthGuard {
     CurlAuthGuard(const CurlAuthGuard&) = delete;
     CurlAuthGuard& operator=(const CurlAuthGuard&) = delete;
     CurlAuthGuard(CurlAuthGuard&& o) noexcept
-        : headers(o.headers), userpwd(std::move(o.userpwd)) { o.headers = nullptr; }
+        : headers(o.headers), userpwd(std::move(o.userpwd)), sigv4(std::move(o.sigv4)) { o.headers = nullptr; }
     CurlAuthGuard& operator=(CurlAuthGuard&& o) noexcept {
         if (this != &o) {
             if (headers) curl_slist_free_all(headers);
             headers = o.headers; o.headers = nullptr;
             userpwd = std::move(o.userpwd);
+            sigv4 = std::move(o.sigv4);
         }
         return *this;
     }
@@ -86,8 +88,8 @@ struct CurlAuthGuard {
     CurlAuthGuard guard;
     if (!auth.awsSigv4) return guard;
 
-    std::string sigv4 = "aws:amz:" + auth.region + ":s3";
-    curl_easy_setopt(curl, CURLOPT_AWS_SIGV4, sigv4.c_str());
+    guard.sigv4 = "aws:amz:" + auth.region + ":s3";
+    curl_easy_setopt(curl, CURLOPT_AWS_SIGV4, guard.sigv4.c_str());
     guard.userpwd = auth.accessKey + ":" + auth.secretKey;
     curl_easy_setopt(curl, CURLOPT_USERPWD, guard.userpwd.c_str());
     if (!auth.sessionToken.empty()) {

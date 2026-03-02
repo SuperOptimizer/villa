@@ -248,6 +248,7 @@ private:
     std::atomic<bool> chunkArrivedFlag_{false};
 
     // --- Logical data bounds ---
+    mutable std::mutex dataBoundsMutex_;
     DataBoundsL0 dataBoundsL0_;
 
     // --- Stats ---

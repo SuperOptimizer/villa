@@ -18,12 +18,7 @@ CState::CState(size_t cacheSizeBytes, size_t diskCacheSizeBytes, QObject* parent
         std::make_shared<PlaneSurface>(cv::Vec3f{2000,2000,2000}, cv::Vec3f{1,0,0}));
 }
 
-CState::~CState()
-{
-    for (auto& pair : _pois) {
-        delete pair.second;
-    }
-}
+CState::~CState() = default;
 
 std::shared_ptr<VolumePkg> CState::vpkg() const { return _vpkg; }
 
@@ -136,6 +131,7 @@ void CState::closeAll()
     _currentVolumeId.clear();
     _segmentationGrowthVolumeId.clear();
 
+    _pois.clear();
     _pointCollection->clearAll();
 }
 
@@ -213,18 +209,21 @@ std::vector<std::string> CState::surfaceNames()
 void CState::setPOI(const std::string& name, POI* poi)
 {
     auto it = _pois.find(name);
-    if (it != _pois.end() && it->second != poi) {
-        delete it->second;
+    if (it != _pois.end() && it->second.get() == poi) {
+        // Same pointer re-submitted (caller mutated in place) - just signal
+        emit poiChanged(name, poi);
+        return;
     }
-    _pois[name] = poi;
+    _pois[name] = std::unique_ptr<POI>(poi);
     emit poiChanged(name, poi);
 }
 
 POI* CState::poi(const std::string& name)
 {
-    if (!_pois.count(name))
+    auto it = _pois.find(name);
+    if (it == _pois.end())
         return nullptr;
-    return _pois[name];
+    return it->second.get();
 }
 
 std::vector<POI*> CState::pois()
@@ -232,8 +231,8 @@ std::vector<POI*> CState::pois()
     std::vector<POI*> result;
     result.reserve(_pois.size());
 
-    for (auto& poi : _pois) {
-        result.push_back(poi.second);
+    for (auto& [key, ptr] : _pois) {
+        result.push_back(ptr.get());
     }
 
     return result;

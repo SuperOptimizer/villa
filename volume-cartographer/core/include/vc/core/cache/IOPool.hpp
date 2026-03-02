@@ -31,6 +31,9 @@ public:
     explicit IOPool(int numThreads = 4, size_t maxQueueSize = 1000);
     ~IOPool();
 
+    // Start worker threads. Must be called after setFetchFunc/setCompletionCallback.
+    void start();
+
     IOPool(const IOPool&) = delete;
     IOPool& operator=(const IOPool&) = delete;
 
@@ -97,6 +100,7 @@ private:
     std::atomic<uint64_t> nextSeq_{0};
     std::atomic<uint64_t> currentEpoch_{0};
 
+    int numThreads_;
     std::vector<std::jthread> workers_;
 };
 

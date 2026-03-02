@@ -33,7 +33,7 @@ TileRenderController::~TileRenderController()
 {
     _tickTimer->stop();
     // Bump epoch so our in-flight tasks are discarded on completion.
-    _currentEpoch.fetch_add(1, std::memory_order_relaxed);
+    _currentEpoch->fetch_add(1, std::memory_order_relaxed);
 }
 
 void TileRenderController::ensureTickRunning()
@@ -50,8 +50,8 @@ void TileRenderController::onCameraChanged(
     const QRectF& viewportRect)
 {
     ensureTickRunning();
-    bool epochChanged = (camera.epoch != _currentEpoch.load(std::memory_order_relaxed));
-    _currentEpoch.store(camera.epoch, std::memory_order_relaxed);
+    bool epochChanged = (camera.epoch != _currentEpoch->load(std::memory_order_relaxed));
+    _currentEpoch->store(camera.epoch, std::memory_order_relaxed);
     _desiredLevel = camera.dsScaleIdx;
 
     if (epochChanged && volume) {
@@ -75,7 +75,7 @@ void TileRenderController::onCameraChanged(
         // Check slice cache — apply best available immediately
         auto lookup = _cache.getBest(cacheKey);
         if (lookup.level >= 0) {
-            _tileScene->setTileWorld(wk, lookup.pixmap, _currentEpoch.load(std::memory_order_relaxed), lookup.level);
+            _tileScene->setTileWorld(wk, lookup.pixmap, _currentEpoch->load(std::memory_order_relaxed), lookup.level);
             if (lookup.level == camera.dsScaleIdx) {
                 continue;  // exact hit, no need to re-render
             }
@@ -123,7 +123,7 @@ void TileRenderController::cancelAll()
     // With a shared pool we can't cancel_pending() (it would kill other
     // controllers' tasks).  Instead bump the epoch so our in-flight and
     // queued tasks are discarded at completion time.
-    _currentEpoch.fetch_add(1, std::memory_order_relaxed);
+    _currentEpoch->fetch_add(1, std::memory_order_relaxed);
 }
 
 void TileRenderController::clearState()
@@ -144,7 +144,7 @@ void TileRenderController::clearState()
 void TileRenderController::drainResults()
 {
     // Take up to DRAIN_BATCH_SIZE results per drain cycle
-    auto results = _renderPool->drainCompleted(tiled_config::DRAIN_BATCH_SIZE, _currentEpoch.load(std::memory_order_relaxed), _controllerId);
+    auto results = _renderPool->drainCompleted(tiled_config::DRAIN_BATCH_SIZE, _currentEpoch->load(std::memory_order_relaxed), _controllerId);
 
     bool anyUpdated = false;
 
@@ -218,7 +218,7 @@ void TileRenderController::tick()
     //    Without the chunksJustArrived guard, idle pool + stale tiles = infinite loop.
     if (_progressiveEnabled && chunksJustArrived) {
         if (_lastSurface && _lastVolume && _lastBuildParams) {
-            auto stale = _tileScene->staleTilesInRect(_desiredLevel, _currentEpoch.load(std::memory_order_relaxed), _lastViewportRect, tiled_config::VISIBLE_BUFFER_TILES);
+            auto stale = _tileScene->staleTilesInRect(_desiredLevel, _currentEpoch->load(std::memory_order_relaxed), _lastViewportRect, tiled_config::VISIBLE_BUFFER_TILES);
             if (!stale.empty()) {
                 // Sort by distance to viewport center so the user sees
                 // center-of-screen tiles refine first.

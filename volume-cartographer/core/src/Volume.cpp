@@ -17,6 +17,7 @@
 #include "vc/core/cache/DiskStore.hpp"
 #include "vc/core/cache/HttpMetadataFetcher.hpp"
 #include "vc/core/util/RemoteUrl.hpp"
+#include "vc/core/util/NetworkFilesystem.hpp"
 #include "vc/core/util/CoordGrid.hpp"
 #include "vc/core/util/PostProcess.hpp"
 #include "vc/core/types/VcDataset.hpp"
@@ -33,6 +34,7 @@ Volume::Volume(std::filesystem::path path) : path_(std::move(path))
     _slices = metadata_["slices"].get<int>();
 
     zarrOpen();
+    mountInfo_ = vc::detectNetworkMount(path_);
 }
 
 // Setup a Volume from a folder of slices
@@ -50,6 +52,7 @@ Volume::Volume(std::filesystem::path path, std::string uuid, std::string name)
     metadata_["max"] = double{};
 
     zarrOpen();
+    mountInfo_ = vc::detectNetworkMount(path_);
 }
 
 Volume::~Volume() noexcept = default;
@@ -76,12 +79,12 @@ void Volume::loadMetadata()
     vc::json::require_fields(metadata_, {"uuid", "width", "height", "slices"}, metaPath.string());
 }
 
-std::string Volume::id() const noexcept
+std::string Volume::id() const
 {
     return metadata_["uuid"].get<std::string>();
 }
 
-std::string Volume::name() const noexcept
+std::string Volume::name() const
 {
     return metadata_["name"].get<std::string>();
 }
@@ -202,7 +205,7 @@ int Volume::sliceWidth() const noexcept { return _width; }
 int Volume::sliceHeight() const noexcept { return _height; }
 int Volume::numSlices() const noexcept { return _slices; }
 std::array<int, 3> Volume::shape() const noexcept { return {_width, _height, _slices}; }
-double Volume::voxelSize() const noexcept
+double Volume::voxelSize() const
 {
     return metadata_["voxelsize"].get<double>();
 }
@@ -262,6 +265,30 @@ std::unique_ptr<vc::cache::TieredChunkCache> Volume::createTieredCache(
     } else {
         source = std::make_unique<vc::cache::FileSystemChunkSource>(
             path_, delimiter, std::move(levels));
+
+        // Auto-enable disk caching for network-mounted volumes (s3fs, NFS, etc.)
+        if (!diskStore && mountInfo_.type == vc::FilesystemType::NetworkMount) {
+            // If s3fs already has its own local cache (use_cache option),
+            // skip our DiskStore to avoid double-caching.
+            if (!mountInfo_.cacheDir.empty()) {
+                fprintf(stderr, "[Volume] Detected %s mount with use_cache=%s; "
+                                "skipping app-level disk cache (s3fs handles it)\n",
+                        mountInfo_.label.c_str(),
+                        mountInfo_.cacheDir.c_str());
+            } else {
+                namespace fs = std::filesystem;
+                auto home = std::getenv("HOME");
+                vc::cache::DiskStore::Config dsCfg;
+                dsCfg.root = fs::path(home ? home : "/tmp") / ".VC3D" / "network_cache" / id();
+                dsCfg.maxBytes = diskCacheMaxBytes_;
+                dsCfg.delimiter = delimiter;
+                diskStore = std::make_shared<vc::cache::DiskStore>(std::move(dsCfg));
+                fprintf(stderr, "[Volume] Detected network filesystem (%s); "
+                                "enabling local disk cache at %s\n",
+                        mountInfo_.label.c_str(),
+                        dsCfg.root.string().c_str());
+            }
+        }
     }
 
     // Build dataset pointers for the decompressor
@@ -276,12 +303,19 @@ std::unique_ptr<vc::cache::TieredChunkCache> Volume::createTieredCache(
     config.volumeId = id();
     config.hotMaxBytes = cacheBudgetHot_;
     config.warmMaxBytes = cacheBudgetWarm_;
-    if (isRemote_) {
+    if (isRemote_ || mountInfo_.type == vc::FilesystemType::NetworkMount) {
         // Cap IO threads to avoid oversubscription — multiple volumes each
         // create their own pool.  8 threads is enough to saturate most
         // network links while keeping context-switch overhead manageable.
-        int cores = static_cast<int>(std::thread::hardware_concurrency());
-        config.ioThreads = std::clamp(cores, 2, 8);
+        if (mountInfo_.parallelCount > 0) {
+            // Respect s3fs parallel_count to avoid overwhelming the FUSE layer
+            config.ioThreads = mountInfo_.parallelCount;
+            fprintf(stderr, "[Volume] Using s3fs parallel_count=%d for IO threads\n",
+                    mountInfo_.parallelCount);
+        } else {
+            int cores = static_cast<int>(std::thread::hardware_concurrency());
+            config.ioThreads = std::clamp(cores, 2, 8);
+        }
     }
 
     return std::make_unique<vc::cache::TieredChunkCache>(

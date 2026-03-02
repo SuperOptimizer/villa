@@ -25,6 +25,7 @@
 #include <QWindowStateChangeEvent>
 #include <QScrollBar>
 #include <QGuiApplication>
+#include <QPointer>
 
 #include <algorithm>
 #include <cmath>
@@ -203,7 +204,7 @@ void CTiledVolumeViewer::OnVolumeChanged(std::shared_ptr<Volume> vol)
                     cache->clearChunkArrivedFlag();
                 }, Qt::QueuedConnection);
                 // Track coarsest-level pin progress for status display
-                if (key.level == coarsestLevel && viewer->_pinTotal > 0) {
+                if (key.level == coarsestLevel && viewer->_pinTotal.load(std::memory_order_relaxed) > 0) {
                     QMetaObject::invokeMethod(viewer, [viewer]() {
                         viewer->_pinReceived++;
                         viewer->updateStatusLabel();
@@ -223,11 +224,15 @@ void CTiledVolumeViewer::OnVolumeChanged(std::shared_ptr<Volume> vol)
 
         // Pin coarsest level on a background thread so the UI stays responsive.
         // Once pinning completes, post back to the main thread to finish setup.
-        auto vol = _volume;  // prevent capture of `this` preventing move
-        std::thread([this, vol]() {
+        // Use QPointer to guard against the viewer being destroyed before the
+        // background thread finishes.
+        auto vol = _volume;
+        QPointer<CTiledVolumeViewer> guard(this);
+        std::thread([guard, vol]() {
             vol->pinCoarsestLevel(/*blocking=*/true);
-            QMetaObject::invokeMethod(this, [this]() {
-                onPinComplete();
+            QMetaObject::invokeMethod(qApp, [guard]() {
+                if (guard)
+                    guard->onPinComplete();
             }, Qt::QueuedConnection);
         }).detach();
     }

@@ -2671,7 +2671,10 @@ void CWindow::saveWindowState()
     settings.sync();
 }
 
-// Asks User to Save Data Prior to VC.app Exit
+// Application exit handler. Uses std::quick_exit() intentionally to avoid
+// slow/hanging destruction of Qt widgets, GPU resources, and background
+// threads (e.g. tile renderers, async index rebuilds). All important state
+// is persisted in saveWindowState() before exiting.
 void CWindow::closeEvent(QCloseEvent* event)
 {
     saveWindowState();
@@ -2860,46 +2863,64 @@ void CWindow::OpenVolume(const QString& path)
         return;
     }
 
-    // Detect network-mounted volpkg and offer local SSD caching
+    // Detect network-mounted volpkg and inform user about auto-caching
     {
         namespace fs = std::filesystem;
-        auto fsType = vc::detectFilesystemType(fs::path(aVpkgPath.toStdString()));
-        if (fsType == vc::FilesystemType::NetworkMount) {
-            auto label = vc::filesystemTypeLabel(fs::path(aVpkgPath.toStdString()));
-            auto reply = QMessageBox::question(
-                this, tr("Network Volume Detected"),
-                tr("This volume package appears to be on a network filesystem (%1).\n\n"
-                   "Would you like to enable local disk caching for faster access?")
-                    .arg(QString::fromStdString(label)),
-                QMessageBox::Yes | QMessageBox::No, QMessageBox::Yes);
+        auto mountInfo = vc::detectNetworkMount(fs::path(aVpkgPath.toStdString()));
+        if (mountInfo.type == vc::FilesystemType::NetworkMount) {
+            auto label = mountInfo.label;
+            if (!mountInfo.cacheDir.empty()) {
+                statusBar()->showMessage(
+                    tr("Detected %1 mount (use_cache active) \u2014 using s3fs disk cache")
+                        .arg(QString::fromStdString(label)), 8000);
+                Logger()->info("Detected {} mount with use_cache={}; using s3fs disk cache",
+                               label, mountInfo.cacheDir);
+            } else {
+                statusBar()->showMessage(
+                    tr("Detected %1 mount \u2014 local disk cache enabled automatically")
+                        .arg(QString::fromStdString(label)), 8000);
+                Logger()->info("Detected network filesystem ({}); auto disk cache enabled",
+                               label);
+            }
 
-            if (reply == QMessageBox::Yes) {
-                using namespace vc3d::settings;
-                QSettings settings(vc3d::settingsFilePath(), QSettings::IniFormat);
-                QString lastDir = settings.value(viewer::NETWORK_CACHE_DIR).toString();
-                if (lastDir.isEmpty()) {
-                    lastDir = QDir::homePath() + "/.VC3D/network_cache";
-                }
+            // Offer custom cache directory override (skip if s3fs already caching)
+            if (mountInfo.cacheDir.empty()) {
+                auto reply = QMessageBox::question(
+                    this, tr("Network Volume Detected"),
+                    tr("This volume package is on a network filesystem (%1).\n\n"
+                       "Local disk caching is enabled automatically (~/.VC3D/network_cache/).\n"
+                       "Would you like to choose a custom cache directory instead?")
+                        .arg(QString::fromStdString(label)),
+                    QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
 
-                QString cacheDir = QFileDialog::getExistingDirectory(
-                    this, tr("Select Local Cache Directory"), lastDir);
-
-                if (!cacheDir.isEmpty()) {
-                    settings.setValue(viewer::NETWORK_CACHE_DIR, cacheDir);
-
-                    vc::cache::DiskStore::Config dsCfg;
-                    dsCfg.root = fs::path(cacheDir.toStdString());
-                    dsCfg.directMode = false;
-                    dsCfg.persistent = true;
-                    auto diskStore = std::make_shared<vc::cache::DiskStore>(std::move(dsCfg));
-
-                    for (const auto& volId : _state->vpkg()->volumeIDs()) {
-                        auto vol = _state->vpkg()->volume(volId);
-                        vol->setDiskStore(diskStore);
+                if (reply == QMessageBox::Yes) {
+                    using namespace vc3d::settings;
+                    QSettings settings(vc3d::settingsFilePath(), QSettings::IniFormat);
+                    QString lastDir = settings.value(viewer::NETWORK_CACHE_DIR).toString();
+                    if (lastDir.isEmpty()) {
+                        lastDir = QDir::homePath() + "/.VC3D/network_cache";
                     }
 
-                    Logger()->info("Network cache enabled: {} (fs: {})",
-                                   cacheDir.toStdString(), label);
+                    QString cacheDir = QFileDialog::getExistingDirectory(
+                        this, tr("Select Local Cache Directory"), lastDir);
+
+                    if (!cacheDir.isEmpty()) {
+                        settings.setValue(viewer::NETWORK_CACHE_DIR, cacheDir);
+
+                        vc::cache::DiskStore::Config dsCfg;
+                        dsCfg.root = fs::path(cacheDir.toStdString());
+                        dsCfg.directMode = false;
+                        dsCfg.persistent = true;
+                        auto diskStore = std::make_shared<vc::cache::DiskStore>(std::move(dsCfg));
+
+                        for (const auto& volId : _state->vpkg()->volumeIDs()) {
+                            auto vol = _state->vpkg()->volume(volId);
+                            vol->setDiskStore(diskStore);
+                        }
+
+                        Logger()->info("Network cache custom dir: {} (fs: {})",
+                                       cacheDir.toStdString(), label);
+                    }
                 }
             }
         }

@@ -23,7 +23,6 @@ add_utils_test(compositing)
 
 # I/O & Systems
 add_utils_test(thread_pool)
-add_utils_test(json)
 
 # Zarr + compression (need compression libs)
 find_library(ZSTD_LIB zstd)

@@ -6,6 +6,7 @@
 #include <QColor>
 #include <QString>
 
+#include <atomic>
 #include <chrono>
 #include <map>
 #include <memory>
@@ -391,9 +392,9 @@ private:
     float _contentMinScale = TiledViewerCamera::MIN_SCALE;  // dynamic minimum so content fills viewport
 
     // --- Remote volume pin progress ---
-    int _pinTotal = 0;      // total chunks to pin at coarsest level
-    int _pinReceived = 0;   // chunks received so far
-    int _pinLevel = -1;     // pyramid level being pinned
+    std::atomic<int> _pinTotal{0};   // total chunks to pin at coarsest level
+    int _pinReceived = 0;            // chunks received so far (main thread only)
+    int _pinLevel = -1;              // pyramid level being pinned
 
     // --- Chunk-ready listener tracking ---
     vc::cache::TieredChunkCache::ChunkReadyCallbackId _chunkCbId = 0;

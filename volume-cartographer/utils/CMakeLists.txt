@@ -1,12 +1,15 @@
 # utils — header-only C++26 utility library (vendored)
 # Source: https://github.com/SuperOptimizer/utils
 
+find_package(nlohmann_json REQUIRED)
+
 add_library(utils INTERFACE)
 target_include_directories(utils INTERFACE
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>
 )
 target_compile_features(utils INTERFACE cxx_std_26)
+target_link_libraries(utils INTERFACE nlohmann_json::nlohmann_json)
 
 # Optional: find curl for http_fetch.hpp
 find_package(CURL QUIET)
@@ -26,7 +29,6 @@ set(UTILS_HEADERS
     zarr
     http_fetch
     compression
-    json
 )
 
 foreach(header ${UTILS_HEADERS})
@@ -43,6 +45,9 @@ if(CURL_FOUND)
     target_link_libraries(utils_http_fetch INTERFACE CURL::libcurl)
     target_link_libraries(utils_zarr INTERFACE CURL::libcurl)
 endif()
+
+# zarr needs nlohmann_json
+target_link_libraries(utils_zarr INTERFACE nlohmann_json::nlohmann_json)
 
 # Optional: find compression libraries for compression.hpp / zarr.hpp
 # NOTE: blosc2 is not used. The project uses the bundled c-blosc (blosc1).

@@ -269,7 +269,7 @@ struct ChunkSampler {
                 }
             }
         }
-        return std::clamp(result, 0.0f, 255.0f);
+        return std::clamp(result, 0.0f, static_cast<float>(std::numeric_limits<T>::max()));
     }
 };
 

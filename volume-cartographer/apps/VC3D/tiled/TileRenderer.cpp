@@ -40,19 +40,33 @@ TileRenderResult TileRenderer::renderTile(
 
     // Quick reject: if the tile's world AABB doesn't intersect data bounds,
     // skip the entire sampling pass (avoids cache lookups and prefetch requests).
+    // Sample corners, edge midpoints, and center to handle curved surfaces
+    // where interior points can extend beyond the corner-only AABB.
     const auto& db = volume->dataBounds();
     if (db.valid) {
-        const cv::Vec3f& c00 = coords(0, 0);
-        const cv::Vec3f& c01 = coords(0, coords.cols - 1);
-        const cv::Vec3f& c10 = coords(coords.rows - 1, 0);
-        const cv::Vec3f& c11 = coords(coords.rows - 1, coords.cols - 1);
+        int midR = coords.rows / 2;
+        int midC = coords.cols / 2;
+        int lastR = coords.rows - 1;
+        int lastC = coords.cols - 1;
 
-        float tMinX = std::min({c00[0], c01[0], c10[0], c11[0]});
-        float tMaxX = std::max({c00[0], c01[0], c10[0], c11[0]});
-        float tMinY = std::min({c00[1], c01[1], c10[1], c11[1]});
-        float tMaxY = std::max({c00[1], c01[1], c10[1], c11[1]});
-        float tMinZ = std::min({c00[2], c01[2], c10[2], c11[2]});
-        float tMaxZ = std::max({c00[2], c01[2], c10[2], c11[2]});
+        // 4 corners + 4 edge midpoints + center = 9 sample points
+        const cv::Vec3f* samples[] = {
+            &coords(0, 0), &coords(0, lastC),
+            &coords(lastR, 0), &coords(lastR, lastC),
+            &coords(0, midC), &coords(lastR, midC),
+            &coords(midR, 0), &coords(midR, lastC),
+            &coords(midR, midC)
+        };
+
+        float tMinX = samples[0]->val[0], tMaxX = tMinX;
+        float tMinY = samples[0]->val[1], tMaxY = tMinY;
+        float tMinZ = samples[0]->val[2], tMaxZ = tMinZ;
+        for (int i = 1; i < 9; i++) {
+            const auto& s = *samples[i];
+            tMinX = std::min(tMinX, s[0]); tMaxX = std::max(tMaxX, s[0]);
+            tMinY = std::min(tMinY, s[1]); tMaxY = std::max(tMaxY, s[1]);
+            tMinZ = std::min(tMinZ, s[2]); tMaxZ = std::max(tMaxZ, s[2]);
+        }
 
         // Conservative margin for interpolation + composite layers
         float margin = 2.0f;

@@ -181,8 +181,11 @@ TieredChunkCache::TieredChunkCache(
                             std::fprintf(log, "COMPLETE hot-put lvl=%d (%d,%d,%d) decompBytes=%zu decomp=%ldms total=%ldms\n",
                                          key.level, key.iz, key.iy, key.ix, decompBytes, decompMs, totalMs);
                     } else {
+                        // Remove from warm to prevent repeated failed
+                        // decompress attempts (hot loop).
+                        warmCache_.remove(key);
                         if (auto* log = cacheDebugLog())
-                            std::fprintf(log, "COMPLETE decompress-fail lvl=%d (%d,%d,%d)\n",
+                            std::fprintf(log, "COMPLETE decompress-fail lvl=%d (%d,%d,%d) [removed from warm]\n",
                                          key.level, key.iz, key.iy, key.ix);
                     }
                 }
@@ -196,6 +199,9 @@ TieredChunkCache::TieredChunkCache(
                 }
             });
         });
+
+    // Start IO workers after callbacks are set to avoid data races.
+    ioPool_.start();
 
     loadNegativeCache();
 }
@@ -483,11 +489,13 @@ std::array<int, 3> TieredChunkCache::levelShape(int level) const
 
 void TieredChunkCache::setDataBounds(int minX, int maxX, int minY, int maxY, int minZ, int maxZ)
 {
+    std::lock_guard lock(dataBoundsMutex_);
     dataBoundsL0_ = {minX, maxX, minY, maxY, minZ, maxZ, true};
 }
 
 TieredChunkCache::DataBoundsL0 TieredChunkCache::dataBounds() const
 {
+    std::lock_guard lock(dataBoundsMutex_);
     return dataBoundsL0_;
 }
 
@@ -632,14 +640,15 @@ ChunkDataPtr TieredChunkCache::promoteFromCold(const ChunkKey& key)
 
     statColdHits_.fetch_add(1, std::memory_order_relaxed);
 
+    // Keep a local copy for promotion before putting into warm cache,
+    // since another thread could evict from warm between put and get.
+    CompressedChunk localCopy{*compressed};
+
     // Store in warm
     warmPut(key, std::move(*compressed));
 
-    // Decompress and promote to hot
-    auto warmEntry = warmGet(key);
-    if (!warmEntry) return nullptr;
-
-    return promoteFromWarm(key, std::move(*warmEntry));
+    // Decompress and promote to hot using our local copy
+    return promoteFromWarm(key, std::move(localCopy));
 }
 
 ChunkDataPtr TieredChunkCache::promoteFromIce(const ChunkKey& key)
@@ -656,14 +665,15 @@ ChunkDataPtr TieredChunkCache::promoteFromIce(const ChunkKey& key)
         diskStore_->put(config_.volumeId, key, compressed);
     }
 
+    // Keep a local copy for promotion before putting into warm cache,
+    // since another thread could evict from warm between put and get.
+    CompressedChunk localCopy{compressed};
+
     // Store in warm
     warmPut(key, std::move(compressed));
 
-    // Decompress and promote to hot
-    auto warmEntry = warmGet(key);
-    if (!warmEntry) return nullptr;
-
-    return promoteFromWarm(key, std::move(*warmEntry));
+    // Decompress and promote to hot using our local copy
+    return promoteFromWarm(key, std::move(localCopy));
 }
 
 ChunkDataPtr TieredChunkCache::loadFull(const ChunkKey& key)

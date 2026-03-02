@@ -105,5 +105,5 @@ private:
 
     // Surface/POI data (formerly in CSurfaceCollection)
     std::unordered_map<std::string, std::shared_ptr<Surface>> _surfs;
-    std::unordered_map<std::string, POI*> _pois;
+    std::unordered_map<std::string, std::unique_ptr<POI>> _pois;
 };

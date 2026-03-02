@@ -107,7 +107,7 @@ private:
     RenderPool* _renderPool;  // shared, not owned
     QTimer* _tickTimer;
 
-    std::atomic<uint64_t> _currentEpoch{0};
+    std::shared_ptr<std::atomic<uint64_t>> _currentEpoch = std::make_shared<std::atomic<uint64_t>>(0);
     int _controllerId;
     static inline std::atomic<int> _nextControllerId{0};
     uint64_t _paramsHash = 0;

@@ -208,6 +208,11 @@ void VcDataset::decompress(std::span<const uint8_t> compressed,
             }
             uint32_t origSize;
             std::memcpy(&origSize, compressed.data(), 4);
+            if (origSize > outBytes) {
+                throw std::runtime_error(
+                    "LZ4 origSize (" + std::to_string(origSize) +
+                    ") exceeds output buffer (" + std::to_string(outBytes) + ")");
+            }
             int ret = LZ4_decompress_safe(
                 src + 4,
                 static_cast<char*>(output),

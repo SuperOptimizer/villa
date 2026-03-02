@@ -145,6 +145,12 @@ void DiskStore::put(
             totalBytes_.fetch_add(size, std::memory_order_relaxed);
         }
     }
+
+    // Enforce disk budget: evict oldest entries if over maxBytes
+    if (config_.maxBytes > 0 &&
+        totalBytes_.load(std::memory_order_relaxed) > config_.maxBytes) {
+        evictToSize(config_.maxBytes);
+    }
 }
 
 void DiskStore::remove(
