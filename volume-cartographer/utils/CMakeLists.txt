@@ -1,4 +1,4 @@
-# utils — header-only C++26 utility library (vendored)
+# utils — header-only C++23 utility library (vendored)
 # Source: https://github.com/SuperOptimizer/utils
 
 find_package(nlohmann_json REQUIRED)
@@ -8,7 +8,7 @@ target_include_directories(utils INTERFACE
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>
 )
-target_compile_features(utils INTERFACE cxx_std_26)
+target_compile_features(utils INTERFACE cxx_std_23)
 target_link_libraries(utils INTERFACE nlohmann_json::nlohmann_json)
 
 # Optional: find curl for http_fetch.hpp
@@ -37,7 +37,7 @@ foreach(header ${UTILS_HEADERS})
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         $<INSTALL_INTERFACE:include>
     )
-    target_compile_features(utils_${header} INTERFACE cxx_std_26)
+    target_compile_features(utils_${header} INTERFACE cxx_std_23)
 endforeach()
 
 # Link curl for http_fetch and zarr
