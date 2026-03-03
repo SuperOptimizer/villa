@@ -5,7 +5,7 @@
 add_library(OpenABF INTERFACE)
 target_include_directories(OpenABF INTERFACE
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-    $<INSTALL_INTERFACE:include>
+    $<INSTALL_INTERFACE:${include_install_dir}>
 )
 target_link_libraries(OpenABF INTERFACE Eigen3::Eigen)
 

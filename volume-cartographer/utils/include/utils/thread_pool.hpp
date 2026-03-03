@@ -321,14 +321,18 @@ void parallel_for(ThreadPool& pool, std::size_t begin, std::size_t end,
     if (chunk_size == 0)
         chunk_size = detail::default_chunk_size(count, pool.worker_count());
 
+    // Wrap func in a shared_ptr so submitted lambdas keep it alive even if
+    // an exception causes this function to exit before all futures are joined.
+    auto shared_func = std::make_shared<std::decay_t<F>>(std::forward<F>(func));
+
     std::vector<std::future<void>> futures;
     futures.reserve((count + chunk_size - 1) / chunk_size);
 
     for (std::size_t lo = begin; lo < end; lo += chunk_size) {
         auto hi = std::min(lo + chunk_size, end);
-        futures.push_back(pool.submit([&func, lo, hi] {
+        futures.push_back(pool.submit([shared_func, lo, hi] {
             for (std::size_t i = lo; i < hi; ++i)
-                func(i);
+                (*shared_func)(i);
         }));
     }
     for (auto& f : futures)
@@ -346,15 +350,16 @@ void parallel_for_each(ThreadPool& pool, R&& range, F&& func,
         chunk_size = detail::default_chunk_size(sz, pool.worker_count());
 
     auto it = std::ranges::begin(range);
+    auto shared_func = std::make_shared<std::decay_t<F>>(std::forward<F>(func));
 
     std::vector<std::future<void>> futures;
     futures.reserve((sz + chunk_size - 1) / chunk_size);
 
     for (std::size_t lo = 0; lo < sz; lo += chunk_size) {
         auto hi = std::min(lo + chunk_size, sz);
-        futures.push_back(pool.submit([&func, it, lo, hi] {
+        futures.push_back(pool.submit([shared_func, it, lo, hi] {
             for (std::size_t i = lo; i < hi; ++i)
-                func(*(it + static_cast<std::ptrdiff_t>(i)));
+                (*shared_func)(*(it + static_cast<std::ptrdiff_t>(i)));
         }));
     }
     for (auto& f : futures)
@@ -374,6 +379,8 @@ template <std::ranges::random_access_range R, typename T,
         chunk_size = detail::default_chunk_size(sz, pool.worker_count());
 
     auto it = std::ranges::begin(range);
+    auto shared_reduce = std::make_shared<std::decay_t<ReduceOp>>(std::forward<ReduceOp>(reduce));
+    auto shared_transform = std::make_shared<std::decay_t<TransformOp>>(std::forward<TransformOp>(transform));
 
     std::vector<std::future<T>> futures;
     futures.reserve((sz + chunk_size - 1) / chunk_size);
@@ -381,11 +388,11 @@ template <std::ranges::random_access_range R, typename T,
     for (std::size_t lo = 0; lo < sz; lo += chunk_size) {
         auto hi = std::min(lo + chunk_size, sz);
         futures.push_back(pool.submit(
-            [&reduce, &transform, it, lo, hi] {
-                auto acc = transform(*(it + static_cast<std::ptrdiff_t>(lo)));
+            [shared_reduce, shared_transform, it, lo, hi] {
+                auto acc = (*shared_transform)(*(it + static_cast<std::ptrdiff_t>(lo)));
                 for (std::size_t i = lo + 1; i < hi; ++i)
-                    acc = reduce(std::move(acc),
-                                 transform(*(it + static_cast<std::ptrdiff_t>(i))));
+                    acc = (*shared_reduce)(std::move(acc),
+                                 (*shared_transform)(*(it + static_cast<std::ptrdiff_t>(i))));
                 return acc;
             }
         ));
@@ -393,7 +400,7 @@ template <std::ranges::random_access_range R, typename T,
 
     T result = std::move(init);
     for (auto& f : futures)
-        result = reduce(std::move(result), f.get());
+        result = (*shared_reduce)(std::move(result), f.get());
     return result;
 }
 
