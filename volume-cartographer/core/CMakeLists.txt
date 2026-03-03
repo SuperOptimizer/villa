@@ -19,6 +19,13 @@ add_library(vc_core
         src/Tiff.cpp
         src/Zarr.cpp
         src/VcDataset.cpp
+        src/cache/ChunkSource.cpp
+        src/cache/DiskStore.cpp
+        src/cache/HttpMetadataFetcher.cpp
+        src/cache/IOPool.cpp
+        src/cache/TieredChunkCache.cpp
+        src/cache/VcDecompressor.cpp
+        src/cache/SimpleCacheFactory.cpp
         src/Geometry.cpp
         src/Thinning.cpp
         src/Umbilicus.cpp
@@ -36,9 +43,7 @@ target_link_libraries(vc_core
         z5
         OpenMP::OpenMP_CXX
         TIFF::TIFF
-        #${CURL_LIBRARIES}
-        #${OPENSSL_LIBRARIES}
-        #${ZLIB_LIBRARIES}
+        CURL::libcurl
 )
 
 # VcDataset dependencies
