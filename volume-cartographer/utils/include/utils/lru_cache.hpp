@@ -248,15 +248,14 @@ private:
                 it->second.generation.store(generation_.fetch_add(1, std::memory_order_relaxed), std::memory_order_relaxed);
                 it->second.pinned     = pinned;
                 current_bytes_.fetch_add(val_bytes, std::memory_order_relaxed);
-                return;
+            } else {
+                // New entry.
+                auto gen = generation_.fetch_add(1, std::memory_order_relaxed);
+                map_.emplace(
+                    key,
+                    Entry{std::move(value), val_bytes, gen, pinned});
+                current_bytes_.fetch_add(val_bytes, std::memory_order_relaxed);
             }
-
-            // New entry.
-            auto gen = generation_.fetch_add(1, std::memory_order_relaxed);
-            map_.emplace(
-                key,
-                Entry{std::move(value), val_bytes, gen, pinned});
-            current_bytes_.fetch_add(val_bytes, std::memory_order_relaxed);
         }
 
         // Evict outside the unique_lock if over budget.

@@ -6,7 +6,7 @@ function(add_utils_test name)
     endif()
     add_executable(test_${name} test_${name}.cpp)
     target_link_libraries(test_${name} PRIVATE utils)
-    target_compile_features(test_${name} PRIVATE cxx_std_26)
+    target_compile_features(test_${name} PRIVATE cxx_std_23)
     add_test(NAME ${name} COMMAND test_${name})
 endfunction()
 
