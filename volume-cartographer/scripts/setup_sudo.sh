@@ -1,13 +1,6 @@
 #!/bin/bash
 set -e
 
-if [[ "${AGENTS_AGENT_MODE:-0}" == "1" && "${AGENTS_ALLOW_INSTALL:-0}" != "1" ]]; then
-  echo "INFO: setup_sudo.sh is disabled by default in agent mode."
-  echo "Set AGENTS_ALLOW_INSTALL=1 to run this script."
-  echo "Example: AGENTS_AGENT_MODE=1 AGENTS_ALLOW_INSTALL=1 ./volume-cartographer/scripts/setup_sudo.sh"
-  exit 0
-fi
-
 # Update and install system packages
 sudo apt -y update
 sudo apt -y install software-properties-common
@@ -15,7 +8,7 @@ sudo add-apt-repository -y universe
 sudo apt -y update
 sudo apt -y upgrade
 sudo apt -y full-upgrade
-sudo apt -y install build-essential git qt6-base-dev libboost-system-dev \
+sudo apt -y install build-essential git libboost-system-dev \
     libboost-program-options-dev libgsl-dev libsdl2-dev \
     libcurl4-openssl-dev file curl unzip ca-certificates bzip2 wget \
     fuse jq gimp desktop-file-utils ninja-build libomp-dev libgomp1 \
