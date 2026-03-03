@@ -3,10 +3,7 @@
 #include <xtensor/io/xio.hpp>
 #include <xtensor/views/xview.hpp>
 
-#include "z5/factory.hxx"
-#include "z5/filesystem/handle.hxx"
-#include "z5/multiarray/xtensor_access.hxx"
-#include "z5/attributes.hxx"
+#include "vc/core/types/VcDataset.hpp"
 
 #include <opencv2/core.hpp>
 
@@ -14,55 +11,18 @@
 #include "vc/core/util/Surface.hpp"
 
 #include <filesystem>
+#include <fstream>
 
 #include "vc/core/util/DateTime.hpp"
 #include "vc/core/util/StreamOperators.hpp"
 #include "vc/tracer/Tracer.hpp"
 
 
-using shape = z5::types::ShapeType;
+using shape = std::vector<size_t>;
 using namespace xt::placeholders;
 
 
 using json = nlohmann::json;
-
-static void add_target_context(json& meta, const std::filesystem::path& volume_path)
-{
-    std::filesystem::path normalized_volume_path = volume_path.lexically_normal();
-    if (normalized_volume_path.filename().empty()) {
-        normalized_volume_path = normalized_volume_path.parent_path();
-    }
-
-    const std::string volume_name = normalized_volume_path.filename().string();
-    if (!volume_name.empty() && !meta.contains("target_volume")) {
-        meta["target_volume"] = volume_name;
-    }
-
-    const std::filesystem::path volumes_dir = normalized_volume_path.parent_path();
-    if (volumes_dir.filename() != "volumes") {
-        return;
-    }
-
-    const std::filesystem::path volpkg_root = volumes_dir.parent_path();
-    std::string scroll_name = volpkg_root.filename().string();
-
-    const std::filesystem::path config_path = volpkg_root / "config.json";
-    std::error_code ec;
-    if (std::filesystem::is_regular_file(config_path, ec)) {
-        try {
-            auto cfg = json::parse(std::ifstream(config_path));
-            if (cfg.contains("name") && cfg["name"].is_string()) {
-                scroll_name = cfg["name"].get<std::string>();
-            }
-        } catch (...) {
-            // Keep folder-based fallback if config.json cannot be parsed.
-        }
-    }
-
-    if (!scroll_name.empty() && !meta.contains("scroll_source")) {
-        meta["scroll_source"] = scroll_name;
-    }
-}
 
 
 
@@ -92,12 +52,10 @@ int main(int argc, char *argv[])
     }
     params["tgt_dir"] = tgt_dir;
 
-    z5::filesystem::handle::Group group(vol_path, z5::FileMode::FileMode::r);
-    z5::filesystem::handle::Dataset ds_handle(group, "0", json::parse(std::ifstream(vol_path/"0/.zarray")).value<std::string>("dimension_separator","."));
-    std::unique_ptr<z5::Dataset> ds = z5::filesystem::openDataset(ds_handle);
+    std::unique_ptr<vc::VcDataset> ds = std::make_unique<vc::VcDataset>(vol_path / "0");
 
     std::cout << "zarr dataset size for scale group 0 " << ds->shape() << std::endl;
-    std::cout << "chunk shape shape " << ds->chunking().blockShape() << std::endl;
+    std::cout << "chunk shape shape " << ds->defaultChunkShape() << std::endl;
 
     float voxelsize = json::parse(std::ifstream(vol_path/"meta.json"))["voxelsize"];
 
@@ -157,7 +115,6 @@ int main(int argc, char *argv[])
 
     (*surf->meta)["source"] = "vc_grow_seg_from_segments";
     (*surf->meta)["vc_grow_seg_from_segments_params"] = params;
-    add_target_context(*surf->meta, vol_path);
     std::string uuid = "auto_trace_" + get_surface_time_str();;
     std::filesystem::path seg_dir = tgt_dir / uuid;
     surf->save(seg_dir, uuid);

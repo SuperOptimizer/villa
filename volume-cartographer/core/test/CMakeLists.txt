@@ -7,4 +7,3 @@ endfunction()
 
 vc_add_test(test_version test_version.cpp)
 vc_add_test(test_geometry test_geometry.cpp)
-vc_add_test(test_cache_primitives test_cache_primitives.cpp)

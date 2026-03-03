@@ -1,7 +1,8 @@
 #include "VectorOverlayController.hpp"
 
-#include "../CVolumeViewer.hpp"
-#include "../CSurfaceCollection.hpp"
+#include "../tiled/CTiledVolumeViewer.hpp"
+#include "../VolumeViewerBase.hpp"
+#include "../CState.hpp"
 #include "../VCSettings.hpp"
 #include "../ViewerManager.hpp"
 
@@ -34,14 +35,14 @@ const QColor kArrowFalseColor(Qt::red);
 const QColor kArrowTrueColor(Qt::green);
 }
 
-VectorOverlayController::VectorOverlayController(CSurfaceCollection* surfaces, QObject* parent)
+VectorOverlayController::VectorOverlayController(CState* state, QObject* parent)
     : ViewerOverlayControllerBase(kOverlayGroup, parent)
-    , _surfaces(surfaces)
+    , _state(state)
 {
-    addProvider([this](CVolumeViewer* viewer, OverlayBuilder& builder) {
+    addProvider([this](VolumeViewerBase* viewer, OverlayBuilder& builder) {
         collectDirectionHints(viewer, builder);
     });
-    addProvider([this](CVolumeViewer* viewer, OverlayBuilder& builder) {
+    addProvider([this](VolumeViewerBase* viewer, OverlayBuilder& builder) {
         collectSurfaceNormals(viewer, builder);
     });
 }
@@ -53,7 +54,7 @@ void VectorOverlayController::addProvider(Provider provider)
     }
 }
 
-bool VectorOverlayController::isOverlayEnabledFor(CVolumeViewer* viewer) const
+bool VectorOverlayController::isOverlayEnabledFor(VolumeViewerBase* viewer) const
 {
     if (!viewer) {
         return false;
@@ -69,7 +70,7 @@ bool VectorOverlayController::isOverlayEnabledFor(CVolumeViewer* viewer) const
     return false;
 }
 
-void VectorOverlayController::collectPrimitives(CVolumeViewer* viewer,
+void VectorOverlayController::collectPrimitives(VolumeViewerBase* viewer,
                                                 OverlayBuilder& builder)
 {
     if (!viewer) {
@@ -82,7 +83,7 @@ void VectorOverlayController::collectPrimitives(CVolumeViewer* viewer,
     }
 }
 
-void VectorOverlayController::collectDirectionHints(CVolumeViewer* viewer,
+void VectorOverlayController::collectDirectionHints(VolumeViewerBase* viewer,
                                                     OverlayBuilder& builder) const
 {
     if (!viewer->isShowDirectionHints()) {
@@ -142,17 +143,17 @@ void VectorOverlayController::collectDirectionHints(CVolumeViewer* viewer,
     std::shared_ptr<Surface> segSurfaceHolder;  // Keep surface alive during this scope
     if (viewer->surfName() == "segmentation") {
         segSurface = dynamic_cast<QuadSurface*>(currentSurface);
-    } else if (_surfaces) {
-        segSurfaceHolder = _surfaces->surface("segmentation");
+    } else if (_state) {
+        segSurfaceHolder = _state->surface("segmentation");
         segSurface = dynamic_cast<QuadSurface*>(segSurfaceHolder.get());
     }
 
     auto fetchFocusScene = [&](QPointF& anchor) {
-        if (!segSurface || !_surfaces) {
+        if (!segSurface || !_state) {
             return;
         }
-        if (auto* poi = _surfaces->poi("focus")) {
-            auto ptr = segSurface->pointer();
+        if (auto* poi = _state->poi("focus")) {
+            cv::Vec3f ptr(0, 0, 0);
             auto* patchIndex = manager() ? manager()->surfacePatchIndex() : nullptr;
             float dist = segSurface->pointTo(ptr, poi->p, 4.0, 100, patchIndex);
             if (dist >= 0 && dist < 20.0f / scale) {
@@ -179,9 +180,9 @@ void VectorOverlayController::collectDirectionHints(CVolumeViewer* viewer,
         addLabel(anchorScene + upOffset + QPointF(8.0, -8.0), QStringLiteral("false"), kArrowFalseColor);
         addLabel(anchorScene + downOffset + QPointF(8.0, -8.0), QStringLiteral("true"), kArrowTrueColor);
 
-        auto ptr = quad->pointer();
-        if (_surfaces) {
-            if (auto* poi = _surfaces->poi("focus")) {
+        cv::Vec3f ptr(0, 0, 0);
+        if (_state) {
+            if (auto* poi = _state->poi("focus")) {
                 auto* patchIndex = manager() ? manager()->surfacePatchIndex() : nullptr;
                 quad->pointTo(ptr, poi->p, 4.0, 100, patchIndex);
             }
@@ -230,13 +231,13 @@ void VectorOverlayController::collectDirectionHints(CVolumeViewer* viewer,
         QPointF downOffset(0.0, 10.0);
 
         cv::Vec3f targetWP = plane->origin();
-        if (_surfaces) {
-            if (auto* poi = _surfaces->poi("focus")) {
+        if (_state) {
+            if (auto* poi = _state->poi("focus")) {
                 targetWP = poi->p;
             }
         }
 
-        auto segPtr = segSurface->pointer();
+        cv::Vec3f segPtr(0, 0, 0);
         auto* patchIndex = manager() ? manager()->surfacePatchIndex() : nullptr;
         segSurface->pointTo(segPtr, targetWP, 4.0, 100, patchIndex);
 
@@ -248,11 +249,10 @@ void VectorOverlayController::collectDirectionHints(CVolumeViewer* viewer,
         const float stepNominal = 2.0f;
         cv::Vec3f p1 = segSurface->coord(segPtr, {stepNominal, 0, 0});
         cv::Vec3f dir3 = p1 - p0;
-        const float len2 = dir3.dot(dir3);
-        if (len2 < 1e-10f) {
+        float len = std::sqrt(dir3.dot(dir3));
+        if (len < 1e-5f) {
             return;
         }
-        const float len = std::sqrt(len2);
         dir3 *= (1.0f / len);
 
         cv::Vec3f s0 = plane->project(p0, 1.0f, scale);
@@ -310,7 +310,7 @@ void VectorOverlayController::collectDirectionHints(CVolumeViewer* viewer,
     }
 }
 
-void VectorOverlayController::collectSurfaceNormals(CVolumeViewer* viewer,
+void VectorOverlayController::collectSurfaceNormals(VolumeViewerBase* viewer,
                                                      OverlayBuilder& builder) const
 {
     if (!viewer->isShowSurfaceNormals()) {
@@ -405,9 +405,9 @@ void VectorOverlayController::collectSurfaceNormals(CVolumeViewer* viewer,
             style.z = kArrowZ;
 
             QPointF dir2d(dir3d[0], dir3d[1]);
-            const float len2d2 = dir2d.x() * dir2d.x() + dir2d.y() * dir2d.y();
+            float len2d = std::sqrt(dir2d.x() * dir2d.x() + dir2d.y() * dir2d.y());
 
-            if (len2d2 < 0.01f) {
+            if (len2d < 0.1f) {
                 OverlayStyle dotStyle;
                 dotStyle.penColor = color;
                 dotStyle.brushColor = color;
@@ -415,7 +415,7 @@ void VectorOverlayController::collectSurfaceNormals(CVolumeViewer* viewer,
                 dotStyle.z = kArrowZ;
                 builder.addCircle(origin, 3.0f, true, dotStyle);
             } else {
-                dir2d /= std::sqrt(len2d2);
+                dir2d /= len2d;
                 QPointF end = origin + dir2d * kArrowLen;
                 builder.addArrow(origin, end, 5.0, 3.0, style);
             }
@@ -457,17 +457,17 @@ void VectorOverlayController::collectSurfaceNormals(CVolumeViewer* viewer,
 
                 if (hasU) {
                     tangentU = pRight - pLeft;
-                    const float len2 = tangentU.dot(tangentU);
-                    if (len2 > 1e-12f) {
-                        tangentU /= std::sqrt(len2);
+                    float len = std::sqrt(tangentU.dot(tangentU));
+                    if (len > 1e-6f) {
+                        tangentU /= len;
                     }
                 }
 
                 if (hasV) {
                     tangentV = pDown - pUp;
-                    const float len2 = tangentV.dot(tangentV);
-                    if (len2 > 1e-12f) {
-                        tangentV /= std::sqrt(len2);
+                    float len = std::sqrt(tangentV.dot(tangentV));
+                    if (len > 1e-6f) {
+                        tangentV /= len;
                     }
                 }
 
@@ -475,9 +475,9 @@ void VectorOverlayController::collectSurfaceNormals(CVolumeViewer* viewer,
                     // Left-hand rule: U x V gives normal pointing toward viewer
                     // (consistent with grid_normal in Geometry.cpp)
                     cv::Vec3f normal = tangentU.cross(tangentV);
-                    const float len2 = normal.dot(normal);
-                    if (len2 > 1e-12f) {
-                        normal /= std::sqrt(len2);
+                    float len = std::sqrt(normal.dot(normal));
+                    if (len > 1e-6f) {
+                        normal /= len;
                         drawNormalPair(origin, normal);
                     }
                 }
@@ -495,8 +495,8 @@ void VectorOverlayController::collectSurfaceNormals(CVolumeViewer* viewer,
     // Get the segmentation surface
     QuadSurface* segSurface = nullptr;
     std::shared_ptr<Surface> segSurfaceHolder;
-    if (_surfaces) {
-        segSurfaceHolder = _surfaces->surface("segmentation");
+    if (_state) {
+        segSurfaceHolder = _state->surface("segmentation");
         segSurface = dynamic_cast<QuadSurface*>(segSurfaceHolder.get());
     }
     if (!segSurface) {
@@ -505,13 +505,13 @@ void VectorOverlayController::collectSurfaceNormals(CVolumeViewer* viewer,
 
     // Find current position on surface
     cv::Vec3f targetWP = plane->origin();
-    if (_surfaces) {
-        if (auto* poi = _surfaces->poi("focus")) {
+    if (_state) {
+        if (auto* poi = _state->poi("focus")) {
             targetWP = poi->p;
         }
     }
 
-    auto segPtr = segSurface->pointer();
+    cv::Vec3f segPtr(0, 0, 0);
     auto* patchIndex = manager() ? manager()->surfacePatchIndex() : nullptr;
     float dist = segSurface->pointTo(segPtr, targetWP, 4.0, 100, patchIndex);
     if (dist < 0 || dist > 50.0f) {
@@ -525,14 +525,14 @@ void VectorOverlayController::collectSurfaceNormals(CVolumeViewer* viewer,
 
         QPointF origin(p0[0], p0[1]);
         QPointF dir2d(p1[0] - p0[0], p1[1] - p0[1]);
-        const float len2d2 = dir2d.x() * dir2d.x() + dir2d.y() * dir2d.y();
+        float len2d = std::sqrt(dir2d.x() * dir2d.x() + dir2d.y() * dir2d.y());
 
         OverlayStyle style;
         style.penColor = color;
         style.penWidth = 3.0;
         style.z = kArrowZ;
 
-        if (len2d2 < 4.0f) {
+        if (len2d < 2.0f) {
             // Vector is mostly perpendicular to view plane
             OverlayStyle dotStyle;
             dotStyle.penColor = color;
@@ -541,7 +541,7 @@ void VectorOverlayController::collectSurfaceNormals(CVolumeViewer* viewer,
             dotStyle.z = kArrowZ;
             builder.addCircle(origin, 3.0f, true, dotStyle);
         } else {
-            dir2d /= std::sqrt(len2d2);
+            dir2d /= len2d;
             QPointF end = origin + dir2d * kArrowLen;
             builder.addArrow(origin, end, 5.0, 3.0, style);
         }
@@ -605,17 +605,17 @@ void VectorOverlayController::collectSurfaceNormals(CVolumeViewer* viewer,
 
             if (hasU) {
                 tangentU = pPlusU - pMinusU;
-                const float len2 = tangentU.dot(tangentU);
-                if (len2 > 1e-12f) {
-                    tangentU /= std::sqrt(len2);
+                float len = std::sqrt(tangentU.dot(tangentU));
+                if (len > 1e-6f) {
+                    tangentU /= len;
                 }
             }
 
             if (hasV) {
                 tangentV = pPlusV - pMinusV;
-                const float len2 = tangentV.dot(tangentV);
-                if (len2 > 1e-12f) {
-                    tangentV /= std::sqrt(len2);
+                float len = std::sqrt(tangentV.dot(tangentV));
+                if (len > 1e-6f) {
+                    tangentV /= len;
                 }
             }
 
@@ -623,9 +623,9 @@ void VectorOverlayController::collectSurfaceNormals(CVolumeViewer* viewer,
                 // Left-hand rule: U x V gives normal pointing toward viewer
                 // (consistent with grid_normal in Geometry.cpp)
                 cv::Vec3f normal = tangentU.cross(tangentV);
-                const float len2 = normal.dot(normal);
-                if (len2 > 1e-12f) {
-                    normal /= std::sqrt(len2);
+                float len = std::sqrt(normal.dot(normal));
+                if (len > 1e-6f) {
+                    normal /= len;
                     drawPlaneNormalPair(worldPos, normal);
                 }
             }

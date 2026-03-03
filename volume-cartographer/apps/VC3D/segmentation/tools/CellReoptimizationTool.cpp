@@ -290,20 +290,15 @@ std::vector<std::pair<int, int>> CellReoptimizationTool::sampleBoundaryPoints(
         }
     }
 
-    // Calculate total boundary length and keep a squared-length guard.
-    float totalLengthSq = 0.0f;
+    // Calculate total boundary length
     float totalLength = 0.0f;
     for (size_t i = 1; i < orderedBoundary.size(); ++i) {
         float dr = static_cast<float>(orderedBoundary[i].first - orderedBoundary[i - 1].first);
         float dc = static_cast<float>(orderedBoundary[i].second - orderedBoundary[i - 1].second);
-        const float segmentLenSq = dr * dr + dc * dc;
-        totalLengthSq += segmentLenSq;
-        if (segmentLenSq > 0.0f) {
-            totalLength += std::sqrt(segmentLenSq);
-        }
+        totalLength += std::sqrt(dr * dr + dc * dc);
     }
 
-    if (totalLengthSq <= 0.0f) {
+    if (totalLength <= 0.0f) {
         return {orderedBoundary.front()};
     }
 
@@ -414,11 +409,10 @@ std::vector<std::pair<float, float>> CellReoptimizationTool::applyPerimeterOffse
     for (const auto& [row, col] : boundaryPoints) {
         float dr = static_cast<float>(row) - centerRow;
         float dc = static_cast<float>(col) - centerCol;
-        const float distSq = dr * dr + dc * dc;
+        float dist = std::sqrt(dr * dr + dc * dc);
 
         float newRow, newCol;
-        if (distSq > 0.001f * 0.001f) {
-            const float dist = std::sqrt(distSq);
+        if (dist > 0.001f) {
             // Normalize direction and apply offset
             float dirRow = dr / dist;
             float dirCol = dc / dist;

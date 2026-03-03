@@ -13,9 +13,6 @@ class Surface
 public:
     virtual ~Surface() = default;
 
-    // get a central location point
-    virtual cv::Vec3f pointer() = 0;
-
     //move pointer within internal coordinate system
     virtual void move(cv::Vec3f &ptr, const cv::Vec3f &offset) = 0;
     //does the pointer location contain valid surface data

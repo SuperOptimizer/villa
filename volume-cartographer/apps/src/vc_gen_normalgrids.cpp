@@ -16,12 +16,11 @@
 #include <omp.h>
 
 #include <xtensor/containers/xarray.hpp>
-#include "z5/factory.hxx"
-#include "z5/filesystem/handle.hxx"
-#include "z5/common.hxx"
-#include "z5/multiarray/xtensor_access.hxx"
+#include <xtensor/containers/xtensor.hpp>
 
+#include "vc/core/types/VcDataset.hpp"
 #include "vc/core/util/Slicing.hpp"
+#include "vc/core/cache/SimpleCacheFactory.hpp"
 #include <vc/core/util/GridStore.hpp>
 #include "vc/core/util/Thinning.hpp"
 #include "support.hpp"
@@ -267,12 +266,7 @@ void run_generate(const po::variables_map& vm) {
     std::cout << "Input Zarr path: " << input_path << std::endl;
     std::cout << "Output directory: " << output_path << std::endl;
 
-    z5::filesystem::handle::Group group_handle(input_path);
-    std::unique_ptr<z5::Dataset> ds = z5::openDataset(group_handle, "0");
-    if (!ds) {
-        std::cerr << "Error: Could not open dataset '0' in volume '" << input_path << "'." << std::endl;
-        exit(1);
-    }
+    auto ds = std::make_unique<vc::VcDataset>(std::filesystem::path(input_path) / "0");
     auto shape = ds->shape();
 
     double spiral_step = vm["spiral-step"].as<double>();
@@ -295,41 +289,32 @@ void run_generate(const po::variables_map& vm) {
     std::ofstream o(output_fs_path / "metadata.json");
     o << std::setw(4) << metadata << std::endl;
 
-    ChunkCache<uint8_t> cache(10llu*1024*1024*1024);
+    auto cache = vc::cache::createSimpleTieredCache(ds.get(), 10llu*1024*1024*1024, ds->path());
 
     int num_threads = omp_get_max_threads();
     if (num_threads == 0) num_threads = 1;
     int chunk_size_tgt = num_threads * sparse_volume;
 
     size_t total_slices_all_dirs = shape[0] + shape[1] + shape[2];
-    size_t total_processed_all_dirs = 0;
-    size_t total_skipped_all_dirs = 0;
+    std::atomic<size_t> total_processed_all_dirs = 0;
+    std::atomic<size_t> total_skipped_all_dirs = 0;
 
     for (SliceDirection dir : {SliceDirection::XY, SliceDirection::XZ, SliceDirection::YZ}) {
-        size_t processed = 0;
-        size_t skipped = 0;
-        size_t total_size = 0;
-        size_t total_segments = 0;
-        size_t total_buckets = 0;
+        std::atomic<size_t> processed = 0;
+        std::atomic<size_t> skipped = 0;
+        std::atomic<size_t> total_size = 0;
+        std::atomic<size_t> total_segments = 0;
+        std::atomic<size_t> total_buckets = 0;
 
         struct TimingStats {
-            size_t count = 0;
-            double total_time = 0.0;
+            std::atomic<size_t> count;
+            std::atomic<double> total_time;
         };
-
-        struct ThreadSliceStats {
-            size_t processed = 0;
-            size_t skipped = 0;
-            size_t total_size = 0;
-            size_t total_segments = 0;
-            size_t total_buckets = 0;
-            std::unordered_map<std::string, TimingStats> timings;
-        };
-
         std::unordered_map<std::string, TimingStats> timings;
 
         auto last_report_time = std::chrono::steady_clock::now();
         auto start_time = std::chrono::steady_clock::now();
+        std::mutex report_mutex;
 
         size_t num_slices;
         std::string dir_str;
@@ -363,25 +348,6 @@ void run_generate(const po::variables_map& vm) {
                 processed += chunk_size;
                 total_processed_all_dirs += chunk_size;
                 total_skipped_all_dirs += chunk_size;
-
-                auto now = std::chrono::steady_clock::now();
-                if (std::chrono::duration_cast<std::chrono::seconds>(now - last_report_time).count() >= 1) {
-                    last_report_time = now;
-                    auto elapsed_seconds = std::chrono::duration_cast<std::chrono::duration<double>>(now - start_time).count();
-                    double slices_per_second = (processed > skipped) ? (processed - skipped) / elapsed_seconds : 0.0;
-                    if (slices_per_second == 0.0) slices_per_second = 1.0;
-                    double remaining_seconds = (total_slices_all_dirs - total_processed_all_dirs) / slices_per_second;
-
-                    int rem_min = static_cast<int>(remaining_seconds) / 60;
-                    int rem_sec = static_cast<int>(remaining_seconds) % 60;
-
-                    std::cout << dir_str << " " << processed << "/" << num_slices
-                              << " | Total " << total_processed_all_dirs << "/" << total_slices_all_dirs
-                              << " (" << std::fixed << std::setprecision(1)
-                              << (100.0 * total_processed_all_dirs / total_slices_all_dirs) << "%)"
-                              << ", skipped: " << skipped
-                              << ", ETA: " << rem_min << "m " << rem_sec << "s" << std::endl;
-                }
                 continue;
             }
 
@@ -409,7 +375,7 @@ void run_generate(const po::variables_map& vm) {
             xt::xtensor<uint8_t, 3, xt::layout_type::column_major> chunk_data =
                 xt::xtensor<uint8_t, 3, xt::layout_type::column_major>::from_shape(chunk_shape);
             chunk_timer.mark("xtensor init");
-            readArea3D(chunk_data, chunk_offset, ds.get(), &cache);
+            readArea3D(chunk_data, chunk_offset, cache.get(), 0);
             chunk_timer.mark("read_chunk");
 
             for (const auto& mark : chunk_timer.getMarks()) {
@@ -417,18 +383,15 @@ void run_generate(const po::variables_map& vm) {
                 timings[mark.first].total_time += mark.second;
             }
 
-            std::vector<ThreadSliceStats> thread_stats(static_cast<size_t>(num_threads));
-
             // Process slices in parallel from pre-loaded chunk
             #pragma omp parallel for schedule(dynamic)
             for (size_t i_chunk = 0; i_chunk < chunk_size; ++i_chunk) {
-                const int tid = omp_get_thread_num();
-                ThreadSliceStats& local_stats = thread_stats[static_cast<size_t>(tid)];
                 size_t i = chunk_start + i_chunk;
 
                 // Skip slices not in sparse sampling
                 if (i % sparse_volume != 0) {
-                    local_stats.processed++;
+                    processed++;
+                    total_processed_all_dirs++;
                     continue;
                 }
 
@@ -438,8 +401,10 @@ void run_generate(const po::variables_map& vm) {
                 std::string tmp_path = out_path + ".tmp";
 
                 if (fs::exists(out_path)) {
-                    local_stats.skipped++;
-                    local_stats.processed++;
+                    skipped++;
+                    processed++;
+                    total_processed_all_dirs++;
+                    total_skipped_all_dirs++;
                     continue;
                 }
 
@@ -477,7 +442,8 @@ void run_generate(const po::variables_map& vm) {
                 ALifeTime t;
                 if (cv::countNonZero(binary_slice) == 0) {
                     std::ofstream ofs(out_path); // Create empty file
-                    local_stats.processed++;
+                    processed++;
+                    total_processed_all_dirs++;
                 } else {
                     // Use customThinning for direct trace output
                     cv::Mat thinned_slice;
@@ -487,7 +453,8 @@ void run_generate(const po::variables_map& vm) {
 
                     if (traces.empty()) {
                         std::ofstream ofs(out_path); // Create empty file for empty traces
-                        local_stats.processed++;
+                        processed++;
+                        total_processed_all_dirs++;
                     } else {
                         vc::core::util::GridStore grid_store(cv::Rect(0, 0, slice_mat.cols, slice_mat.rows), grid_step);
                         populate_normal_grid(traces, grid_store, spiral_step);
@@ -505,77 +472,58 @@ void run_generate(const po::variables_map& vm) {
                         size_t num_buckets = grid_store.numNonEmptyBuckets();
 
                         for (const auto& mark : t.getMarks()) {
-                            local_stats.timings[mark.first].count++;
-                            local_stats.timings[mark.first].total_time += mark.second;
+                            timings[mark.first].count++;
+                            timings[mark.first].total_time += mark.second;
                         }
 
-                        local_stats.total_size += file_size;
-                        local_stats.total_segments += num_segments;
-                        local_stats.total_buckets += num_buckets;
-                        local_stats.processed++;
+                        total_size += file_size;
+                        total_segments += num_segments;
+                        total_buckets += num_buckets;
+                        processed++;
+                        total_processed_all_dirs++;
                     }
                 }
-            }
 
-            size_t chunk_processed = 0;
-            size_t chunk_skipped = 0;
-            size_t chunk_total_size = 0;
-            size_t chunk_total_segments = 0;
-            size_t chunk_total_buckets = 0;
-            for (const auto& local_stats : thread_stats) {
-                chunk_processed += local_stats.processed;
-                chunk_skipped += local_stats.skipped;
-                chunk_total_size += local_stats.total_size;
-                chunk_total_segments += local_stats.total_segments;
-                chunk_total_buckets += local_stats.total_buckets;
+                // Periodic status reporting
+                auto now = std::chrono::steady_clock::now();
+                if (std::chrono::duration_cast<std::chrono::seconds>(now - last_report_time).count() >= 1) {
+                    std::lock_guard<std::mutex> lock(report_mutex);
+                    if (std::chrono::duration_cast<std::chrono::seconds>(now - last_report_time).count() >= 1) {
+                        last_report_time = now;
+                        size_t p = processed;
+                        size_t s = skipped;
+                        size_t total_p = total_processed_all_dirs;
+                        auto elapsed_seconds = std::chrono::duration_cast<std::chrono::duration<double>>(now - start_time).count();
+                        double slices_per_second = (p > s) ? (p - s) / elapsed_seconds : 0.0;
+                        if (slices_per_second == 0) slices_per_second = 1;
+                        double remaining_seconds = (total_slices_all_dirs - total_p) / slices_per_second;
 
-                for (const auto& [key, val] : local_stats.timings) {
-                    timings[key].count += val.count;
-                    timings[key].total_time += val.total_time;
-                }
-            }
+                        int rem_min = static_cast<int>(remaining_seconds) / 60;
+                        int rem_sec = static_cast<int>(remaining_seconds) % 60;
 
-            processed += chunk_processed;
-            skipped += chunk_skipped;
-            total_size += chunk_total_size;
-            total_segments += chunk_total_segments;
-            total_buckets += chunk_total_buckets;
-            total_processed_all_dirs += chunk_processed;
-            total_skipped_all_dirs += chunk_skipped;
-
-            auto now = std::chrono::steady_clock::now();
-            if (std::chrono::duration_cast<std::chrono::seconds>(now - last_report_time).count() >= 1) {
-                last_report_time = now;
-                auto elapsed_seconds = std::chrono::duration_cast<std::chrono::duration<double>>(now - start_time).count();
-                double slices_per_second = (processed > skipped) ? (processed - skipped) / elapsed_seconds : 0.0;
-                if (slices_per_second == 0.0) slices_per_second = 1.0;
-                double remaining_seconds = (total_slices_all_dirs - total_processed_all_dirs) / slices_per_second;
-
-                int rem_min = static_cast<int>(remaining_seconds) / 60;
-                int rem_sec = static_cast<int>(remaining_seconds) % 60;
-
-                std::cout << dir_str << " " << processed << "/" << num_slices
-                          << " | Total " << total_processed_all_dirs << "/" << total_slices_all_dirs
-                          << " (" << std::fixed << std::setprecision(1)
-                          << (100.0 * total_processed_all_dirs / total_slices_all_dirs) << "%)"
-                          << ", skipped: " << skipped
-                          << ", ETA: " << rem_min << "m " << rem_sec << "s";
-                if (processed > skipped) {
-                    std::cout << ", avg size: " << (total_size / (processed - skipped))
-                              << ", avg segments: " << (total_segments / (processed - skipped))
-                              << ", avg buckets: " << (total_buckets / (processed - skipped));
-                }
-
-                for (const auto& [key, val] : timings) {
-                    if (val.count > 0) {
-                        double avg_time = val.total_time / static_cast<double>(val.count);
-                        if (key == "read_chunk") {
-                            avg_time /= num_threads;
+                        std::cout << dir_str << " " << p << "/" << num_slices
+                                  << " | Total " << total_p << "/" << total_slices_all_dirs
+                                  << " (" << std::fixed << std::setprecision(1) << (100.0 * total_p / total_slices_all_dirs) << "%)"
+                                  << ", skipped: " << s
+                                  << ", ETA: " << rem_min << "m " << rem_sec << "s";
+                        if (p > s) {
+                            std::cout << ", avg size: " << (total_size / (p - s))
+                                      << ", avg segments: " << (total_segments / (p - s))
+                                      << ", avg buckets: " << (total_buckets / (p - s));
                         }
-                        std::cout << ", avg " << key << ": " << avg_time << "s";
+
+                        for (const auto& [key, val] : timings) {
+                            if (val.count > 0) {
+                                double avg_time = val.total_time / val.count;
+                                if (key == "read_chunk") {
+                                    avg_time /= num_threads;
+                                }
+                                std::cout << ", avg " << key << ": " << avg_time << "s";
+                            }
+                        }
+                        std::cout << std::endl;
                     }
                 }
-                std::cout << std::endl;
             }
         }
     }

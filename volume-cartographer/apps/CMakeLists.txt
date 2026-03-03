@@ -8,10 +8,10 @@ add_subdirectory(VC3D)
 #################
 
 add_executable(vc_render_video src/vc_render_video.cpp)
-target_link_libraries(vc_render_video z5 opencv_core vc_core opencv_videoio)
+target_link_libraries(vc_render_video opencv_core vc_core opencv_videoio)
 
 add_executable(vc_render_tifxyz src/vc_render_tifxyz.cpp)
-target_link_libraries(vc_render_tifxyz vc_core vc_flattening Boost::program_options TIFF::TIFF)
+target_link_libraries(vc_render_tifxyz vc_core Boost::program_options TIFF::TIFF)
 
 add_executable(vc_objrefine src/ObjAlphaCompRefinement.cpp)
 target_link_libraries(vc_objrefine vc_core)
@@ -35,7 +35,7 @@ add_executable(vc_obj2tifxyz_legacy src/vc_obj2tifxyz_legacy.cpp)
 target_link_libraries(vc_obj2tifxyz_legacy vc_core)
 
 add_executable(vc_flatten src/vc_flatten.cpp)
-target_link_libraries(vc_flatten vc_core vc_flattening Boost::program_options)
+target_link_libraries(vc_flatten vc_core Boost::program_options)
 
 add_executable(vc_tifxyz_inp_mask src/vc_tifxyz_inp_mask.cpp)
 target_link_libraries(vc_tifxyz_inp_mask vc_core)
@@ -71,7 +71,6 @@ set(vc_diffuse_winding_sources
 add_executable(vc_diffuse_winding ${vc_diffuse_winding_sources})
 target_include_directories(vc_diffuse_winding PRIVATE diffusion)
 target_link_libraries(vc_diffuse_winding
-        z5
         opencv_videoio
         opencv_ximgproc
         vc_core
@@ -97,7 +96,6 @@ target_link_libraries(vc_visualize vc_core Boost::program_options)
 add_executable(vc_ced2d src/vc_ced2d.cpp)
 target_link_libraries(vc_ced2d
     vc_core
-    z5
     opencv_core
     opencv_imgcodecs
     opencv_imgproc
@@ -105,13 +103,12 @@ target_link_libraries(vc_ced2d
     OpenMP::OpenMP_CXX
 )
 
-# Apply affine + scale to OBJ, single TIFXYZ, or batch TIFXYZ subfolders
+# Apply affine + scale to OBJ or TIFXYZ
 add_executable(vc_transform_geom src/vc_transform_geom.cpp)
 target_link_libraries(vc_transform_geom vc_core Boost::program_options)
 
-
 add_executable(vc_gen_normalgrids src/vc_gen_normalgrids.cpp diffusion/support.cpp)
-target_link_libraries(vc_gen_normalgrids vc_core z5 Boost::program_options opencv_core opencv_imgproc opencv_ximgproc OpenMP::OpenMP_CXX Ceres::ceres)
+target_link_libraries(vc_gen_normalgrids vc_core Boost::program_options opencv_core opencv_imgproc opencv_ximgproc OpenMP::OpenMP_CXX Ceres::ceres)
 target_include_directories(vc_gen_normalgrids PRIVATE diffusion)
 
 # Read / visualize NormalGridVolume
@@ -188,4 +185,39 @@ if(VC_USE_PCH)
     )
         target_precompile_headers(${_app} REUSE_FROM vc_core)
     endforeach()
+endif()
+
+# Install targets
+if(VC_INSTALL_APPS)
+install(
+    TARGETS
+        vc_render_video
+        vc_render_tifxyz
+        vc_objrefine
+        vc_grow_seg_from_seed
+        vc_grow_seg_from_segments
+        vc_seg_add_overlap
+        vc_tifxyz2obj
+        vc_obj2tifxyz
+        vc_obj2tifxyz_legacy
+        vc_flatten
+        vc_tifxyz2rgb
+        vc_rgb2tifxyz
+        vc_tifxyz_winding
+        vc_tifxyz_gengt
+        vc_fill_quadmesh
+        vc_calc_surface_metrics
+        vc_diffuse_winding
+        vc_ced2d
+        vc_transform_geom
+        vc_gen_normalgrids
+        vc_ngrids
+        vc_telea_inpaint
+        vc_thinning
+        vc_tifxyz
+        vc_zarr_to_tiff
+        ${extra_apps}
+    RUNTIME DESTINATION bin
+    COMPONENT Programs
+)
 endif()

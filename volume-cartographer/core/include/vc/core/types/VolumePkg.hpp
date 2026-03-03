@@ -12,6 +12,7 @@
 #include <nlohmann/json.hpp>
 #include "vc/core/types/Segmentation.hpp"
 #include "vc/core/types/Volume.hpp"
+#include "vc/core/util/RemoteScroll.hpp"
 
 class VolumePkg
 {
@@ -19,6 +20,15 @@ public:
     explicit VolumePkg(const std::filesystem::path& fileLocation);
     ~VolumePkg();
     static std::shared_ptr<VolumePkg> New(const std::filesystem::path& fileLocation);
+
+    // Remote factories
+    static std::shared_ptr<VolumePkg> NewFromScrollInfo(
+        const vc::RemoteScrollInfo& scrollInfo,
+        const std::filesystem::path& cachePath);
+
+    static std::shared_ptr<VolumePkg> NewFromVolume(
+        std::shared_ptr<Volume> vol,
+        const std::filesystem::path& cachePath = {});
 
     [[nodiscard]] std::string name() const;
     [[nodiscard]] int version() const;
@@ -38,6 +48,8 @@ public:
     [[nodiscard]] std::vector<std::string> getAvailableSegmentationDirectories() const;
     [[nodiscard]] std::string getVolpkgDirectory() const;
 
+    [[nodiscard]] bool isRemote() const;
+
     void refreshSegmentations();
     static void setLoadFirstSegmentationDirectory(const std::string& dirName);
 
@@ -55,6 +67,12 @@ public:
     bool reloadSingleSegmentation(const std::string& id);
 
 private:
+    // Private remote constructors
+    VolumePkg(const vc::RemoteScrollInfo& scrollInfo,
+              const std::filesystem::path& cachePath);
+    VolumePkg(std::shared_ptr<Volume> vol,
+              const std::filesystem::path& cachePath);
+
     nlohmann::json config_;
     std::filesystem::path rootDir_;
     std::map<std::string, std::shared_ptr<Volume>> volumes_;
@@ -63,6 +81,8 @@ private:
     std::map<std::string, std::string> segmentationDirectories_;
     std::set<std::string> loadedSegmentationDirs_;
     static std::optional<std::string> loadFirstSegmentationDir_;
+
+    bool isRemote_ = false;
 
     void loadSegmentationsFromDirectory(const std::string& dirName);
     void ensureSegmentScrollSource();

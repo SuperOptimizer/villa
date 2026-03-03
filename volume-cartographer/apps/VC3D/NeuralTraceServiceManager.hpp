@@ -63,7 +63,6 @@ public:
     [[nodiscard]] QString currentCheckpointPath() const { return _currentCheckpointPath; }
     [[nodiscard]] QString currentVolumeZarr() const { return _currentVolumeZarr; }
     [[nodiscard]] int currentVolumeScale() const { return _currentVolumeScale; }
-    [[nodiscard]] QString currentPythonPath() const { return _currentPythonPath; }
 
 signals:
     /**
@@ -111,7 +110,6 @@ private:
     QString _currentCheckpointPath;
     QString _currentVolumeZarr;
     int _currentVolumeScale{0};
-    QString _currentPythonPath;
 
     bool _serviceReady{false};
 };

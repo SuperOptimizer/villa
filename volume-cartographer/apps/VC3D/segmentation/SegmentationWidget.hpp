@@ -8,7 +8,6 @@
 #include <utility>
 #include <vector>
 
-#include "SegmentationCommon.hpp"
 #include "SegmentationPushPullConfig.hpp"
 
 #include <nlohmann/json_fwd.hpp>
@@ -24,7 +23,6 @@ class SegmentationApprovalMaskPanel;
 class SegmentationCellReoptPanel;
 class SegmentationNeuralTracerPanel;
 class SegmentationDirectionFieldPanel;
-class SegmentationLasagnaPanel;
 
 class SegmentationWidget : public QWidget
 {
@@ -71,13 +69,6 @@ public:
     [[nodiscard]] QString volumeZarrPath() const;
     [[nodiscard]] int neuralVolumeScale() const;
     [[nodiscard]] int neuralBatchSize() const;
-    [[nodiscard]] NeuralTracerModelType neuralModelType() const;
-    [[nodiscard]] NeuralTracerOutputMode neuralOutputMode() const;
-    [[nodiscard]] DenseTtaMode denseTtaMode() const;
-    [[nodiscard]] QString denseTtaMergeMethod() const;
-    [[nodiscard]] double denseTtaOutlierDropThresh() const;
-    [[nodiscard]] QString denseCheckpointPath() const;
-    [[nodiscard]] QString copyCheckpointPath() const;
 
     void setPendingChanges(bool pending);
     void setEditingEnabled(bool enabled);
@@ -153,13 +144,6 @@ public:
     void setNeuralPythonPath(const QString& path);
     void setNeuralVolumeScale(int scale);
     void setNeuralBatchSize(int size);
-    void setNeuralModelType(NeuralTracerModelType type);
-    void setNeuralOutputMode(NeuralTracerOutputMode mode);
-    void setDenseTtaMode(DenseTtaMode mode);
-    void setDenseTtaMergeMethod(const QString& method);
-    void setDenseTtaOutlierDropThresh(double threshold);
-    void setDenseCheckpointPath(const QString& path);
-    void setCopyCheckpointPath(const QString& path);
 
     /**
      * Set the volume zarr path for neural tracing.
@@ -177,23 +161,6 @@ public:
     // Cell reoptimization setters
     void setCellReoptMode(bool enabled);
     void setCellReoptCollections(const QVector<QPair<uint64_t, QString>>& collections);
-
-    /** Returns the lasagna panel widget (for hosting in a separate dock). */
-    [[nodiscard]] SegmentationLasagnaPanel* lasagnaPanel() const { return _lasagnaPanel; }
-
-    // Lasagna getters — delegated to panel
-    [[nodiscard]] QString lasagnaDataInputPath() const;
-    [[nodiscard]] QString lasagnaConfigText() const;
-    [[nodiscard]] int lasagnaMode() const;
-    [[nodiscard]] int newModelWidth() const;
-    [[nodiscard]] int newModelHeight() const;
-    [[nodiscard]] int newModelDepth() const;
-    [[nodiscard]] QString seedPointText() const;
-    [[nodiscard]] QString newModelOutputName() const;
-
-    // Lasagna setters
-    void setLasagnaDataInputPath(const QString& path);
-    void setSeedFromFocus(int x, int y, int z);
 
 signals:
     void editingModeChanged(bool enabled);
@@ -239,13 +206,6 @@ signals:
     // Neural tracer signals
     void neuralTracerEnabledChanged(bool enabled);
     void neuralTracerStatusMessage(const QString& message);
-    void copyWithNtRequested();
-
-    // Lasagna signals
-    void lasagnaOptimizeRequested();
-    void lasagnaStopRequested();
-    void lasagnaStatusMessage(const QString& message);
-    void seedFromFocusRequested();
 
     // Cell reoptimization signals
     void cellReoptModeChanged(bool enabled);
@@ -276,6 +236,5 @@ private:
     SegmentationCellReoptPanel* _cellReoptPanel{nullptr};
     SegmentationNeuralTracerPanel* _neuralTracerPanel{nullptr};
     SegmentationDirectionFieldPanel* _directionFieldPanel{nullptr};
-    SegmentationLasagnaPanel* _lasagnaPanel{nullptr};
 
 };

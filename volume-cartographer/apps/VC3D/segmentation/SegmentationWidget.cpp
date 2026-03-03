@@ -10,7 +10,6 @@
 #include "panels/SegmentationCellReoptPanel.hpp"
 #include "panels/SegmentationNeuralTracerPanel.hpp"
 #include "panels/SegmentationDirectionFieldPanel.hpp"
-#include "panels/SegmentationLasagnaPanel.hpp"
 #include "VCSettings.hpp"
 
 #include <QSettings>
@@ -55,8 +54,6 @@ void SegmentationWidget::buildUi()
 
     _neuralTracerPanel = new SegmentationNeuralTracerPanel(QStringLiteral("segmentation_edit"), this);
     layout->addWidget(_neuralTracerPanel);
-
-    _lasagnaPanel = new SegmentationLasagnaPanel(QStringLiteral("segmentation_edit"), this);
 
     _correctionsPanel = new SegmentationCorrectionsPanel(QStringLiteral("segmentation_edit"), this);
     layout->addWidget(_correctionsPanel);
@@ -168,18 +165,6 @@ void SegmentationWidget::buildUi()
             this, &SegmentationWidget::neuralTracerEnabledChanged);
     connect(_neuralTracerPanel, &SegmentationNeuralTracerPanel::neuralTracerStatusMessage,
             this, &SegmentationWidget::neuralTracerStatusMessage);
-    connect(_neuralTracerPanel, &SegmentationNeuralTracerPanel::copyWithNtRequested,
-            this, &SegmentationWidget::copyWithNtRequested);
-
-    // Forward lasagna panel signals
-    connect(_lasagnaPanel, &SegmentationLasagnaPanel::lasagnaOptimizeRequested,
-            this, &SegmentationWidget::lasagnaOptimizeRequested);
-    connect(_lasagnaPanel, &SegmentationLasagnaPanel::lasagnaStopRequested,
-            this, &SegmentationWidget::lasagnaStopRequested);
-    connect(_lasagnaPanel, &SegmentationLasagnaPanel::lasagnaStatusMessage,
-            this, &SegmentationWidget::lasagnaStatusMessage);
-    connect(_lasagnaPanel, &SegmentationLasagnaPanel::seedFromFocusRequested,
-            this, &SegmentationWidget::seedFromFocusRequested);
 }
 
 void SegmentationWidget::syncUiState()
@@ -201,8 +186,6 @@ void SegmentationWidget::syncUiState()
     _correctionsPanel->syncUiState(_editingEnabled, _growthInProgress);
     _approvalMaskPanel->syncUiState();
     _cellReoptPanel->syncUiState(_approvalMaskPanel->showApprovalMask(), _growthInProgress);
-    _neuralTracerPanel->syncUiState();
-    _lasagnaPanel->syncUiState(_editingEnabled, false);
 }
 
 void SegmentationWidget::restoreSettings()
@@ -221,7 +204,6 @@ void SegmentationWidget::restoreSettings()
     _approvalMaskPanel->restoreSettings(settings);
     _neuralTracerPanel->restoreSettings(settings);
     _cellReoptPanel->restoreSettings(settings);
-    _lasagnaPanel->restoreSettings(settings);
 
     settings.endGroup();
     _restoringSettings = false;
@@ -402,40 +384,12 @@ QString SegmentationWidget::neuralPythonPath() const { return _neuralTracerPanel
 QString SegmentationWidget::volumeZarrPath() const { return _neuralTracerPanel->volumeZarrPath(); }
 int SegmentationWidget::neuralVolumeScale() const { return _neuralTracerPanel->neuralVolumeScale(); }
 int SegmentationWidget::neuralBatchSize() const { return _neuralTracerPanel->neuralBatchSize(); }
-NeuralTracerModelType SegmentationWidget::neuralModelType() const { return _neuralTracerPanel->neuralModelType(); }
-NeuralTracerOutputMode SegmentationWidget::neuralOutputMode() const { return _neuralTracerPanel->neuralOutputMode(); }
-DenseTtaMode SegmentationWidget::denseTtaMode() const { return _neuralTracerPanel->denseTtaMode(); }
-QString SegmentationWidget::denseTtaMergeMethod() const { return _neuralTracerPanel->denseTtaMergeMethod(); }
-double SegmentationWidget::denseTtaOutlierDropThresh() const { return _neuralTracerPanel->denseTtaOutlierDropThresh(); }
-QString SegmentationWidget::denseCheckpointPath() const { return _neuralTracerPanel->denseCheckpointPath(); }
-QString SegmentationWidget::copyCheckpointPath() const { return _neuralTracerPanel->copyCheckpointPath(); }
 
 void SegmentationWidget::setNeuralTracerEnabled(bool enabled) { _neuralTracerPanel->setNeuralTracerEnabled(enabled); }
 void SegmentationWidget::setNeuralCheckpointPath(const QString& path) { _neuralTracerPanel->setNeuralCheckpointPath(path); }
 void SegmentationWidget::setNeuralPythonPath(const QString& path) { _neuralTracerPanel->setNeuralPythonPath(path); }
 void SegmentationWidget::setNeuralVolumeScale(int scale) { _neuralTracerPanel->setNeuralVolumeScale(scale); }
 void SegmentationWidget::setNeuralBatchSize(int size) { _neuralTracerPanel->setNeuralBatchSize(size); }
-void SegmentationWidget::setNeuralModelType(NeuralTracerModelType type) { _neuralTracerPanel->setNeuralModelType(type); }
-void SegmentationWidget::setNeuralOutputMode(NeuralTracerOutputMode mode) { _neuralTracerPanel->setNeuralOutputMode(mode); }
-void SegmentationWidget::setDenseTtaMode(DenseTtaMode mode) { _neuralTracerPanel->setDenseTtaMode(mode); }
-void SegmentationWidget::setDenseTtaMergeMethod(const QString& method) { _neuralTracerPanel->setDenseTtaMergeMethod(method); }
-void SegmentationWidget::setDenseTtaOutlierDropThresh(double threshold) { _neuralTracerPanel->setDenseTtaOutlierDropThresh(threshold); }
-void SegmentationWidget::setDenseCheckpointPath(const QString& path) { _neuralTracerPanel->setDenseCheckpointPath(path); }
-void SegmentationWidget::setCopyCheckpointPath(const QString& path) { _neuralTracerPanel->setCopyCheckpointPath(path); }
 void SegmentationWidget::setVolumeZarrPath(const QString& path) { _neuralTracerPanel->setVolumeZarrPath(path); }
 
 void SegmentationWidget::setEraseBrushActive(bool /*active*/) {}
-
-// --- Lasagna delegations ---
-
-QString SegmentationWidget::lasagnaDataInputPath() const { return _lasagnaPanel->lasagnaDataInputPath(); }
-QString SegmentationWidget::lasagnaConfigText() const { return _lasagnaPanel->lasagnaConfigText(); }
-int SegmentationWidget::lasagnaMode() const { return static_cast<int>(_lasagnaPanel->lasagnaMode()); }
-int SegmentationWidget::newModelWidth() const { return _lasagnaPanel->newModelWidth(); }
-int SegmentationWidget::newModelHeight() const { return _lasagnaPanel->newModelHeight(); }
-int SegmentationWidget::newModelDepth() const { return _lasagnaPanel->newModelDepth(); }
-QString SegmentationWidget::seedPointText() const { return _lasagnaPanel->seedPointText(); }
-QString SegmentationWidget::newModelOutputName() const { return _lasagnaPanel->newModelOutputName(); }
-
-void SegmentationWidget::setLasagnaDataInputPath(const QString& path) { _lasagnaPanel->setLasagnaDataInputPath(path); }
-void SegmentationWidget::setSeedFromFocus(int x, int y, int z) { _lasagnaPanel->setSeedFromFocus(x, y, z); }

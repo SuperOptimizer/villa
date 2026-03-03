@@ -3,9 +3,9 @@
 #include "vc/core/util/QuadSurface.hpp"
 #include "vc/core/util/Slicing.hpp"
 #include "vc/core/util/Surface.hpp"
-#include "vc/tracer/SurfaceModeling.hpp"
+#include "vc/core/util/SurfaceModeling.hpp"
 
-#include "z5/factory.hxx"
+#include "vc/core/types/VcDataset.hpp"
 #include <nlohmann/json.hpp>
 
 #include <opencv2/imgcodecs.hpp>
@@ -246,15 +246,15 @@ struct SampledZNormalLoss {
         T dot;
         dot = v[0]*n[0] + v[1]*n[1] + v[2]*n[2];
         
-        T la_sq = v[0]*v[0] + v[1]*v[1] + v[2]*v[2];
-        T lb_sq = n[0]*n[0] + n[1]*n[1] + n[2]*n[2];
+        T la = sqrt(v[0]*v[0] + v[1]*v[1] + v[2]*v[2]);
+        T lb = sqrt(n[0]*n[0] + n[1]*n[1] + n[2]*n[2]);
         
-        if (la_sq <= 0.0 || lb_sq <= 0.0) {
+        if (la <= 0.0 || lb <= 0.0) {
             residual[0] = T(0);
             return true;
         }
-
-        residual[0] = T(_w)*dot/(sqrt(la_sq) * sqrt(lb_sq));
+        
+        residual[0] = T(_w)*dot/(la*lb);
         
         return true;
     }
@@ -819,7 +819,7 @@ int main(int argc, char *argv[])
                     continue;
                 
                 
-                cv::Vec3f ptr = surfs[i]->pointer();
+                cv::Vec3f ptr(0, 0, 0);
                 float res = surfs[i]->pointTo(ptr, surf_points[0](p), 2.0);
                 
                 if (res < 0 || res >= 2)

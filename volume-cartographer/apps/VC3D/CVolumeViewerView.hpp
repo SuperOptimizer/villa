@@ -21,6 +21,7 @@ public:
     void setVoxelSize(double sx, double sy) { m_vx = sx; m_vy = sy; update(); }
     void setMiddleButtonPanEnabled(bool enabled) { _middleButtonPanEnabled = enabled; }
     bool middleButtonPanEnabled() const { return _middleButtonPanEnabled; }
+    void setScrollPanDisabled(bool disabled) { _scrollPanDisabled = disabled; }
 
 signals:
     void sendResized();
@@ -49,4 +50,5 @@ protected:
     // µm per scene-unit (pixel)  
     double m_vx = 32.0, m_vy = 32.0;
     bool _middleButtonPanEnabled = true;
+    bool _scrollPanDisabled = false;
 };

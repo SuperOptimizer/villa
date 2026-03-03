@@ -10,7 +10,6 @@ add_library(vc_core
         src/SurfacePatchIndex.cpp
         src/PointIndex.cpp
         src/Logging.cpp
-        src/ChunkCache.cpp
         src/Slicing.cpp
         src/Compositing.cpp
         src/PlaneSurface.cpp
@@ -18,21 +17,23 @@ add_library(vc_core
         src/Render.cpp
         src/Tiff.cpp
         src/Zarr.cpp
-        src/VcDataset.cpp
+        src/NetworkFilesystem.cpp
         src/cache/ChunkSource.cpp
         src/cache/DiskStore.cpp
-        src/cache/HttpMetadataFetcher.cpp
         src/cache/IOPool.cpp
         src/cache/TieredChunkCache.cpp
         src/cache/VcDecompressor.cpp
         src/cache/SimpleCacheFactory.cpp
-        src/NetworkFilesystem.cpp
+        src/VcDataset.cpp
+        src/cache/HttpMetadataFetcher.cpp
         src/RemoteUrl.cpp
+        src/RemoteScroll.cpp
         src/CoordGrid.cpp
         src/PostProcess.cpp
         src/Geometry.cpp
         src/Thinning.cpp
         src/Umbilicus.cpp
+        src/ABFFlattening.cpp
         ${CMAKE_CURRENT_BINARY_DIR}/Version.cpp
 )
 
@@ -44,25 +45,29 @@ target_link_libraries(vc_core
         opencv_calib3d
         opencv_video
         nlohmann_json::nlohmann_json
-        z5
+        xtensor
         OpenMP::OpenMP_CXX
         TIFF::TIFF
+        OpenABF
         CURL::libcurl
 )
 
-# Enable curl-backed HTTP cache code
-target_compile_definitions(vc_core PUBLIC VC_USE_CURL)
-
-# VcDataset dependencies
-target_link_libraries(vc_core PRIVATE blosc_static utils)
-
-# c-blosc internal headers (zstd, lz4, zlib) for VcDataset decompression
-target_include_directories(vc_core PRIVATE
-    ${c-blosc_SOURCE_DIR}/blosc
-    ${c-blosc_SOURCE_DIR}/internal-complibs/zstd-1.5.5
-    ${c-blosc_SOURCE_DIR}/internal-complibs/lz4-1.9.4
-    ${c-blosc_SOURCE_DIR}/internal-complibs/zlib-1.2.13
+# utils header-only library + vendored blosc1 compression
+target_link_libraries(vc_core PUBLIC
+    $<BUILD_INTERFACE:utils>
 )
+target_link_libraries(vc_core PRIVATE
+    $<BUILD_INTERFACE:blosc_static>
+)
+target_include_directories(vc_core PRIVATE
+    ${CMAKE_SOURCE_DIR}/libs/c-blosc/blosc
+    ${CMAKE_BINARY_DIR}/libs/c-blosc/blosc
+    ${CMAKE_SOURCE_DIR}/libs/c-blosc/internal-complibs/zstd-1.5.6
+    ${CMAKE_SOURCE_DIR}/libs/c-blosc/internal-complibs/lz4-1.10.0
+    ${CMAKE_SOURCE_DIR}/libs/c-blosc/internal-complibs/zlib-1.3.1
+)
+
+target_compile_definitions(vc_core PUBLIC VC_USE_CURL)
 
 # Precompiled headers for faster builds
 if(VC_USE_PCH)
@@ -119,19 +124,16 @@ target_precompile_headers(vc_core PRIVATE
     <opencv2/core/mat.hpp>
     <opencv2/imgproc.hpp>
     <opencv2/imgcodecs.hpp>
+    # Eigen (used by Ceres)
+    <Eigen/Core>
+    <Eigen/Dense>
     # Boost (used by CLI apps)
     <boost/program_options.hpp>
-    # z5/xtensor (zarr volume access - heavy templates)
+    # xtensor (chunk buffer type - heavy templates)
     <xtensor/containers/xarray.hpp>
     <xtensor/containers/xadapt.hpp>
     <xtensor/views/xview.hpp>
     <xtensor/generators/xbuilder.hpp>
-    <z5/factory.hxx>
-    <z5/dataset.hxx>
-    <z5/attributes.hxx>
-    <z5/filesystem/handle.hxx>
-    <z5/filesystem/dataset.hxx>
-    <z5/multiarray/xtensor_access.hxx>
 )
 endif()
 
@@ -142,9 +144,6 @@ if(VC_USE_PCH)
     target_precompile_headers(vc_ui REUSE_FROM vc_core)
 endif()
 
-add_library(vc_flattening src/ABFFlattening.cpp)
-target_link_libraries(vc_flattening PUBLIC vc_core OpenABF)
-
 add_library(vc_tracer src/GrowPatch.cpp src/GrowSurface.cpp src/NeuralTracerConnection.cpp src/ChunkedTensor.cpp)
 target_link_libraries(vc_tracer PUBLIC vc_core vc_ui Ceres::ceres Qt6::Core)
 target_include_directories(vc_tracer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../libs/edt)
@@ -152,3 +151,31 @@ if(VC_USE_PCH)
     target_precompile_headers(vc_tracer REUSE_FROM vc_core)
 endif()
 
+if(VC_INSTALL_LIBS)
+    install(
+            TARGETS vc_core
+            COMPONENT "Libraries"
+            EXPORT "${targets_export_name}"
+            ARCHIVE DESTINATION "lib"
+            LIBRARY DESTINATION "lib"
+            INCLUDES DESTINATION "${include_install_dir}"
+            RUNTIME DESTINATION "bin"
+    )
+
+    install(
+            TARGETS vc_ui
+            COMPONENT "Libraries"
+            EXPORT "${targets_export_name}"
+            ARCHIVE DESTINATION "lib"
+            LIBRARY DESTINATION "lib"
+            INCLUDES DESTINATION "${include_install_dir}"
+            RUNTIME DESTINATION "bin"
+    )
+
+    install(
+            DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/include/"
+            DESTINATION "${include_install_dir}"
+            COMPONENT "Libraries"
+            FILES_MATCHING REGEX ".*\\.(h|hpp)$"
+    )
+endif()

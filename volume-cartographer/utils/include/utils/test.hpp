@@ -5,8 +5,8 @@
 #include <functional>
 #include <source_location>
 #include <format>
+#include <print>
 #include <chrono>
-#include <cstdio>
 #include <cstdlib>
 #include <cmath>
 #include <concepts>
@@ -18,22 +18,6 @@
 #include <atomic>
 
 namespace utils::test {
-
-// ---------------------------------------------------------------------------
-// Portable println (std::print/println requires libstdc++ 14+)
-// ---------------------------------------------------------------------------
-
-template<typename... Args>
-void println(std::FILE* f, std::format_string<Args...> fmt, Args&&... args) {
-    auto s = std::format(fmt, std::forward<Args>(args)...);
-    std::fwrite(s.data(), 1, s.size(), f);
-    std::fputc('\n', f);
-}
-
-template<typename... Args>
-void println(std::format_string<Args...> fmt, Args&&... args) {
-    println(stdout, fmt, std::forward<Args>(args)...);
-}
 
 // ---------------------------------------------------------------------------
 // Concepts
@@ -113,13 +97,13 @@ inline void fail_assert(const char* expr,
                         std::string_view rhs,
                         std::source_location loc) {
     ctx().current_failed = true;
-    println(stderr, "    {}{}:{}{}: {}REQUIRE/CHECK({}) failed{}",
+    std::println(stderr, "    {}{}:{}{}: {}REQUIRE/CHECK({}) failed{}",
                  col(color::bold), loc.file_name(), col(color::reset),
                  loc.line(),
                  col(color::red), expr, col(color::reset));
     if (!lhs.empty() || !rhs.empty()) {
-        println(stderr, "      lhs = {}", lhs);
-        println(stderr, "      rhs = {}", rhs);
+        std::println(stderr, "      lhs = {}", lhs);
+        std::println(stderr, "      rhs = {}", rhs);
     }
 }
 
@@ -132,7 +116,7 @@ void fail_cmp(const char* expr, const A& a, const B& b,
 inline void pass_assert(const char* expr, std::source_location loc) {
     ctx().checks++;
     if (ctx().verbose) {
-        println("    {}PASS{}: {} ({}:{})",
+        std::println("    {}PASS{}: {} ({}:{})",
                      col(color::green), col(color::reset),
                      expr, loc.file_name(), loc.line());
     }
@@ -170,7 +154,7 @@ inline int run_all(int argc = 0, const char** argv = nullptr) {
             c.verbose = true;
         } else if (arg == "--list") {
             for (auto& tc : registry())
-                println("{}", tc.name);
+                std::println("{}", tc.name);
             return 0;
         }
     }
@@ -184,14 +168,14 @@ inline int run_all(int argc = 0, const char** argv = nullptr) {
         }
     }
 
-    println("{}[==========]{} Running {} test{}",
+    std::println("{}[==========]{} Running {} test{}",
                  col(color::bold), col(color::reset),
                  to_run.size(), to_run.size() == 1 ? "" : "s");
 
     auto wall_start = std::chrono::high_resolution_clock::now();
 
     for (auto* tc : to_run) {
-        println("{}[ RUN      ]{} {}", col(color::green), col(color::reset), tc->name);
+        std::println("{}[ RUN      ]{} {}", col(color::green), col(color::reset), tc->name);
         c.current_failed = false;
         auto t0 = std::chrono::high_resolution_clock::now();
 
@@ -201,10 +185,10 @@ inline int run_all(int argc = 0, const char** argv = nullptr) {
             // Fatal assertion -- already recorded
         } catch (const std::exception& e) {
             c.current_failed = true;
-            println(stderr, "    {}Unhandled exception{}: {}", col(color::red), col(color::reset), e.what());
+            std::println(stderr, "    {}Unhandled exception{}: {}", col(color::red), col(color::reset), e.what());
         } catch (...) {
             c.current_failed = true;
-            println(stderr, "    {}Unhandled unknown exception{}", col(color::red), col(color::reset));
+            std::println(stderr, "    {}Unhandled unknown exception{}", col(color::red), col(color::reset));
         }
 
         auto t1 = std::chrono::high_resolution_clock::now();
@@ -212,10 +196,10 @@ inline int run_all(int argc = 0, const char** argv = nullptr) {
 
         if (c.current_failed) {
             c.failed++;
-            println("{}[  FAILED  ]{} {} ({:.1f}ms)", col(color::red), col(color::reset), tc->name, ms);
+            std::println("{}[  FAILED  ]{} {} ({:.1f}ms)", col(color::red), col(color::reset), tc->name, ms);
         } else {
             c.passed++;
-            println("{}[       OK ]{} {} ({:.1f}ms)", col(color::green), col(color::reset), tc->name, ms);
+            std::println("{}[       OK ]{} {} ({:.1f}ms)", col(color::green), col(color::reset), tc->name, ms);
         }
     }
 
@@ -224,7 +208,7 @@ inline int run_all(int argc = 0, const char** argv = nullptr) {
 
     const int p = c.passed.load();
     const int f = c.failed.load();
-    println("{}[==========]{} {}{} passed{}, {}{} failed{} ({:.1f}ms total)",
+    std::println("{}[==========]{} {}{} passed{}, {}{} failed{} ({:.1f}ms total)",
                  col(color::bold), col(color::reset),
                  col(color::green), p, col(color::reset),
                  f ? col(color::red) : col(color::green), f, col(color::reset),
@@ -290,7 +274,7 @@ inline int run_all(int argc = 0, const char** argv = nullptr) {
 
 #define SECTION(sname)                                                         \
     if (::utils::test::ctx().verbose)                                         \
-        ::utils::test::println("  {}-- {}{}", ::utils::test::col(::utils::test::color::yellow), sname, \
+        std::println("  {}-- {}{}", ::utils::test::col(::utils::test::color::yellow), sname, \
                      ::utils::test::col(::utils::test::color::reset));       \
     if (true)
 
@@ -420,7 +404,7 @@ inline int run_all(int argc = 0, const char** argv = nullptr) {
         auto _utils_bend = std::chrono::high_resolution_clock::now();          \
         double _utils2_ns = std::chrono::duration<double, std::nano>(           \
             _utils_bend - _utils_bstart).count();                             \
-        ::utils::test::println("    {}BENCH{} {}: {:.1f} ns/op",               \
+        std::println("    {}BENCH{} {}: {:.1f} ns/op",                         \
             ::utils::test::col(::utils::test::color::yellow),                 \
             ::utils::test::col(::utils::test::color::reset),                  \
             bname, _utils2_ns / static_cast<double>(iterations));               \
@@ -440,7 +424,7 @@ inline int run_all(int argc = 0, const char** argv = nullptr) {
         auto _utils_bend = std::chrono::high_resolution_clock::now();          \
         double _utils2_ns = std::chrono::duration<double, std::nano>(           \
             _utils_bend - _utils_bstart).count();                             \
-        ::utils::test::println("    {}BENCH{}: {:.1f} ns/op",                  \
+        std::println("    {}BENCH{}: {:.1f} ns/op",                            \
             ::utils::test::col(::utils::test::color::yellow),                 \
             ::utils::test::col(::utils::test::color::reset),                  \
             _utils2_ns / static_cast<double>(_utils2_i));                       \

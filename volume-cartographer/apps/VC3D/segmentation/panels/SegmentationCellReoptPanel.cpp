@@ -163,13 +163,6 @@ SegmentationCellReoptPanel::SegmentationCellReoptPanel(const QString& settingsGr
         }
         emit cellReoptGrowthRequested(collectionId);
     });
-
-    connect(_groupCellReopt, &CollapsibleSettingsGroup::toggled, this, [this](bool expanded) {
-        if (_restoringSettings) {
-            return;
-        }
-        writeSetting(vc3d::settings::segmentation::GROUP_CELL_REOPT_EXPANDED, expanded);
-    });
 }
 
 void SegmentationCellReoptPanel::writeSetting(const QString& key, const QVariant& value)
@@ -231,8 +224,6 @@ void SegmentationCellReoptPanel::setCellReoptCollections(const QVector<QPair<uin
 
 void SegmentationCellReoptPanel::restoreSettings(QSettings& settings)
 {
-    using namespace vc3d::settings;
-
     _restoringSettings = true;
 
     _cellReoptMaxSteps = settings.value(QStringLiteral("cell_reopt_max_steps"), _cellReoptMaxSteps).toInt();
@@ -243,11 +234,6 @@ void SegmentationCellReoptPanel::restoreSettings(QSettings& settings)
     _cellReoptMinSpacing = std::clamp(_cellReoptMinSpacing, 1.0f, 50.0f);
     _cellReoptPerimeterOffset = settings.value(QStringLiteral("cell_reopt_perimeter_offset"), static_cast<double>(_cellReoptPerimeterOffset)).toFloat();
     _cellReoptPerimeterOffset = std::clamp(_cellReoptPerimeterOffset, -50.0f, 50.0f);
-    const bool cellReoptExpanded = settings.value(segmentation::GROUP_CELL_REOPT_EXPANDED,
-                                                  segmentation::GROUP_CELL_REOPT_EXPANDED_DEFAULT).toBool();
-    if (_groupCellReopt) {
-        _groupCellReopt->setExpanded(cellReoptExpanded);
-    }
     // Don't restore cell reopt mode - user must explicitly enable each session
 
     _restoringSettings = false;

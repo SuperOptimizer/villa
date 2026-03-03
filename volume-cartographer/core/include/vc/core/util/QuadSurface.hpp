@@ -13,10 +13,6 @@
 #include "Surface.hpp"
 #include "Tiff.hpp"
 
-// Forward declarations
-template<typename T>
-class ChunkCache;
-
 // Surface loading and channel flags
 #define SURF_LOAD_IGNORE_MASK 1
 #define SURF_CHANNEL_NORESIZE 1
@@ -273,7 +269,6 @@ private:
 class QuadSurface : public Surface
 {
 public:
-    cv::Vec3f pointer() override;
     QuadSurface() = default;
     // points will be cloned in constructor
     QuadSurface(const cv::Mat_<cv::Vec3f> &points, const cv::Vec2f &scale);
@@ -310,6 +305,8 @@ public:
     void save(const std::filesystem::path &path, bool force_overwrite = false);
     void save_meta();
     Rect3D bbox();
+
+    bool isLoaded() const { return !_needsLoad; }
 
     virtual cv::Mat_<cv::Vec3f> rawPoints() { ensureLoaded(); return *_points; }
     virtual cv::Mat_<cv::Vec3f> *rawPointsPtr() { ensureLoaded(); return _points.get(); }
