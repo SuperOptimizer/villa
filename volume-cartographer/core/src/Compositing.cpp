@@ -33,9 +33,17 @@ float min(const LayerStack& stack)
 float alpha(const LayerStack& stack, const CompositeParams& params)
 {
     if (stack.validCount == 0) return 0.0f;
-    return utils::composite_alpha(
-        std::span<const float>(stack.values.data(), stack.validCount),
+
+    // Layer values are 0-255 but alphaMin/alphaMax are normalized 0-1.
+    // Normalize layers to [0,1] before passing to utils, then scale back.
+    std::array<float, 256> normalized;
+    for (int i = 0; i < stack.validCount; i++)
+        normalized[i] = stack.values[i] / 255.0f;
+
+    float result = utils::composite_alpha(
+        std::span<const float>(normalized.data(), stack.validCount),
         params.alphaMin, params.alphaMax, params.alphaOpacity, params.alphaCutoff);
+    return result * 255.0f;
 }
 
 float beerLambert(const LayerStack& stack, const CompositeParams& params)

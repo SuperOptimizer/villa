@@ -527,12 +527,11 @@ void SurfacePatchIndex::rebuild(const std::vector<SurfacePtr>& surfaces, float b
     impl_->surfaceRecords.clear();
     impl_->patchCount = 0;
 
-    // Skip surfaces whose TIFF data hasn't been loaded yet.
-    // They'll be added incrementally via addSurface() when loaded.
+    // Filter out null surfaces.
     std::vector<SurfacePtr> loaded;
     loaded.reserve(surfaces.size());
     for (const auto& s : surfaces) {
-        if (s && s->isLoaded()) {
+        if (s) {
             loaded.push_back(s);
         }
     }
