@@ -27,6 +27,7 @@
 #include <QApplication>
 #include <QClipboard>
 #include <QFutureWatcher>
+#include <QUnhandledException>
 #include <QInputDialog>
 #include <QtConcurrent>
 #include <QDateTime>
@@ -593,6 +594,37 @@ void MenuActionController::openRemoteUrl(const QString& url)
     }
 }
 
+// Helper: extract the real error message from a QFuture exception.
+// Qt wraps task exceptions in QUnhandledException whose what() returns
+// "std::exception" — useless.  Unwrap to get the original message.
+static QString extractExceptionMessage(const std::exception& e)
+{
+    // Try to unwrap QUnhandledException
+    if (auto* unhandled = dynamic_cast<const QUnhandledException*>(&e)) {
+        auto ptr = unhandled->exception();
+        if (ptr) {
+            try {
+                std::rethrow_exception(ptr);
+            } catch (const std::exception& inner) {
+                return QString::fromStdString(inner.what());
+            } catch (...) {
+                return QObject::tr("Unknown error (non-std::exception)");
+            }
+        }
+    }
+    return QString::fromStdString(e.what());
+}
+
+// Check if an error message looks like an auth/credentials issue
+static bool isAuthError(const QString& msg)
+{
+    return msg.contains("Access denied", Qt::CaseInsensitive) ||
+           msg.contains("403", Qt::CaseInsensitive) ||
+           msg.contains("401", Qt::CaseInsensitive) ||
+           msg.contains("credential", Qt::CaseInsensitive) ||
+           msg.contains("Forbidden", Qt::CaseInsensitive);
+}
+
 void MenuActionController::openRemoteZarr(
     const std::string& httpsUrl,
     const vc::cache::HttpAuth& auth,
@@ -601,7 +633,7 @@ void MenuActionController::openRemoteZarr(
     auto* watcher = new QFutureWatcher<std::shared_ptr<Volume>>(this);
 
     connect(watcher, &QFutureWatcher<std::shared_ptr<Volume>>::finished, this,
-        [this, watcher]() {
+        [this, watcher, httpsUrl, cachePath]() {
             watcher->deleteLater();
             _openRemoteAct->setEnabled(true);
 
@@ -618,12 +650,40 @@ void MenuActionController::openRemoteZarr(
                         5000);
                 }
             } catch (const std::exception& e) {
-                QMessageBox::critical(
-                    _window,
-                    QObject::tr("Remote Volume Error"),
-                    QObject::tr("Failed to open remote volume:\n%1").arg(e.what()));
+                QString msg = extractExceptionMessage(e);
+
                 if (_window->statusBar()) {
                     _window->statusBar()->clearMessage();
+                }
+
+                // If it looks like an auth error, offer to re-enter credentials
+                if (isAuthError(msg)) {
+                    // Clear stale saved credentials
+                    QSettings settings(vc3d::settingsFilePath(), QSettings::IniFormat);
+                    settings.remove(vc3d::settings::aws::ACCESS_KEY);
+                    settings.remove(vc3d::settings::aws::SECRET_KEY);
+                    settings.remove(vc3d::settings::aws::SESSION_TOKEN);
+
+                    auto reply = QMessageBox::warning(
+                        _window,
+                        QObject::tr("Authentication Error"),
+                        QObject::tr("Failed to open remote volume:\n%1\n\n"
+                                    "Would you like to enter new AWS credentials and retry?").arg(msg),
+                        QMessageBox::Yes | QMessageBox::No);
+
+                    if (reply == QMessageBox::Yes) {
+                        // Re-prompt for credentials by calling openRemoteUrl again
+                        // which will detect missing saved creds and prompt
+                        QString defaultCache = QDir::homePath() + "/.VC3D/remote_cache";
+                        _openRemoteAct->setEnabled(false);
+                        openRemoteUrl(QString::fromStdString(httpsUrl));
+                        return;
+                    }
+                } else {
+                    QMessageBox::critical(
+                        _window,
+                        QObject::tr("Remote Volume Error"),
+                        QObject::tr("Failed to open remote volume:\n%1").arg(msg));
                 }
             }
         });
