@@ -259,6 +259,9 @@ public:
     // GET with byte range
     [[nodiscard]] HttpResponse get_range(std::string_view url,
                                           std::size_t offset, std::size_t length) const {
+        if (length == 0) {
+            return HttpResponse{};
+        }
         auto range = std::to_string(offset) + "-" + std::to_string(offset + length - 1);
         return perform(url, Method::GET_RANGE, {}, {}, range);
     }

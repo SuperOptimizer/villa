@@ -1322,17 +1322,27 @@ public:
     /// Open from a Store.
     static ZarrArray open(std::shared_ptr<Store> store, const std::string& array_key,
                           Codec codec = {}) {
+        // Build store key without leading "/" when array_key is empty.
+        auto store_key = [&](const std::string& name) -> std::string {
+            return array_key.empty() ? name : array_key + "/" + name;
+        };
         ZarrMetadata meta;
-        if (store->exists(array_key + "/zarr.json")) {
-            auto data = store->get_string(array_key + "/zarr.json");
+        if (store->exists(store_key("zarr.json"))) {
+            auto data = store->get_string(store_key("zarr.json"));
             meta = detail::parse_zarr_json(data);
-        } else if (store->exists(array_key + "/.zarray")) {
-            auto data = store->get_string(array_key + "/.zarray");
+        } else if (store->exists(store_key(".zarray"))) {
+            auto data = store->get_string(store_key(".zarray"));
             meta = detail::parse_zarray(data);
         } else {
             throw std::runtime_error("zarr: no metadata found at store key: " + array_key);
         }
         return ZarrArray(std::move(store), array_key, std::move(meta), std::move(codec));
+    }
+
+    /// Open with pre-parsed metadata (no file I/O). Used by open_from_consolidated.
+    static ZarrArray open_with_metadata(const std::filesystem::path& path,
+                                         ZarrMetadata meta, Codec codec = {}) {
+        return ZarrArray(path, std::move(meta), std::move(codec));
     }
 
     // -- Accessors -----------------------------------------------------------
@@ -1495,6 +1505,24 @@ public:
     // -- Attributes ----------------------------------------------------------
 
     [[nodiscard]] std::string read_attrs() const {
+        if (store_) {
+            // Store-backed: read via store, not filesystem.
+            auto key = [&](const std::string& name) -> std::string {
+                return array_key_.empty() ? name : array_key_ + "/" + name;
+            };
+            if (meta_.version == ZarrVersion::v3) {
+                auto data = store_->get_if_exists(key("zarr.json"));
+                if (!data) return "{}";
+                std::string str(reinterpret_cast<const char*>(data->data()), data->size());
+                auto root = json_parse(str);
+                if (auto* p = json_find(root, "attributes"); p)
+                    return json_serialize(*p, 2);
+                return "{}";
+            }
+            auto data = store_->get_if_exists(key(".zattrs"));
+            if (!data) return "{}";
+            return std::string(reinterpret_cast<const char*>(data->data()), data->size());
+        }
         if (meta_.version == ZarrVersion::v3) {
             // v3: attributes are in zarr.json under "attributes" key.
             auto zj_path = root_ / "zarr.json";
@@ -1511,6 +1539,28 @@ public:
     }
 
     void write_attrs(std::string_view json) {
+        if (store_) {
+            // Store-backed: write via store, not filesystem.
+            auto key = [&](const std::string& name) -> std::string {
+                return array_key_.empty() ? name : array_key_ + "/" + name;
+            };
+            if (meta_.version == ZarrVersion::v3) {
+                auto data = store_->get_if_exists(key("zarr.json"));
+                std::string zj_str = data
+                    ? std::string(reinterpret_cast<const char*>(data->data()), data->size())
+                    : "{}";
+                auto root = json_parse(zj_str);
+                auto attrs = json_parse(json);
+                root["attributes"] = std::move(attrs);
+                auto out = json_serialize(root, 2) + "\n";
+                auto bytes = std::as_bytes(std::span{out});
+                store_->set(key("zarr.json"), {bytes.data(), bytes.size()});
+            } else {
+                auto bytes = std::as_bytes(std::span{json});
+                store_->set(key(".zattrs"), {bytes.data(), bytes.size()});
+            }
+            return;
+        }
         if (meta_.version == ZarrVersion::v3) {
             // v3: merge attributes into zarr.json.
             auto zj_path = root_ / "zarr.json";
@@ -1819,6 +1869,7 @@ load_consolidated_metadata(const std::filesystem::path& root) {
 }
 
 /// Open a zarr array using consolidated metadata (avoids per-array metadata reads).
+/// Uses the pre-parsed metadata directly without writing files.
 [[nodiscard]] inline ZarrArray open_from_consolidated(
     const std::filesystem::path& root,
     const std::string& array_path,
@@ -1827,7 +1878,7 @@ load_consolidated_metadata(const std::filesystem::path& root) {
     auto it = cm.arrays.find(array_path);
     if (it == cm.arrays.end())
         throw std::runtime_error("zarr: array not found in consolidated metadata: " + array_path);
-    return ZarrArray::create(root / array_path, it->second, std::move(codec));
+    return ZarrArray::open_with_metadata(root / array_path, it->second, std::move(codec));
 }
 
 // ---------------------------------------------------------------------------
