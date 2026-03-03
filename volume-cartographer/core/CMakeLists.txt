@@ -46,6 +46,9 @@ target_link_libraries(vc_core
         CURL::libcurl
 )
 
+# Enable curl-backed HTTP cache code
+target_compile_definitions(vc_core PUBLIC VC_USE_CURL)
+
 # VcDataset dependencies
 target_link_libraries(vc_core PRIVATE blosc_static utils)
 

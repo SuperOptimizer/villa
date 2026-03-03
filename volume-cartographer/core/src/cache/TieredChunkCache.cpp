@@ -457,7 +457,7 @@ void TieredChunkCache::clearMemory()
 
 void TieredChunkCache::clearAll()
 {
-    ioPool_.cancelPending();
+    ioPool_.cancelAndDrain();
     clearMemory();
     {
         std::unique_lock lock(negativeMutex_);
