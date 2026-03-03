@@ -26,6 +26,10 @@ add_library(vc_core
         src/cache/TieredChunkCache.cpp
         src/cache/VcDecompressor.cpp
         src/cache/SimpleCacheFactory.cpp
+        src/NetworkFilesystem.cpp
+        src/RemoteUrl.cpp
+        src/CoordGrid.cpp
+        src/PostProcess.cpp
         src/Geometry.cpp
         src/Thinning.cpp
         src/Umbilicus.cpp
