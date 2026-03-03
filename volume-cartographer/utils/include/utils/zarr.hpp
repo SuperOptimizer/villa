@@ -56,18 +56,14 @@ using JsonArray  = nlohmann::json;
 }
 
 /// Build a JSON object from an initializer list.
-/// Uses json::object_t to avoid nlohmann's ambiguous initializer_list heuristic.
 [[nodiscard]] inline JsonValue json_object(
     std::initializer_list<std::pair<const std::string, JsonValue>> pairs) {
-    return JsonValue(nlohmann::json::object_t(pairs));
+    return JsonValue(pairs);
 }
 
 /// Build a JSON array from an initializer list.
-/// Uses json::array() to avoid nlohmann's ambiguous initializer_list heuristic.
 [[nodiscard]] inline JsonValue json_array(std::initializer_list<JsonValue> values) {
-    auto arr = nlohmann::json::array();
-    for (const auto& v : values) arr.push_back(v);
-    return arr;
+    return JsonValue(values);
 }
 
 /// Pointer-based find, matching the old custom JSON API.
@@ -2041,18 +2037,18 @@ parse_transforms(const JsonValue& arr) {
             for (double v : st->scale) vals.emplace_back(v);
             arr.push_back(json_object({
                 {"type", "scale"},
-                {"scale", std::move(vals)}
+                {"scale", JsonValue{std::move(vals)}}
             }));
         } else if (auto* tt = std::get_if<TranslationTransform>(&t)) {
             JsonArray vals;
             for (double v : tt->translation) vals.emplace_back(v);
             arr.push_back(json_object({
                 {"type", "translation"},
-                {"translation", std::move(vals)}
+                {"translation", JsonValue{std::move(vals)}}
             }));
         }
     }
-    return std::move(arr);
+    return JsonValue{std::move(arr)};
 }
 
 } // namespace ome_detail
@@ -2114,35 +2110,35 @@ parse_transforms(const JsonValue& arr) {
     JsonArray axes_arr;
     for (const auto& ax : meta.axes) {
         JsonObject obj;
-        obj["name"] = ax.name;
-        obj["type"] = std::string(ome_detail::axis_type_string(ax.type));
+        obj["name"] = JsonValue{ax.name};
+        obj["type"] = JsonValue{std::string(ome_detail::axis_type_string(ax.type))};
         if (!ax.unit.empty())
-            obj["unit"] = ax.unit;
-        axes_arr.push_back(std::move(obj));
+            obj["unit"] = JsonValue{ax.unit};
+        axes_arr.push_back(JsonValue{std::move(obj)});
     }
 
     JsonArray ds_arr;
     for (const auto& ds : meta.datasets) {
         JsonObject obj;
-        obj["path"] = ds.path;
+        obj["path"] = JsonValue{ds.path};
         obj["coordinateTransformations"] =
             ome_detail::serialize_transforms(ds.transforms);
-        ds_arr.push_back(std::move(obj));
+        ds_arr.push_back(JsonValue{std::move(obj)});
     }
 
     JsonObject ms;
-    ms["version"] = meta.version;
+    ms["version"] = JsonValue{meta.version};
     if (!meta.name.empty())
-        ms["name"] = meta.name;
+        ms["name"] = JsonValue{meta.name};
     if (!meta.type.empty())
-        ms["type"] = meta.type;
-    ms["axes"] = std::move(axes_arr);
-    ms["datasets"] = std::move(ds_arr);
+        ms["type"] = JsonValue{meta.type};
+    ms["axes"] = JsonValue{std::move(axes_arr)};
+    ms["datasets"] = JsonValue{std::move(ds_arr)};
 
     JsonArray ms_arr;
-    ms_arr.push_back(std::move(ms));
+    ms_arr.push_back(JsonValue{std::move(ms)});
 
-    return json_object({{"multiscales", std::move(ms_arr)}});
+    return json_object({{"multiscales", JsonValue{std::move(ms_arr)}}});
 }
 
 // ---------------------------------------------------------------------------

@@ -1577,23 +1577,23 @@ TEST_CASE("LabelMetadata parse round trip") {
     auto json = utils::json_object({
         {"image-label", utils::json_object({
             {"version", utils::JsonValue("0.4")},
-            {"colors", utils::json_array({
+            {"colors", utils::JsonValue(utils::JsonArray{
                 utils::json_object({
                     {"label-value", utils::JsonValue(1)},
-                    {"rgba", utils::json_array({
+                    {"rgba", utils::JsonValue(utils::JsonArray{
                         utils::JsonValue(255), utils::JsonValue(0),
                         utils::JsonValue(0), utils::JsonValue(255)
                     })}
                 }),
                 utils::json_object({
                     {"label-value", utils::JsonValue(2)},
-                    {"rgba", utils::json_array({
+                    {"rgba", utils::JsonValue(utils::JsonArray{
                         utils::JsonValue(0), utils::JsonValue(255),
                         utils::JsonValue(0), utils::JsonValue(128)
                     })}
                 })
             })},
-            {"properties", utils::json_array({
+            {"properties", utils::JsonValue(utils::JsonArray{
                 utils::JsonValue("area"), utils::JsonValue("centroid")
             })}
         })}
@@ -1625,16 +1625,16 @@ TEST_CASE("PlateMetadata parse round trip") {
             {"version", utils::JsonValue("0.4")},
             {"name", utils::JsonValue("my_plate")},
             {"field_count", utils::JsonValue(2)},
-            {"columns", utils::json_array({
+            {"columns", utils::JsonValue(utils::JsonArray{
                 utils::json_object({{"name", utils::JsonValue("1")}}),
                 utils::json_object({{"name", utils::JsonValue("2")}}),
                 utils::json_object({{"name", utils::JsonValue("3")}})
             })},
-            {"rows", utils::json_array({
+            {"rows", utils::JsonValue(utils::JsonArray{
                 utils::json_object({{"name", utils::JsonValue("A")}}),
                 utils::json_object({{"name", utils::JsonValue("B")}})
             })},
-            {"wells", utils::json_array({
+            {"wells", utils::JsonValue(utils::JsonArray{
                 utils::json_object({
                     {"path", utils::JsonValue("A/1")},
                     {"rowIndex", utils::JsonValue(0)},
@@ -1685,16 +1685,16 @@ TEST_CASE("PlateMetadata parse missing plate throws") {
 // ---------------------------------------------------------------------------
 
 TEST_CASE("CoordinateTransform parse scale and translation") {
-    auto json = utils::json_array({
+    auto json = utils::JsonValue(utils::JsonArray{
         utils::json_object({
             {"type", utils::JsonValue("scale")},
-            {"scale", utils::json_array({
+            {"scale", utils::JsonValue(utils::JsonArray{
                 utils::JsonValue(1.0), utils::JsonValue(2.0), utils::JsonValue(3.0)
             })}
         }),
         utils::json_object({
             {"type", utils::JsonValue("translation")},
-            {"translation", utils::json_array({
+            {"translation", utils::JsonValue(utils::JsonArray{
                 utils::JsonValue(10.0), utils::JsonValue(20.0), utils::JsonValue(30.0)
             })}
         })
