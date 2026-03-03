@@ -11,13 +11,6 @@ target_include_directories(utils INTERFACE
 target_compile_features(utils INTERFACE cxx_std_23)
 target_link_libraries(utils INTERFACE nlohmann_json::nlohmann_json)
 
-# Optional: find curl for http_fetch.hpp
-find_package(CURL QUIET)
-if(CURL_FOUND)
-    target_link_libraries(utils INTERFACE CURL::libcurl)
-    target_compile_definitions(utils INTERFACE UTILS_HAS_CURL=1)
-endif()
-
 # Individual header targets (for granular dependency management)
 set(UTILS_HEADERS
     hash
@@ -25,9 +18,9 @@ set(UTILS_HEADERS
     lock_pool
     priority_queue
     compositing
-    thread_pool
     zarr
     http_fetch
+    thread_pool
     compression
 )
 
@@ -40,8 +33,11 @@ foreach(header ${UTILS_HEADERS})
     target_compile_features(utils_${header} INTERFACE cxx_std_23)
 endforeach()
 
-# Link curl for http_fetch and zarr
+# Optional: find curl for http_fetch.hpp
+find_package(CURL QUIET)
 if(CURL_FOUND)
+    target_link_libraries(utils INTERFACE CURL::libcurl)
+    target_compile_definitions(utils INTERFACE UTILS_HAS_CURL=1)
     target_link_libraries(utils_http_fetch INTERFACE CURL::libcurl)
     target_link_libraries(utils_zarr INTERFACE CURL::libcurl)
 endif()
@@ -50,7 +46,6 @@ endif()
 target_link_libraries(utils_zarr INTERFACE nlohmann_json::nlohmann_json)
 
 # Optional: find compression libraries for compression.hpp / zarr.hpp
-# NOTE: blosc2 is not used. The project uses the bundled c-blosc (blosc1).
 find_library(ZSTD_LIB zstd QUIET)
 find_library(LZ4_LIB lz4 QUIET)
 find_library(ZLIB_LIB z QUIET)
@@ -66,12 +61,12 @@ if(ZLIB_LIB)
 endif()
 if(UTILS_COMPRESSION_LIBS)
     target_link_libraries(utils INTERFACE ${UTILS_COMPRESSION_LIBS})
-    target_link_libraries(utils_compression INTERFACE ${UTILS_COMPRESSION_LIBS})
     target_link_libraries(utils_zarr INTERFACE ${UTILS_COMPRESSION_LIBS})
+    target_link_libraries(utils_compression INTERFACE ${UTILS_COMPRESSION_LIBS})
 endif()
 
 # Tests
-if(UTILS_BUILD_TESTS OR VC_BUILD_TESTS)
+if(VC_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)
 endif()

@@ -1322,18 +1322,27 @@ public:
     /// Open from a Store.
     static ZarrArray open(std::shared_ptr<Store> store, const std::string& array_key,
                           Codec codec = {}) {
+        // Build store key without leading "/" when array_key is empty.
+        auto store_key = [&](const std::string& name) -> std::string {
+            return array_key.empty() ? name : array_key + "/" + name;
+        };
         ZarrMetadata meta;
-        auto meta_prefix = array_key.empty() ? std::string{} : array_key + "/";
-        if (store->exists(meta_prefix + "zarr.json")) {
-            auto data = store->get_string(meta_prefix + "zarr.json");
+        if (store->exists(store_key("zarr.json"))) {
+            auto data = store->get_string(store_key("zarr.json"));
             meta = detail::parse_zarr_json(data);
-        } else if (store->exists(meta_prefix + ".zarray")) {
-            auto data = store->get_string(meta_prefix + ".zarray");
+        } else if (store->exists(store_key(".zarray"))) {
+            auto data = store->get_string(store_key(".zarray"));
             meta = detail::parse_zarray(data);
         } else {
             throw std::runtime_error("zarr: no metadata found at store key: " + array_key);
         }
         return ZarrArray(std::move(store), array_key, std::move(meta), std::move(codec));
+    }
+
+    /// Open with pre-parsed metadata (no file I/O). Used by open_from_consolidated.
+    static ZarrArray open_with_metadata(const std::filesystem::path& path,
+                                         ZarrMetadata meta, Codec codec = {}) {
+        return ZarrArray(path, std::move(meta), std::move(codec));
     }
 
     // -- Accessors -----------------------------------------------------------
@@ -1497,19 +1506,22 @@ public:
 
     [[nodiscard]] std::string read_attrs() const {
         if (store_) {
-            // Store-backed: read metadata via store API
-            std::string meta_key = array_key_.empty() ? std::string{} : array_key_ + "/";
+            // Store-backed: read via store, not filesystem.
+            auto key = [&](const std::string& name) -> std::string {
+                return array_key_.empty() ? name : array_key_ + "/" + name;
+            };
             if (meta_.version == ZarrVersion::v3) {
-                auto data = store_->get_string(meta_key + "zarr.json");
-                if (data.empty()) return "{}";
-                auto root = json_parse(data);
+                auto data = store_->get_if_exists(key("zarr.json"));
+                if (!data) return "{}";
+                std::string str(reinterpret_cast<const char*>(data->data()), data->size());
+                auto root = json_parse(str);
                 if (auto* p = json_find(root, "attributes"); p)
                     return json_serialize(*p, 2);
                 return "{}";
             }
-            auto data = store_->get_string(meta_key + ".zattrs");
-            if (data.empty()) return "{}";
-            return data;
+            auto data = store_->get_if_exists(key(".zattrs"));
+            if (!data) return "{}";
+            return std::string(reinterpret_cast<const char*>(data->data()), data->size());
         }
         if (meta_.version == ZarrVersion::v3) {
             // v3: attributes are in zarr.json under "attributes" key.
@@ -1528,19 +1540,24 @@ public:
 
     void write_attrs(std::string_view json) {
         if (store_) {
-            // Store-backed: write metadata via store API
-            std::string meta_key = array_key_.empty() ? std::string{} : array_key_ + "/";
+            // Store-backed: write via store, not filesystem.
+            auto key = [&](const std::string& name) -> std::string {
+                return array_key_.empty() ? name : array_key_ + "/" + name;
+            };
             if (meta_.version == ZarrVersion::v3) {
-                auto data = store_->get_string(meta_key + "zarr.json");
-                auto root = data.empty() ? json_parse("{}") : json_parse(data);
+                auto data = store_->get_if_exists(key("zarr.json"));
+                std::string zj_str = data
+                    ? std::string(reinterpret_cast<const char*>(data->data()), data->size())
+                    : "{}";
+                auto root = json_parse(zj_str);
                 auto attrs = json_parse(json);
                 root["attributes"] = std::move(attrs);
                 auto out = json_serialize(root, 2) + "\n";
-                store_->set(meta_key + "zarr.json",
-                    std::span<const std::byte>(reinterpret_cast<const std::byte*>(out.data()), out.size()));
+                auto bytes = std::as_bytes(std::span{out});
+                store_->set(key("zarr.json"), {bytes.data(), bytes.size()});
             } else {
-                store_->set(meta_key + ".zattrs",
-                    std::span<const std::byte>(reinterpret_cast<const std::byte*>(json.data()), json.size()));
+                auto bytes = std::as_bytes(std::span{json});
+                store_->set(key(".zattrs"), {bytes.data(), bytes.size()});
             }
             return;
         }
@@ -1852,6 +1869,7 @@ load_consolidated_metadata(const std::filesystem::path& root) {
 }
 
 /// Open a zarr array using consolidated metadata (avoids per-array metadata reads).
+/// Uses the pre-parsed metadata directly without writing files.
 [[nodiscard]] inline ZarrArray open_from_consolidated(
     const std::filesystem::path& root,
     const std::string& array_path,
@@ -1860,9 +1878,7 @@ load_consolidated_metadata(const std::filesystem::path& root) {
     auto it = cm.arrays.find(array_path);
     if (it == cm.arrays.end())
         throw std::runtime_error("zarr: array not found in consolidated metadata: " + array_path);
-    // Use open() instead of create() to avoid writing metadata as a side effect.
-    // The metadata is already known from the consolidated file.
-    return ZarrArray::open(root / array_path, std::move(codec));
+    return ZarrArray::open_with_metadata(root / array_path, it->second, std::move(codec));
 }
 
 // ---------------------------------------------------------------------------

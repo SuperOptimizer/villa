@@ -6,7 +6,7 @@ function(add_utils_test name)
     endif()
     add_executable(test_${name} test_${name}.cpp)
     target_link_libraries(test_${name} PRIVATE utils)
-    target_compile_features(test_${name} PRIVATE cxx_std_20)
+    target_compile_features(test_${name} PRIVATE cxx_std_23)
     add_test(NAME ${name} COMMAND test_${name})
 endfunction()
 
@@ -20,9 +20,6 @@ add_utils_test(priority_queue)
 
 # Algorithms
 add_utils_test(compositing)
-
-# I/O & Systems
-add_utils_test(thread_pool)
 
 # Zarr + compression (need compression libs)
 find_library(ZSTD_LIB zstd)
@@ -46,6 +43,10 @@ if(TARGET test_zarr)
     endif()
 endif()
 
+# I/O & Systems
+add_utils_test(thread_pool)
+
+# Compression (need compression libs)
 add_utils_test(compression)
 if(TARGET test_compression)
     if(ZSTD_LIB)
