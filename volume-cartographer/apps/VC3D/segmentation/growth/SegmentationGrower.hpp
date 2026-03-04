@@ -23,14 +23,13 @@ struct CorrectionsBounds {
 
 class SegmentationModule;
 class SegmentationWidget;
-class CSurfaceCollection;
+class CState;
 class ViewerManager;
 class SurfacePanelController;
 class VolumePkg;
 class Volume;
-template <typename T> class ChunkCache;
 class QuadSurface;
-class CVolumeViewer;
+class CTiledVolumeViewer;
 
 class SegmentationGrower : public QObject
 {
@@ -41,9 +40,8 @@ public:
     {
         SegmentationModule* module{nullptr};
         SegmentationWidget* widget{nullptr};
-        CSurfaceCollection* surfaces{nullptr};
+        CState* state{nullptr};
         ViewerManager* viewerManager{nullptr};
-        ChunkCache<uint8_t>* chunkCache{nullptr};
     };
 
     struct UiCallbacks

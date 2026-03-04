@@ -5,8 +5,8 @@
 #include "../SegmentationModule.hpp"
 #include "../SegmentationWidget.hpp"
 
-#include "../../CVolumeViewer.hpp"
-#include "../../CSurfaceCollection.hpp"
+#include "../../tiled/CTiledVolumeViewer.hpp"
+#include "../../CState.hpp"
 #include "../../ViewerManager.hpp"
 #include "../../SurfacePanelController.hpp"
 
@@ -119,7 +119,7 @@ std::optional<std::pair<int, int>> worldToGridIndexApprox(QuadSurface* surface,
     }
 
     if (!pointerSeedValid) {
-        pointerSeed = surface->pointer();
+        pointerSeed = cv::Vec3f(0, 0, 0);
         pointerSeedValid = true;
     }
 
@@ -608,7 +608,7 @@ void refreshSegmentationViewers(ViewerManager* manager)
         return;
     }
 
-    manager->forEachViewer([](CVolumeViewer* viewer) {
+    manager->forEachViewer([](CTiledVolumeViewer* viewer) {
         if (!viewer) {
             return;
         }
@@ -1065,12 +1065,12 @@ bool SegmentationGrower::start(const VolumeContext& volumeContext,
         return false;
     }
 
-    if (!_context.module || !_context.widget || !_context.surfaces) {
+    if (!_context.module || !_context.widget || !_context.state) {
         showStatus(tr("Segmentation growth is unavailable."), kStatusLong);
         return false;
     }
 
-    auto segmentationSurface = std::dynamic_pointer_cast<QuadSurface>(_context.surfaces->surface("segmentation"));
+    auto segmentationSurface = std::dynamic_pointer_cast<QuadSurface>(_context.state->surface("segmentation"));
     if (!segmentationSurface) {
         qCInfo(lcSegGrowth) << "Rejecting growth because segmentation surface is missing";
         showStatus(tr("Segmentation surface is not available."), kStatusMedium);
@@ -1125,8 +1125,8 @@ bool SegmentationGrower::start(const VolumeContext& volumeContext,
                 try {
                     sdtVolume = volumeContext.package->volume(sdtVolumeId);
                     if (sdtVolume) {
-                        sdtContext.binaryDataset = sdtVolume->zarrDataset(0);
-                        sdtContext.cache = _context.chunkCache;
+                        sdtContext.cache = sdtVolume->tieredCache();
+                        sdtContext.level = 0;
                         sdtContextPtr = &sdtContext;
                         qCInfo(lcSegGrowth) << "Linear+Fit: SDT refinement using volume"
                                             << QString::fromStdString(sdtVolumeId);
@@ -1154,8 +1154,8 @@ bool SegmentationGrower::start(const VolumeContext& volumeContext,
                         try {
                             sdtVolume = volumeContext.package->volume(sdtVolumeId);
                             if (sdtVolume) {
-                                sdtContext.binaryDataset = sdtVolume->zarrDataset(0);
-                                sdtContext.cache = _context.chunkCache;
+                                sdtContext.cache = sdtVolume->tieredCache();
+                                sdtContext.level = 0;
                                 sdtContextPtr = &sdtContext;
                                 qCInfo(lcSegGrowth) << "SDT refinement enabled with volume"
                                                     << QString::fromStdString(sdtVolumeId);
@@ -1207,8 +1207,8 @@ bool SegmentationGrower::start(const VolumeContext& volumeContext,
                 try {
                     skeletonVolume = volumeContext.package->volume(skeletonVolumeId);
                     if (skeletonVolume) {
-                        skeletonContext.binaryDataset = skeletonVolume->zarrDataset(0);
-                        skeletonContext.cache = _context.chunkCache;
+                        skeletonContext.cache = skeletonVolume->tieredCache();
+                        skeletonContext.level = 0;
                         skeletonContextPtr = &skeletonContext;
                         qCInfo(lcSegGrowth) << "Skeleton Path: using volume"
                                             << QString::fromStdString(skeletonVolumeId);
@@ -1314,8 +1314,8 @@ bool SegmentationGrower::start(const VolumeContext& volumeContext,
 
         // Re-set the surface in the collection to trigger proper viewer refresh
         // (same pattern used by Tracer growth)
-        if (_context.surfaces) {
-            _context.surfaces->setSurface("segmentation", segmentationSurface, false, true);
+        if (_context.state) {
+            _context.state->setSurface("segmentation", segmentationSurface, false, true);
         }
         refreshSegmentationViewers(_context.viewerManager);
         if (_context.module && _context.module->hasActiveSession()) {
@@ -1651,7 +1651,7 @@ bool SegmentationGrower::start(const VolumeContext& volumeContext,
     TracerGrowthContext ctx;
     ctx.resumeSurface = segmentationSurface.get();
     ctx.volume = growthVolume.get();
-    ctx.cache = _context.chunkCache;
+    ctx.level = 0;
     ctx.cacheRoot = cacheRootForVolumePkg(volumeContext.package);
     ctx.voxelSize = growthVolume->voxelSize();
     ctx.normalGridPath = volumeContext.normalGridPath;
@@ -2461,10 +2461,10 @@ void SegmentationGrower::onFutureFinished()
         _context.module->requestAutosaveFromGrowth();
     }
 
-    std::vector<std::pair<CVolumeViewer*, bool>> resetDefaults;
+    std::vector<std::pair<CTiledVolumeViewer*, bool>> resetDefaults;
     if (_context.viewerManager) {
         ViewerManager* manager = _context.viewerManager;
-        manager->forEachViewer([manager, &resetDefaults](CVolumeViewer* viewer) {
+        manager->forEachViewer([manager, &resetDefaults](CTiledVolumeViewer* viewer) {
             if (!viewer || viewer->surfName() != "segmentation") {
                 return;
             }
@@ -2474,8 +2474,8 @@ void SegmentationGrower::onFutureFinished()
         });
     }
 
-    if (_context.surfaces) {
-        _context.surfaces->setSurface("segmentation", request.segmentationSurface, false, true);
+    if (_context.state) {
+        _context.state->setSurface("segmentation", request.segmentationSurface, false, true);
         // Note: SurfacePatchIndex is automatically updated via handleSurfaceChanged signal
     }
 
@@ -2508,8 +2508,8 @@ void SegmentationGrower::onFutureFinished()
 
     QuadSurface* currentSegSurface = nullptr;
     std::shared_ptr<Surface> currentSegSurfaceHolder;  // Keep surface alive during this scope
-    if (_context.surfaces) {
-        currentSegSurfaceHolder = _context.surfaces->surface("segmentation");
+    if (_context.state) {
+        currentSegSurfaceHolder = _context.state->surface("segmentation");
         currentSegSurface = dynamic_cast<QuadSurface*>(currentSegSurfaceHolder.get());
     }
     if (!currentSegSurface) {

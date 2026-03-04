@@ -1,5 +1,4 @@
 #include "CVolumeViewerView.hpp"
-#include "CVolumeViewer.hpp"
 
 #include <QGraphicsView>
 #include <QMouseEvent>
@@ -155,8 +154,22 @@ void CVolumeViewerView::mouseReleaseEvent(QMouseEvent *event)
 
 void CVolumeViewerView::keyPressEvent(QKeyEvent *event)
 {
-    // Key handling moved to global QShortcut objects in CWindow
-    // Pass the event to the base class
+    // When scroll-pan is disabled (tiled renderer), block arrow keys from
+    // reaching QGraphicsView's built-in scroll handler.  They'll be handled
+    // via sendKeyRelease → onKeyRelease in CTiledVolumeViewer instead.
+    if (_scrollPanDisabled) {
+        switch (event->key()) {
+        case Qt::Key_Left:
+        case Qt::Key_Right:
+        case Qt::Key_Up:
+        case Qt::Key_Down:
+            event->accept();
+            return;
+        default:
+            break;
+        }
+    }
+
     QGraphicsView::keyPressEvent(event);
 }
 
@@ -219,28 +232,27 @@ void CVolumeViewerView::mouseMoveEvent(QMouseEvent *event)
 {
     if (_regular_pan)
     {
-        QPoint scroll = _last_pan_position - QPoint(event->position().x(), event->position().y());
-        
-        int x = horizontalScrollBar()->value() + scroll.x();
-        horizontalScrollBar()->setValue(x);
-        int y = verticalScrollBar()->value() + scroll.y();
-        verticalScrollBar()->setValue(y);
-        
+        if (!_scrollPanDisabled) {
+            QPoint scroll = _last_pan_position - QPoint(event->position().x(), event->position().y());
+
+            int x = horizontalScrollBar()->value() + scroll.x();
+            horizontalScrollBar()->setValue(x);
+            int y = verticalScrollBar()->value() + scroll.y();
+            verticalScrollBar()->setValue(y);
+        }
+
         _last_pan_position = QPoint(event->position().x(), event->position().y());
         event->accept();
-        return;
     }
-    else {
-        QPointF global_loc = viewport()->mapFromGlobal(event->globalPosition());
-        QPointF scene_loc = mapToScene({int(global_loc.x()),int(global_loc.y())});
-        
-        sendCursorMove(scene_loc);
 
-        // Forward mouse move events even without a pressed button so tools that
-        // rely on hover state (e.g. segmentation editing) receive continuous
-        // volume coordinates. Consumers that only care about drags can still
-        // ignore events where no buttons are pressed.
-        sendMouseMove(scene_loc, event->buttons(), event->modifiers());
-    }
-    event->ignore();
+    QPointF global_loc = viewport()->mapFromGlobal(event->globalPosition());
+    QPointF scene_loc = mapToScene({int(global_loc.x()),int(global_loc.y())});
+
+    sendCursorMove(scene_loc);
+
+    // Forward mouse move events even without a pressed button so tools that
+    // rely on hover state (e.g. segmentation editing) receive continuous
+    // volume coordinates. Consumers that only care about drags can still
+    // ignore events where no buttons are pressed.
+    sendMouseMove(scene_loc, event->buttons(), event->modifiers());
 }

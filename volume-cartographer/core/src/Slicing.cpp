@@ -9,9 +9,6 @@
 #include "vc/core/types/VcDataset.hpp"
 #include "vc/core/cache/ChunkData.hpp"
 
-#include "z5/dataset.hxx"
-#include "z5/multiarray/xtensor_access.hxx"
-
 #include <opencv2/core.hpp>
 #include <opencv2/calib3d.hpp>
 
@@ -27,26 +24,44 @@
 // CacheParams — extract dataset constants once (ZYX ordering)
 // ============================================================================
 
-template<typename T>
 struct CacheParams {
     int cz, cy, cx, sz, sy, sx;
     int czShift, cyShift, cxShift, czMask, cyMask, cxMask;
     int chunksZ, chunksY, chunksX;
 
-    explicit CacheParams(z5::Dataset* ds) {
-        const auto& cs = ds->defaultChunkShape();
-        cz = static_cast<int>(cs[0]);
-        cy = static_cast<int>(cs[1]);
-        cx = static_cast<int>(cs[2]);
-        const auto& shape = ds->shape();
-        sz = static_cast<int>(shape[0]);
-        sy = static_cast<int>(shape[1]);
-        sx = static_cast<int>(shape[2]);
+    // Chunk index bounds from logical data extent.
+    // Chunks outside [dbMinC*, dbMaxC*] are in zero-padded regions.
+    int dbMinCz = 0, dbMaxCz = INT_MAX;
+    int dbMinCy = 0, dbMaxCy = INT_MAX;
+    int dbMinCx = 0, dbMaxCx = INT_MAX;
+    bool dbValid = false;
+
+    explicit CacheParams(vc::cache::TieredChunkCache* cache, int level) {
+        auto cs = cache->chunkShape(level);
+        cz = cs[0]; cy = cs[1]; cx = cs[2];
+        auto shape = cache->levelShape(level);
+        sz = shape[0]; sy = shape[1]; sx = shape[2];
         czShift = log2_pow2(cz); cyShift = log2_pow2(cy); cxShift = log2_pow2(cx);
         czMask = cz - 1; cyMask = cy - 1; cxMask = cx - 1;
         chunksZ = (sz + cz - 1) / cz;
         chunksY = (sy + cy - 1) / cy;
         chunksX = (sx + cx - 1) / cx;
+
+        // Compute chunk-level data bounds from level-0 bounds.
+        // Dilate by 1 chunk on each side — the level-0 bounds are already
+        // dilated by 1 coarsest voxel (32 pixels), but chunks are 128^3
+        // so an extra chunk of margin avoids clipping at boundaries.
+        auto db = cache->dataBounds();
+        if (db.valid) {
+            float scale = 1.0f / static_cast<float>(1 << level);
+            dbMinCx = std::max(0, (static_cast<int>(std::floor(db.minX * scale)) >> cxShift) - 1);
+            dbMaxCx = std::min(chunksX - 1, (static_cast<int>(std::ceil(db.maxX * scale)) >> cxShift) + 1);
+            dbMinCy = std::max(0, (static_cast<int>(std::floor(db.minY * scale)) >> cyShift) - 1);
+            dbMaxCy = std::min(chunksY - 1, (static_cast<int>(std::ceil(db.maxY * scale)) >> cyShift) + 1);
+            dbMinCz = std::max(0, (static_cast<int>(std::floor(db.minZ * scale)) >> czShift) - 1);
+            dbMaxCz = std::min(chunksZ - 1, (static_cast<int>(std::ceil(db.maxZ * scale)) >> czShift) + 1);
+            dbValid = true;
+        }
     }
 
     static int log2_pow2(int v) {
@@ -65,26 +80,33 @@ template<typename T, int kSlots = 8>
 struct ChunkSampler {
     struct Slot {
         int iz = -1, iy = -1, ix = -1;
-        typename ChunkCache<T>::ChunkPtr chunk;
+        vc::cache::ChunkDataPtr chunk;
         const T* data = nullptr;
     };
 
-    const CacheParams<T>& p;
-    ChunkCache<T>& cache;
-    z5::Dataset* ds;
+    const CacheParams& p;
+    vc::cache::TieredChunkCache& cache;
+    int level;
     Slot slots[kSlots];
     int mru = 0;  // most-recently-used slot index
     const T* data = nullptr;  // current data pointer
     size_t s0 = 0, s1 = 0;   // strides (s2 is always 1, eliminated)
 
-    ChunkSampler(const CacheParams<T>& p_, ChunkCache<T>& cache_, z5::Dataset* ds_)
-        : p(p_), cache(cache_), ds(ds_)
+    ChunkSampler(const CacheParams& p_, vc::cache::TieredChunkCache& cache_, int level_)
+        : p(p_), cache(cache_), level(level_)
     {
         s0 = static_cast<size_t>(p.cy) * p.cx;
         s1 = static_cast<size_t>(p.cx);
     }
 
     void updateChunk(int iz, int iy, int ix) {
+        // Quick reject: chunk is entirely in zero-padded region
+        if (p.dbValid && (iz < p.dbMinCz || iz > p.dbMaxCz ||
+                          iy < p.dbMinCy || iy > p.dbMaxCy ||
+                          ix < p.dbMinCx || ix > p.dbMaxCx)) {
+            data = nullptr;
+            return;
+        }
         // Check MRU slot first
         auto& m = slots[mru];
         if (m.iz == iz && m.iy == iy && m.ix == ix) {
@@ -104,9 +126,9 @@ struct ChunkSampler {
         // Miss: evict LRU (slot furthest from mru in ring)
         int victim = (mru + 1) % kSlots;
         auto& v = slots[victim];
-        v.chunk = cache.get(ds, iz, iy, ix);
+        v.chunk = cache.getBlocking(vc::cache::ChunkKey{level, iz, iy, ix});
         v.iz = iz; v.iy = iy; v.ix = ix;
-        v.data = v.chunk ? v.chunk->data() : nullptr;
+        v.data = v.chunk ? v.chunk->template data<T>() : nullptr;
         mru = victim;
         data = v.data;
     }
@@ -157,15 +179,15 @@ struct ChunkSampler {
         float fy = vy - iy;
         float fx = vx - ix;
 
-        float c00 = (1 - fx) * c000 + fx * c001;
-        float c01 = (1 - fx) * c010 + fx * c011;
-        float c10 = (1 - fx) * c100 + fx * c101;
-        float c11 = (1 - fx) * c110 + fx * c111;
+        float c00 = std::fma(fx, c001 - c000, c000);
+        float c01 = std::fma(fx, c011 - c010, c010);
+        float c10 = std::fma(fx, c101 - c100, c100);
+        float c11 = std::fma(fx, c111 - c110, c110);
 
-        float c0 = (1 - fy) * c00 + fy * c01;
-        float c1 = (1 - fy) * c10 + fy * c11;
+        float c0 = std::fma(fy, c01 - c00, c00);
+        float c1 = std::fma(fy, c11 - c10, c10);
 
-        return (1 - fz) * c0 + fz * c1;
+        return std::fma(fz, c1 - c0, c0);
     }
 
     // Fast path: when all 8 trilinear corners are in the same chunk
@@ -207,18 +229,47 @@ struct ChunkSampler {
             float fy = vy - iy;
             float fx = vx - ix;
 
-            float c00 = (1 - fx) * c000 + fx * c001;
-            float c01 = (1 - fx) * c010 + fx * c011;
-            float c10 = (1 - fx) * c100 + fx * c101;
-            float c11 = (1 - fx) * c110 + fx * c111;
+            float c00 = std::fma(fx, c001 - c000, c000);
+            float c01 = std::fma(fx, c011 - c010, c010);
+            float c10 = std::fma(fx, c101 - c100, c100);
+            float c11 = std::fma(fx, c111 - c110, c110);
 
-            float c0 = (1 - fy) * c00 + fy * c01;
-            float c1 = (1 - fy) * c10 + fy * c11;
+            float c0 = std::fma(fy, c01 - c00, c00);
+            float c1 = std::fma(fy, c11 - c10, c10);
 
-            return (1 - fz) * c0 + fz * c1;
+            return std::fma(fz, c1 - c0, c0);
         }
 
         return sampleTrilinear(vz, vy, vx);
+    }
+
+    // Catmull-Rom weight function for tricubic interpolation
+    static float catmullRom(float t) {
+        float at = std::abs(t);
+        if (at < 1.0f) return 1.5f*at*at*at - 2.5f*at*at + 1.0f;
+        if (at < 2.0f) return -0.5f*at*at*at + 2.5f*at*at - 4.0f*at + 2.0f;
+        return 0.0f;
+    }
+
+    float sampleTricubic(float vz, float vy, float vx) {
+        int iz = static_cast<int>(std::floor(vz));
+        int iy = static_cast<int>(std::floor(vy));
+        int ix = static_cast<int>(std::floor(vx));
+        float fz = vz - iz, fy = vy - iy, fx = vx - ix;
+
+        float result = 0.0f;
+        for (int dz = -1; dz <= 2; dz++) {
+            float wz = catmullRom(fz - dz);
+            for (int dy = -1; dy <= 2; dy++) {
+                float wy = catmullRom(fy - dy);
+                float wzy = wz * wy;
+                for (int dx = -1; dx <= 2; dx++) {
+                    float wx = catmullRom(fx - dx);
+                    result += wzy * wx * static_cast<float>(sampleInt(iz+dz, iy+dy, ix+dx));
+                }
+            }
+        }
+        return std::clamp(result, 0.0f, static_cast<float>(std::numeric_limits<T>::max()));
     }
 };
 
@@ -227,14 +278,14 @@ struct ChunkSampler {
 // readVolumeImpl — unified inner loop
 // ============================================================================
 
-enum class SampleMode { Nearest, Trilinear };
+enum class SampleMode { Nearest, Trilinear, Tricubic };
 
 template<typename T, SampleMode Mode, typename NormalFn>
 static void readVolumeImpl(
     cv::Mat_<T>& out,
-    z5::Dataset* ds,
-    ChunkCache<T>& cache,
-    const CacheParams<T>& p,
+    vc::cache::TieredChunkCache& cache,
+    int level,
+    const CacheParams& p,
     const cv::Mat_<cv::Vec3f>& coords,
     NormalFn getNormal,
     int numLayers,
@@ -266,6 +317,10 @@ static void readVolumeImpl(
             int ciz = iz >> p.czShift;
             int ciy = iy >> p.cyShift;
             int cix = ix >> p.cxShift;
+            // Skip chunks in zero-padded regions
+            if (p.dbValid && (ciz < p.dbMinCz || ciz > p.dbMaxCz ||
+                              ciy < p.dbMinCy || ciy > p.dbMaxCy ||
+                              cix < p.dbMinCx || cix > p.dbMaxCx)) return;
             size_t idx = ciz * p.chunksY * p.chunksX + ciy * p.chunksX + cix;
             if (!needed[idx]) {
                 needed[idx] = 1;
@@ -277,9 +332,17 @@ static void readVolumeImpl(
 
         if (numLayers == 1) {
             for (int y = 0; y < h; y++) {
+                const auto* row = coords.ptr<cv::Vec3f>(y);
                 for (int x = 0; x < w; x++) {
-                    float vz = coords(y,x)[2], vy = coords(y,x)[1], vx = coords(y,x)[0];
-                    if constexpr (Mode == SampleMode::Trilinear) {
+                    float vx = row[x][0], vy = row[x][1], vz = row[x][2];
+                    if constexpr (Mode == SampleMode::Tricubic) {
+                        if (!(vz >= 0 && vy >= 0 && vx >= 0 && vz < p.sz && vy < p.sy && vx < p.sx)) continue;
+                        int iz = static_cast<int>(std::floor(vz)), iy = static_cast<int>(std::floor(vy)), ix = static_cast<int>(std::floor(vx));
+                        for (int dz = -1; dz <= 2; dz++)
+                            for (int dy = -1; dy <= 2; dy++)
+                                for (int dx = -1; dx <= 2; dx++)
+                                    markVoxel(float(iz+dz), float(iy+dy), float(ix+dx));
+                    } else if constexpr (Mode == SampleMode::Trilinear) {
                         if (!(vz >= 0 && vy >= 0 && vx >= 0 && vz < p.sz && vy < p.sy && vx < p.sx)) continue;
                         int iz = static_cast<int>(vz), iy = static_cast<int>(vy), ix = static_cast<int>(vx);
                         for (int dz = 0; dz <= 1; dz++)
@@ -297,10 +360,10 @@ static void readVolumeImpl(
                 layerOffsets[l] = (zStart + l) * zStep;
 
             for (int y = 0; y < h; y++) {
+                const auto* row = coords.ptr<cv::Vec3f>(y);
                 for (int x = 0; x < w; x++) {
-                    const cv::Vec3f& bc = coords(y, x);
-                    float bz = bc[2], by = bc[1], bx = bc[0];
-                    if (!(bz >= 0 && by >= 0 && bx >= 0 && bz < p.sz && by < p.sy)) continue;
+                    float bx = row[x][0], by = row[x][1], bz = row[x][2];
+                    if (!(bz >= 0 && by >= 0 && bx >= 0 && bz < p.sz && by < p.sy && bx < p.sx)) continue;
                     cv::Vec3f n = getNormal(y, x);
                     for (int l = 0; l < numLayers; l++) {
                         float off = layerOffsets[l];
@@ -321,20 +384,19 @@ static void readVolumeImpl(
         // Load chunks — check if any are uncached before spawning threads.
         bool anyMissing = false;
         for (size_t ci = 0; ci < neededChunks.size(); ci++) {
-            if (!cache.getIfCached(ds, neededChunks[ci][0], neededChunks[ci][1], neededChunks[ci][2])) {
+            if (!cache.get(vc::cache::ChunkKey{level, neededChunks[ci][0], neededChunks[ci][1], neededChunks[ci][2]})) {
                 anyMissing = true;
                 break;
             }
         }
 
         if (anyMissing) {
-            #pragma omp parallel for schedule(dynamic, 1)
             for (size_t ci = 0; ci < neededChunks.size(); ci++)
-                cache.get(ds, neededChunks[ci][0], neededChunks[ci][1], neededChunks[ci][2]);
+                cache.getBlocking(vc::cache::ChunkKey{level, neededChunks[ci][0], neededChunks[ci][1], neededChunks[ci][2]});
         }
     }
 
-    // Phase 2: Sample (OMP parallel, all chunks already cached)
+    // Phase 2: Sample (all chunks already cached)
     const bool isComposite = (numLayers > 1);
     const bool isMin = params && (params->method == "min");
     const bool isMax = params && (params->method == "max");
@@ -342,21 +404,20 @@ static void readVolumeImpl(
     const bool needsLayerStorage = params && methodRequiresLayerStorage(params->method);
     const float firstLayerOffset = zStart * zStep;
 
-    #pragma omp parallel
     {
-        ChunkSampler<T> samplerNoPrefetch(p, cache, ds);
-        ChunkSampler<T> samplerPrefetch(p, cache, ds);
+        ChunkSampler<T> samplerNoPrefetch(p, cache, level);
+        ChunkSampler<T> samplerPrefetch(p, cache, level);
 
         LayerStack stack;
         if (needsLayerStorage) {
             stack.values.resize(numLayers);
         }
 
-        #pragma omp for collapse(2)
         for (int y = 0; y < h; y++) {
+            const auto* coordRow = coords.template ptr<cv::Vec3f>(y);
+            auto* outRow = out.template ptr<T>(y);
             for (int x = 0; x < w; x++) {
-                const cv::Vec3f& bc = coords(y, x);
-                float base_vz = bc[2], base_vy = bc[1], base_vx = bc[0];
+                float base_vx = coordRow[x][0], base_vy = coordRow[x][1], base_vz = coordRow[x][2];
 
                 if (numLayers == 1) {
                     // Single-sample path
@@ -368,14 +429,24 @@ static void readVolumeImpl(
                         if constexpr (std::is_same_v<T, uint16_t>) {
                             if (v < 0.f) v = 0.f;
                             if (v > 65535.f) v = 65535.f;
-                            out(y, x) = static_cast<uint16_t>(v + 0.5f);
+                            outRow[x] = static_cast<uint16_t>(v + 0.5f);
                         } else {
-                            out(y, x) = static_cast<T>(v);
+                            outRow[x] = static_cast<T>(v);
+                        }
+                    } else if constexpr (Mode == SampleMode::Tricubic) {
+                        if (!(base_vz < p.sz && base_vy < p.sy && base_vx < p.sx)) continue;
+                        float v = samplerNoPrefetch.sampleTricubic(base_vz, base_vy, base_vx);
+                        if constexpr (std::is_same_v<T, uint16_t>) {
+                            if (v < 0.f) v = 0.f;
+                            if (v > 65535.f) v = 65535.f;
+                            outRow[x] = static_cast<uint16_t>(v + 0.5f);
+                        } else {
+                            outRow[x] = static_cast<T>(v);
                         }
                     } else {
                         if (!(base_vz < p.sz && base_vy < p.sy && base_vx < p.sx)) continue;
                         if ((static_cast<int>(base_vz + 0.5f) | static_cast<int>(base_vy + 0.5f) | static_cast<int>(base_vx + 0.5f)) < 0) continue;
-                        out(y, x) = samplerNoPrefetch.sampleNearest(base_vz, base_vy, base_vx);
+                        outRow[x] = samplerNoPrefetch.sampleNearest(base_vz, base_vy, base_vx);
                     }
                 } else {
                     // Composite path
@@ -437,12 +508,11 @@ static void readVolumeImpl(
                     }
 
                     if (params->lightingEnabled) {
-                        cv::Vec3f ln = getNormal(y, x);
-                        float lightFactor = computeLightingFactor(ln, *params);
+                        float lightFactor = computeLightingFactor(n, *params);
                         result *= lightFactor;
                     }
 
-                    out(y, x) = static_cast<T>(std::max(0.0f, std::min(255.0f, result)));
+                    outRow[x] = static_cast<T>(std::max(0.0f, std::min(255.0f, result)));
                 }
             }
         }
@@ -455,9 +525,9 @@ static void readVolumeImpl(
 // ============================================================================
 
 template<typename T>
-static void readArea3DImpl(xt::xtensor<T, 3, xt::layout_type::column_major>& out, const cv::Vec3i& offset, z5::Dataset* ds, ChunkCache<T>* cache) {
+static void readArea3DImpl(xt::xtensor<T, 3, xt::layout_type::column_major>& out, const cv::Vec3i& offset, vc::cache::TieredChunkCache* cache, int level) {
 
-    CacheParams<T> p(ds);
+    CacheParams p(cache, level);
 
     cv::Vec3i size = {(int)out.shape()[0], (int)out.shape()[1], (int)out.shape()[2]};
     cv::Vec3i to = offset + size;
@@ -478,8 +548,7 @@ static void readArea3DImpl(xt::xtensor<T, 3, xt::layout_type::column_major>& out
     // Step 2 & 3: Load and copy chunks (no inner OMP — called from parallel tile loop)
     for (const auto& idx : chunks_to_process) {
         int cz = idx[0], cy = idx[1], cx = idx[2];
-        auto chunkPtr = cache->get(ds, cz, cy, cx);
-        xt::xarray<T>* chunk = chunkPtr.get();
+        auto chunkPtr = cache->getBlocking(vc::cache::ChunkKey{level, cz, cy, cx});
 
         cv::Vec3i chunk_offset = {p.cz * cz, p.cy * cy, p.cx * cx};
 
@@ -495,14 +564,17 @@ static void readArea3DImpl(xt::xtensor<T, 3, xt::layout_type::column_major>& out
             std::min(to[2], chunk_offset[2] + p.cx)
         };
 
-        if (chunk) {
+        if (chunkPtr) {
+            const T* chunkData = chunkPtr->data<T>();
+            int strideZ = p.cy * p.cx;
+            int strideY = p.cx;
             for (int z = copy_from_start[0]; z < copy_from_end[0]; ++z) {
                 for (int y = copy_from_start[1]; y < copy_from_end[1]; ++y) {
                     for (int x = copy_from_start[2]; x < copy_from_end[2]; ++x) {
                         int lz = z - chunk_offset[0];
                         int ly = y - chunk_offset[1];
                         int lx = x - chunk_offset[2];
-                        out(z - offset[0], y - offset[1], x - offset[2]) = (*chunk)(lz, ly, lx);
+                        out(z - offset[0], y - offset[1], x - offset[2]) = chunkData[lz * strideZ + ly * strideY + lx];
                     }
                 }
             }
@@ -518,12 +590,12 @@ static void readArea3DImpl(xt::xtensor<T, 3, xt::layout_type::column_major>& out
     }
 }
 
-void readArea3D(xt::xtensor<uint8_t, 3, xt::layout_type::column_major>& out, const cv::Vec3i& offset, z5::Dataset* ds, ChunkCache<uint8_t>* cache) {
-    readArea3DImpl(out, offset, ds, cache);
+void readArea3D(xt::xtensor<uint8_t, 3, xt::layout_type::column_major>& out, const cv::Vec3i& offset, vc::cache::TieredChunkCache* cache, int level) {
+    readArea3DImpl(out, offset, cache, level);
 }
 
-void readArea3D(xt::xtensor<uint16_t, 3, xt::layout_type::column_major>& out, const cv::Vec3i& offset, z5::Dataset* ds, ChunkCache<uint16_t>* cache) {
-    readArea3DImpl(out, offset, ds, cache);
+void readArea3D(xt::xtensor<uint16_t, 3, xt::layout_type::column_major>& out, const cv::Vec3i& offset, vc::cache::TieredChunkCache* cache, int level) {
+    readArea3DImpl(out, offset, cache, level);
 }
 
 
@@ -532,41 +604,65 @@ void readArea3D(xt::xtensor<uint16_t, 3, xt::layout_type::column_major>& out, co
 // ============================================================================
 
 template<typename T>
-static void readInterpolated3DImpl(cv::Mat_<T>& out, z5::Dataset* ds,
-                                   const cv::Mat_<cv::Vec3f>& coords, ChunkCache<T>* cache, bool nearest_neighbor) {
-    CacheParams<T> p(ds);
+static void readInterpolated3DImpl(cv::Mat_<T>& out, vc::cache::TieredChunkCache* cache, int level,
+                                   const cv::Mat_<cv::Vec3f>& coords,
+                                   vc::Sampling method) {
+    CacheParams p(cache, level);
+    auto noNormal = [](int, int) -> cv::Vec3f { return {}; };
 
-    if (nearest_neighbor) {
-        readVolumeImpl<T, SampleMode::Nearest>(out, ds, *cache, p, coords,
-            [](int, int) -> cv::Vec3f { return {}; }, 1, 0.f, 0, nullptr);
-    } else {
-        readVolumeImpl<T, SampleMode::Trilinear>(out, ds, *cache, p, coords,
-            [](int, int) -> cv::Vec3f { return {}; }, 1, 0.f, 0, nullptr);
+    switch (method) {
+        case vc::Sampling::Nearest:
+            readVolumeImpl<T, SampleMode::Nearest>(out, *cache, level, p, coords,
+                noNormal, 1, 0.f, 0, nullptr);
+            break;
+        case vc::Sampling::Tricubic:
+            readVolumeImpl<T, SampleMode::Tricubic>(out, *cache, level, p, coords,
+                noNormal, 1, 0.f, 0, nullptr);
+            break;
+        default:
+            readVolumeImpl<T, SampleMode::Trilinear>(out, *cache, level, p, coords,
+                noNormal, 1, 0.f, 0, nullptr);
+            break;
     }
 }
 
-void readInterpolated3D(cv::Mat_<uint8_t>& out, z5::Dataset* ds,
-                        const cv::Mat_<cv::Vec3f>& coords, ChunkCache<uint8_t>* cache, bool nearest_neighbor) {
-    readInterpolated3DImpl(out, ds, coords, cache, nearest_neighbor);
+// Legacy bool overloads (backward compatible)
+void readInterpolated3D(cv::Mat_<uint8_t>& out, vc::cache::TieredChunkCache* cache, int level,
+                        const cv::Mat_<cv::Vec3f>& coords, bool nearest_neighbor) {
+    readInterpolated3DImpl(out, cache, level, coords,
+                           nearest_neighbor ? vc::Sampling::Nearest : vc::Sampling::Trilinear);
 }
 
-void readInterpolated3D(cv::Mat_<uint16_t>& out, z5::Dataset* ds,
-                        const cv::Mat_<cv::Vec3f>& coords, ChunkCache<uint16_t>* cache, bool nearest_neighbor) {
-    readInterpolated3DImpl(out, ds, coords, cache, nearest_neighbor);
+void readInterpolated3D(cv::Mat_<uint16_t>& out, vc::cache::TieredChunkCache* cache, int level,
+                        const cv::Mat_<cv::Vec3f>& coords, bool nearest_neighbor) {
+    readInterpolated3DImpl(out, cache, level, coords,
+                           nearest_neighbor ? vc::Sampling::Nearest : vc::Sampling::Trilinear);
+}
+
+// New overloads accepting vc::Sampling enum
+void readInterpolated3D(cv::Mat_<uint8_t>& out, vc::cache::TieredChunkCache* cache, int level,
+                        const cv::Mat_<cv::Vec3f>& coords, vc::Sampling method) {
+    readInterpolated3DImpl(out, cache, level, coords, method);
+}
+
+void readInterpolated3D(cv::Mat_<uint16_t>& out, vc::cache::TieredChunkCache* cache, int level,
+                        const cv::Mat_<cv::Vec3f>& coords, vc::Sampling method) {
+    readInterpolated3DImpl(out, cache, level, coords, method);
 }
 
 
 void readCompositeFast(
     cv::Mat_<uint8_t>& out,
-    z5::Dataset* ds,
+    vc::cache::TieredChunkCache* cache,
+    int level,
     const cv::Mat_<cv::Vec3f>& baseCoords,
     const cv::Mat_<cv::Vec3f>& normals,
     float zStep,
     int zStart, int zEnd,
     const CompositeParams& params,
-    ChunkCache<uint8_t>& cache)
+    vc::Sampling method)
 {
-    CacheParams<uint8_t> p(ds);
+    CacheParams p(cache, level);
 
     const bool hasNormals = !normals.empty() && normals.size() == baseCoords.size();
     const int numLayers = zEnd - zStart + 1;
@@ -581,8 +677,20 @@ void readCompositeFast(
         return {1, 0, 0};
     };
 
-    readVolumeImpl<uint8_t, SampleMode::Nearest>(out, ds, cache, p, baseCoords,
-        getNormal, numLayers, zStep, zStart, &params);
+    switch (method) {
+        case vc::Sampling::Trilinear:
+            readVolumeImpl<uint8_t, SampleMode::Trilinear>(out, *cache, level, p, baseCoords,
+                getNormal, numLayers, zStep, zStart, &params);
+            break;
+        case vc::Sampling::Tricubic:
+            readVolumeImpl<uint8_t, SampleMode::Tricubic>(out, *cache, level, p, baseCoords,
+                getNormal, numLayers, zStep, zStart, &params);
+            break;
+        default:
+            readVolumeImpl<uint8_t, SampleMode::Nearest>(out, *cache, level, p, baseCoords,
+                getNormal, numLayers, zStep, zStart, &params);
+            break;
+    }
 }
 
 
@@ -593,13 +701,13 @@ void readCompositeFast(
 template<typename T>
 static void readMultiSliceImpl(
     std::vector<cv::Mat_<T>>& out,
-    z5::Dataset* ds,
-    ChunkCache<T>& cache,
+    vc::cache::TieredChunkCache& cache,
+    int level,
     const cv::Mat_<cv::Vec3f>& basePoints,
     const cv::Mat_<cv::Vec3f>& stepDirs,
     const std::vector<float>& offsets)
 {
-    CacheParams<T> p(ds);
+    CacheParams p(&cache, level);
     const int h = basePoints.rows;
     const int w = basePoints.cols;
     const int numSlices = static_cast<int>(offsets.size());
@@ -611,8 +719,6 @@ static void readMultiSliceImpl(
     if (numSlices == 0) return;
 
     // Phase 1: Discover needed chunks and prefetch in parallel.
-    // This converts random I/O stalls during OMP sampling into a
-    // concentrated upfront I/O burst.
     {
         const size_t totalChunks = static_cast<size_t>(p.chunksZ) * p.chunksY * p.chunksX;
         std::vector<uint8_t> needed(totalChunks, 0);
@@ -642,7 +748,6 @@ static void readMultiSliceImpl(
                 const cv::Vec3f& sd = stepDirs(y, x);
                 if (std::isnan(bp[0])) continue;
 
-                // Mark chunks for first and last offsets (covers the range)
                 for (float off : {fOff, lOff}) {
                     float vx = bp[0] + sd[0] * off;
                     float vy = bp[1] + sd[1] * off;
@@ -650,7 +755,6 @@ static void readMultiSliceImpl(
                     int iz = static_cast<int>(vz);
                     int iy = static_cast<int>(vy);
                     int ix = static_cast<int>(vx);
-                    // Mark all 8 trilinear corners
                     for (int dz = 0; dz <= 1; dz++)
                         for (int dy = 0; dy <= 1; dy++)
                             for (int dx = 0; dx <= 1; dx++)
@@ -670,23 +774,19 @@ static void readMultiSliceImpl(
         // Only spawn threads if any chunks are uncached
         bool anyMissing = false;
         for (size_t ci = 0; ci < neededChunks.size(); ci++) {
-            if (!cache.getIfCached(ds, neededChunks[ci][0], neededChunks[ci][1], neededChunks[ci][2])) {
+            if (!cache.get(vc::cache::ChunkKey{level, neededChunks[ci][0], neededChunks[ci][1], neededChunks[ci][2]})) {
                 anyMissing = true;
                 break;
             }
         }
 
         if (anyMissing) {
-            #pragma omp parallel for schedule(dynamic, 1)
             for (size_t ci = 0; ci < neededChunks.size(); ci++)
-                cache.get(ds, neededChunks[ci][0], neededChunks[ci][1], neededChunks[ci][2]);
+                cache.getBlocking(vc::cache::ChunkKey{level, neededChunks[ci][0], neededChunks[ci][1], neededChunks[ci][2]});
         }
     }
 
     // Phase 2: Sample (all chunks for this band already cached).
-    // Optimization: for each pixel, check if ALL slice samples fall within a
-    // single chunk. If so, skip per-sample bounds/chunk checks entirely.
-
     constexpr float maxVal = std::is_same_v<T, uint16_t> ? 65535.f : 255.f;
     const float firstOff = offsets[0];
     const float lastOff = offsets[numSlices - 1];
@@ -694,21 +794,16 @@ static void readMultiSliceImpl(
     const int lczMask = p.czMask, lcyMask = p.cyMask, lcxMask = p.cxMask;
     const int lsz = p.sz, lsy = p.sy, lsx = p.sx;
 
-    #pragma omp parallel
     {
-        // 2-slot sampler: sequential slice pattern only needs current chunk +
-        // occasionally one more for boundary crossings
-        ChunkSampler<T, 2> sampler(p, cache, ds);
+        ChunkSampler<T, 2> sampler(p, cache, level);
         const size_t ls0 = sampler.s0, ls1 = sampler.s1;
 
-        #pragma omp for schedule(static)
         for (int y = 0; y < h; y++) {
             for (int x = 0; x < w; x++) {
                 const cv::Vec3f& bp = basePoints(y, x);
                 const cv::Vec3f& sd = stepDirs(y, x);
                 if (std::isnan(bp[0])) continue;
 
-                // Compute first and last sample positions
                 float vx0 = bp[0] + sd[0] * firstOff;
                 float vy0 = bp[1] + sd[1] * firstOff;
                 float vz0 = bp[2] + sd[2] * firstOff;
@@ -716,7 +811,6 @@ static void readMultiSliceImpl(
                 float vy1 = bp[1] + sd[1] * lastOff;
                 float vz1 = bp[2] + sd[2] * lastOff;
 
-                // Determine bounding box of all samples (including +1 for trilinear)
                 float minVz = std::min(vz0, vz1);
                 float maxVz = std::max(vz0, vz1);
                 float minVy = std::min(vy0, vy1);
@@ -724,8 +818,6 @@ static void readMultiSliceImpl(
                 float minVx = std::min(vx0, vx1);
                 float maxVx = std::max(vx0, vx1);
 
-                // Check if all samples are in bounds AND all trilinear corners
-                // fall within a single chunk (the common case)
                 int izMin = static_cast<int>(minVz);
                 int izMax = static_cast<int>(maxVz) + 1;
                 int iyMin = static_cast<int>(minVy);
@@ -743,8 +835,6 @@ static void readMultiSliceImpl(
                     (ixMin >> lcxShift) == (ixMax >> lcxShift);
 
                 if (singleChunk) {
-                    // Fast path: all slices in one chunk. Load chunk once,
-                    // then pure trilinear math with no checks.
                     int ciz = izMin >> lczShift;
                     int ciy = iyMin >> lcyShift;
                     int cix = ixMin >> lcxShift;
@@ -776,20 +866,19 @@ static void readMultiSliceImpl(
                         float fy = vy - iy;
                         float fx = vx - ix;
 
-                        float c00 = (1-fx)*c000 + fx*c001;
-                        float c01 = (1-fx)*c010 + fx*c011;
-                        float c10 = (1-fx)*c100 + fx*c101;
-                        float c11 = (1-fx)*c110 + fx*c111;
+                        float c00 = std::fma(fx, c001 - c000, c000);
+                        float c01 = std::fma(fx, c011 - c010, c010);
+                        float c10 = std::fma(fx, c101 - c100, c100);
+                        float c11 = std::fma(fx, c111 - c110, c110);
 
-                        float c0 = (1-fy)*c00 + fy*c01;
-                        float c1 = (1-fy)*c10 + fy*c11;
+                        float c0 = std::fma(fy, c01 - c00, c00);
+                        float c1 = std::fma(fy, c11 - c10, c10);
 
-                        float v = (1-fz)*c0 + fz*c1;
+                        float v = std::fma(fz, c1 - c0, c0);
                         v = std::max(0.f, std::min(maxVal, v + 0.5f));
                         out[si](y, x) = static_cast<T>(v);
                     }
                 } else {
-                    // Slow path: per-sample bounds/chunk checks
                     for (int si = 0; si < numSlices; si++) {
                         float off = offsets[si];
                         float vx = bp[0] + sd[0] * off;
@@ -812,24 +901,24 @@ static void readMultiSliceImpl(
 
 void readMultiSlice(
     std::vector<cv::Mat_<uint8_t>>& out,
-    z5::Dataset* ds,
-    ChunkCache<uint8_t>* cache,
+    vc::cache::TieredChunkCache* cache,
+    int level,
     const cv::Mat_<cv::Vec3f>& basePoints,
     const cv::Mat_<cv::Vec3f>& stepDirs,
     const std::vector<float>& offsets)
 {
-    readMultiSliceImpl(out, ds, *cache, basePoints, stepDirs, offsets);
+    readMultiSliceImpl(out, *cache, level, basePoints, stepDirs, offsets);
 }
 
 void readMultiSlice(
     std::vector<cv::Mat_<uint16_t>>& out,
-    z5::Dataset* ds,
-    ChunkCache<uint16_t>* cache,
+    vc::cache::TieredChunkCache* cache,
+    int level,
     const cv::Mat_<cv::Vec3f>& basePoints,
     const cv::Mat_<cv::Vec3f>& stepDirs,
     const std::vector<float>& offsets)
 {
-    readMultiSliceImpl(out, ds, *cache, basePoints, stepDirs, offsets);
+    readMultiSliceImpl(out, *cache, level, basePoints, stepDirs, offsets);
 }
 
 
@@ -842,13 +931,13 @@ void readMultiSlice(
 template<typename T>
 static void sampleTileSlicesImpl(
     std::vector<cv::Mat_<T>>& out,
-    z5::Dataset* ds,
-    ChunkCache<T>& cache,
+    vc::cache::TieredChunkCache& cache,
+    int level,
     const cv::Mat_<cv::Vec3f>& basePoints,
     const cv::Mat_<cv::Vec3f>& stepDirs,
     const std::vector<float>& offsets)
 {
-    CacheParams<T> p(ds);
+    CacheParams p(&cache, level);
     const int h = basePoints.rows;
     const int w = basePoints.cols;
     const int numSlices = static_cast<int>(offsets.size());
@@ -860,14 +949,11 @@ static void sampleTileSlicesImpl(
     if (numSlices == 0) return;
 
     // Phase 1: Discover needed chunks and prefetch serially.
-    // A 128x128 tile typically touches only ~4-8 chunks, so collect into
-    // a compact list rather than scanning the full chunk grid (~39M entries).
     {
         std::vector<std::array<int,3>> neededChunks;
         neededChunks.reserve(16);
 
-        // Small local set: track seen chunks by packing (ciz,ciy,cix) into uint64
-        std::vector<uint64_t> seen;
+        std::unordered_set<uint64_t> seen;
         seen.reserve(16);
         auto markVoxel = [&](int iz, int iy, int ix) {
             if (iz < 0 || iy < 0 || ix < 0 || iz >= p.sz || iy >= p.sy || ix >= p.sx) return;
@@ -875,8 +961,7 @@ static void sampleTileSlicesImpl(
             int ciy = iy >> p.cyShift;
             int cix = ix >> p.cxShift;
             uint64_t key = (uint64_t(ciz) << 40) | (uint64_t(ciy) << 20) | uint64_t(cix);
-            for (auto k : seen) if (k == key) return;
-            seen.push_back(key);
+            if (!seen.insert(key).second) return;
             neededChunks.push_back({ciz, ciy, cix});
         };
 
@@ -905,7 +990,7 @@ static void sampleTileSlicesImpl(
 
         // Serial prefetch — we're already on an OMP thread
         for (auto& c : neededChunks)
-            cache.get(ds, c[0], c[1], c[2]);
+            cache.getBlocking(vc::cache::ChunkKey{level, c[0], c[1], c[2]});
     }
 
     // Phase 2: Sample (single-threaded, all chunks already cached).
@@ -916,7 +1001,7 @@ static void sampleTileSlicesImpl(
     const int lczMask = p.czMask, lcyMask = p.cyMask, lcxMask = p.cxMask;
     const int lsz = p.sz, lsy = p.sy, lsx = p.sx;
 
-    ChunkSampler<T, 8> sampler(p, cache, ds);
+    ChunkSampler<T, 8> sampler(p, cache, level);
     const size_t ls0 = sampler.s0, ls1 = sampler.s1;
 
     for (int y = 0; y < h; y++) {
@@ -925,7 +1010,6 @@ static void sampleTileSlicesImpl(
             const cv::Vec3f& sd = stepDirs(y, x);
             if (std::isnan(bp[0])) continue;
 
-            // Compute first and last sample positions
             float vx0 = bp[0] + sd[0] * firstOff;
             float vy0 = bp[1] + sd[1] * firstOff;
             float vz0 = bp[2] + sd[2] * firstOff;
@@ -988,15 +1072,15 @@ static void sampleTileSlicesImpl(
                     float fy = vy - iy;
                     float fx = vx - ix;
 
-                    float c00 = (1-fx)*c000 + fx*c001;
-                    float c01 = (1-fx)*c010 + fx*c011;
-                    float c10 = (1-fx)*c100 + fx*c101;
-                    float c11 = (1-fx)*c110 + fx*c111;
+                    float c00 = std::fma(fx, c001 - c000, c000);
+                    float c01 = std::fma(fx, c011 - c010, c010);
+                    float c10 = std::fma(fx, c101 - c100, c100);
+                    float c11 = std::fma(fx, c111 - c110, c110);
 
-                    float c0 = (1-fy)*c00 + fy*c01;
-                    float c1 = (1-fy)*c10 + fy*c11;
+                    float c0 = std::fma(fy, c01 - c00, c00);
+                    float c1 = std::fma(fy, c11 - c10, c10);
 
-                    float v = (1-fz)*c0 + fz*c1;
+                    float v = std::fma(fz, c1 - c0, c0);
                     v = std::max(0.f, std::min(maxVal, v + 0.5f));
                     out[si](y, x) = static_cast<T>(v);
                 }
@@ -1021,29 +1105,29 @@ static void sampleTileSlicesImpl(
 
 void sampleTileSlices(
     std::vector<cv::Mat_<uint8_t>>& out,
-    z5::Dataset* ds,
-    ChunkCache<uint8_t>* cache,
+    vc::cache::TieredChunkCache* cache,
+    int level,
     const cv::Mat_<cv::Vec3f>& basePoints,
     const cv::Mat_<cv::Vec3f>& stepDirs,
     const std::vector<float>& offsets)
 {
-    sampleTileSlicesImpl(out, ds, *cache, basePoints, stepDirs, offsets);
+    sampleTileSlicesImpl(out, *cache, level, basePoints, stepDirs, offsets);
 }
 
 void sampleTileSlices(
     std::vector<cv::Mat_<uint16_t>>& out,
-    z5::Dataset* ds,
-    ChunkCache<uint16_t>* cache,
+    vc::cache::TieredChunkCache* cache,
+    int level,
     const cv::Mat_<cv::Vec3f>& basePoints,
     const cv::Mat_<cv::Vec3f>& stepDirs,
     const std::vector<float>& offsets)
 {
-    sampleTileSlicesImpl(out, ds, *cache, basePoints, stepDirs, offsets);
+    sampleTileSlicesImpl(out, *cache, level, basePoints, stepDirs, offsets);
 }
 
 
 cv::Mat_<cv::Vec3f> computeVolumeGradientsNative(
-    z5::Dataset* ds,
+    vc::VcDataset* ds,
     const cv::Mat_<cv::Vec3f>& rawPoints,
     float dsScale)
 {
@@ -1102,8 +1186,9 @@ cv::Mat_<cv::Vec3f> computeVolumeGradientsNative(
 
     // Step 2: Batch read the volume data for the bounding box
     xt::xarray<uint8_t> localVolume = xt::empty<uint8_t>({localD, localH, localW});
-    z5::types::ShapeType off = {static_cast<size_t>(bboxZ0), static_cast<size_t>(bboxY0), static_cast<size_t>(bboxX0)};
-    z5::multiarray::readSubarray<uint8_t>(*ds, localVolume, off.begin());
+    std::vector<size_t> regionOff = {static_cast<size_t>(bboxZ0), static_cast<size_t>(bboxY0), static_cast<size_t>(bboxX0)};
+    std::vector<size_t> regionShape = {localD, localH, localW};
+    ds->readRegion(regionOff, regionShape, localVolume.data());
 
     auto sampleLocal = [&](float gx, float gy, float gz) -> float {
         const int lx = static_cast<int>(std::round(gx)) - bboxX0;
@@ -1119,8 +1204,7 @@ cv::Mat_<cv::Vec3f> computeVolumeGradientsNative(
         return static_cast<float>(localVolume(static_cast<size_t>(lz), static_cast<size_t>(ly), static_cast<size_t>(lx)));
     };
 
-    // Step 3: Compute gradients in parallel at each raw grid point
-    #pragma omp parallel for collapse(2)
+    // Step 3: Compute gradients at each raw grid point
     for (int y = 0; y < h; ++y) {
         for (int x = 0; x < w; ++x) {
             const cv::Vec3f& c = rawPoints(y, x);
