@@ -278,13 +278,10 @@ void AxisAlignedSliceController::applyOrientation(Surface* sourceOverride)
 
 float AxisAlignedSliceController::normalizeDegrees(float degrees)
 {
-    while (degrees > 180.0f) {
-        degrees -= 360.0f;
+    if (!std::isfinite(degrees)) {
+        return 0.0f;
     }
-    while (degrees <= -180.0f) {
-        degrees += 360.0f;
-    }
-    return degrees;
+    return std::remainder(degrees, 360.0f);
 }
 
 float AxisAlignedSliceController::currentRotationDegrees(const std::string& surfaceName) const

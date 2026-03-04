@@ -1,4 +1,7 @@
 #include "FileWatcherService.hpp"
+
+#ifdef __linux__
+
 #include "CState.hpp"
 #include "SurfacePanelController.hpp"
 #include "segmentation/SegmentationModule.hpp"
@@ -191,10 +194,6 @@ void FileWatcherService::onInotifyEvent()
                         _pendingEvents.push_back(evt);
                     }
 
-                } else if (event->mask & (IN_MODIFY | IN_CLOSE_WRITE)) {
-                    // Segment modified or closed after writing
-                    // Use set to avoid duplicate updates for the same segment
-                    _pendingSegmentUpdates.insert({dirName, fileName});
                 }
             }
         }
@@ -749,3 +748,15 @@ void FileWatcherService::pruneExpiredRecentlyEdited()
         }
     }
 }
+
+#else // !__linux__
+
+// Stub implementations for non-Linux platforms (no inotify)
+FileWatcherService::FileWatcherService(CState* state, QObject* parent)
+    : QObject(parent), _state(state) {}
+FileWatcherService::~FileWatcherService() = default;
+void FileWatcherService::startWatching() {}
+void FileWatcherService::stopWatching() {}
+void FileWatcherService::markSegmentRecentlyEdited(const std::string&) {}
+
+#endif // __linux__

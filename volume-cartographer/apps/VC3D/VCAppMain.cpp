@@ -14,7 +14,9 @@
 #include <omp.h>
 #include <blosc.h>
 #include <cstdlib>
+#ifndef _WIN32
 #include <dlfcn.h>
+#endif
 
 // Runs before main() AND before all shared-library constructors.
 // .preinit_array is processed by the dynamic linker before any .init_array,
@@ -32,18 +34,24 @@ static void setThreadPoliciesEarly()
     setenv("GOTO_NUM_THREADS", "1", 0);      // legacy name for OpenBLAS
     setenv("MKL_NUM_THREADS", "1", 0);       // Intel MKL
 }
+#ifdef __linux__
 __attribute__((section(".preinit_array"), used))
 static auto preinitFn = &setThreadPoliciesEarly;
+#endif
 
 auto main(int argc, char* argv[]) -> int
 {
+#ifndef __linux__
+    // On non-Linux, preinit_array is unavailable so set env vars at start of main.
+    // This may be too late for some libraries that init in static constructors.
+    setThreadPoliciesEarly();
+#endif
+
+#ifndef _WIN32
     // LLVM/Intel OpenMP: set blocktime=0 so threads sleep immediately after
     // parallel regions. dlsym avoids weak-symbol issues under LTO.
     if (auto fn = reinterpret_cast<void(*)(int)>(dlsym(RTLD_DEFAULT, "kmp_set_blocktime")))
         fn(0);
-
-    // GNU libgomp: no runtime API for wait policy, but env vars set in
-    // preinit should have taken effect by now.
 
     // Also call openblas_set_num_threads(1) at runtime in case the env var
     // was too late for this particular build's init order.
@@ -56,6 +64,7 @@ auto main(int argc, char* argv[]) -> int
     // later, blas_thread_init() will be called automatically.
     if (auto fn = reinterpret_cast<void(*)()>(dlsym(RTLD_DEFAULT, "blas_shutdown")))
         fn();
+#endif
 
     omp_set_num_threads(1);  // All parallelism is explicit (QThreadPool, IOPool); OMP threads just spin-wait
     cv::setNumThreads(1);

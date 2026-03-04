@@ -1084,7 +1084,7 @@ void CTiledVolumeViewer::onVolumeClicked(QPointF scene_loc, Qt::MouseButton butt
 
     if (buttons == Qt::LeftButton) {
         bool isShift = modifiers.testFlag(Qt::ShiftModifier);
-        if (isShift && !_segmentationEditActive) {
+        if (isShift && !_segmentationEditActive && _pointCollection) {
             if (_selectedCollectionId != 0) {
                 const auto& collections = _pointCollection->getAllCollections();
                 auto it = collections.find(_selectedCollectionId);
@@ -1583,6 +1583,7 @@ void CTiledVolumeViewer::onDrawingModeActive(bool active, float brushSize, bool 
         delete _ov.cursor;
         _ov.cursor = nullptr;
     }
+    if (!_state) return;
     POI* cursor = _state->poi("cursor");
     if (cursor) onPOIChanged("cursor", cursor);
 }

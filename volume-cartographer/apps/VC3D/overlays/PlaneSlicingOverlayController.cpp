@@ -88,6 +88,9 @@ PlaneSlicingOverlayController::ViewerState& PlaneSlicingOverlayController::ensur
 
 void PlaneSlicingOverlayController::clearViewerState(VolumeViewerBase* viewer)
 {
+    if (_activeDrag.viewer == viewer) {
+        _activeDrag = {};
+    }
     auto it = _viewerStates.find(viewer);
     if (it == _viewerStates.end()) {
         return;
@@ -458,11 +461,8 @@ bool PlaneSlicingOverlayController::isVolumePointNearRotationHandle(VolumeViewer
 
 float PlaneSlicingOverlayController::normalizeDegrees(float degrees)
 {
-    while (degrees > 180.0f) {
-        degrees -= 360.0f;
+    if (!std::isfinite(degrees)) {
+        return 0.0f;
     }
-    while (degrees <= -180.0f) {
-        degrees += 360.0f;
-    }
-    return degrees;
+    return std::remainder(degrees, 360.0f);
 }

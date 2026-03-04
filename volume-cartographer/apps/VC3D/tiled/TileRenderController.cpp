@@ -150,10 +150,10 @@ void TileRenderController::drainResults()
 
     for (auto& result : results) {
         if (result.image.isNull()) {
-            // Still mark the tile's epoch so progressive refinement knows
-            // it belongs to the current generation and is stale (level=-1).
-            _tileScene->setTileWorld(result.worldKey, QPixmap(),
-                                     result.epoch, -1);
+            // Skip — don't replace a valid coarse preview with an empty
+            // pixmap.  The tile stays at whatever level it had before;
+            // progressive refinement will re-submit it when finer data
+            // arrives.
             continue;
         }
 

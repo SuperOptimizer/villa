@@ -322,7 +322,7 @@ public:
         QObject::connect(proc_, &QProcess::errorOccurred,
                          this, &SlimJob::onProcError_);
 
-        emit handler_->statusMessage(QObject::tr("Converting TIFXYZ to OBJ..."), 0);
+        if (handler_) emit handler_->statusMessage(QObject::tr("Converting TIFXYZ to OBJ..."), 0);
         startToObj_();
     }
 
@@ -480,7 +480,7 @@ private:
             QDir(outTemp_).removeRecursively();
         }
 
-        emit handler_->statusMessage(QObject::tr("SLIM-flatten cancelled"), 5000);
+        if (handler_) emit handler_->statusMessage(QObject::tr("SLIM-flatten cancelled"), 5000);
         progress_->close();
         progress_->deleteLater();
         QTimer::singleShot(0, this, [this](){ this->deleteLater(); });
@@ -516,7 +516,7 @@ private:
             }
 
             if (line.startsWith("Final stretch") || line.startsWith("Wrote:")) {
-                emit handler_->statusMessage(line, 0);
+                if (handler_) emit handler_->statusMessage(line, 0);
             }
         }
     }
@@ -543,7 +543,7 @@ private:
         box->setAttribute(Qt::WA_DeleteOnClose);
         QObject::connect(box, &QMessageBox::finished, this, [this]() { cleanupAndDelete_(); });
         box->open();
-        emit handler_->statusMessage(QObject::tr("SLIM-flatten failed"), 5000);
+        if (handler_) emit handler_->statusMessage(QObject::tr("SLIM-flatten failed"), 5000);
     }
 
     void onFinished_(int exitCode, QProcess::ExitStatus st) {
@@ -572,7 +572,7 @@ private:
                 this->deleteLater();
             });
             box->open();
-            emit handler_->statusMessage(QObject::tr("SLIM-flatten failed"), 5000);
+            if (handler_) emit handler_->statusMessage(QObject::tr("SLIM-flatten failed"), 5000);
             return;
         }
 
@@ -612,15 +612,15 @@ private:
             finishSwapIfNeeded_();
             phase_ = Phase::Done;
 
-            emit handler_->statusMessage(QObject::tr("SLIM-flatten complete: %1").arg(outFinal_), 5000);
+            if (handler_) emit handler_->statusMessage(QObject::tr("SLIM-flatten complete: %1").arg(outFinal_), 5000);
             showDoneAndCleanup_();
             return;
         }
     }
 
 private:
-    QWidget* parentWidget_ = nullptr;
-    SegmentationCommandHandler* handler_ = nullptr;
+    QPointer<QWidget> parentWidget_;
+    QPointer<SegmentationCommandHandler> handler_;
 
     // paths & flags
     QString segDir_;
@@ -2020,6 +2020,7 @@ public:
 private:
     void startNext_() {
         if (canceled_) return;
+        lastOutput_.clear();
 
         // Skip tasks whose source files don't exist.
         while (taskIndex_ < tasks_.size()) {
@@ -2046,19 +2047,21 @@ private:
         if (progress_) {
             progress_->setLabelText(QObject::tr("Uploading %1...").arg(task.description));
         }
-        emit handler_->statusMessage(QObject::tr("Uploading %1...").arg(task.description), 0);
+        if (handler_) emit handler_->statusMessage(QObject::tr("Uploading %1...").arg(task.description), 0);
 
         proc_->start("aws", args);
     }
 
     void onStdout_() {
-        const QString output = QString::fromLocal8Bit(proc_->readAllStandardOutput());
+        const QByteArray raw = proc_->readAllStandardOutput();
+        lastOutput_ += raw;
+        const QString output = QString::fromLocal8Bit(raw);
         if (output.isEmpty()) return;
         const QStringList lines = output.split('\n', Qt::SkipEmptyParts);
         for (const QString& line : lines) {
             if (line.contains("Completed") || line.contains("upload:")) {
                 const QString& desc = tasks_[taskIndex_].description;
-                emit handler_->statusMessage(
+                if (handler_) emit handler_->statusMessage(
                     QString("Uploading %1: %2").arg(desc, line.trimmed()), 0);
             }
         }
@@ -2071,8 +2074,7 @@ private:
         if (st == QProcess::NormalExit && exitCode == 0) {
             uploadedFiles_ << task.description;
         } else {
-            QString error = QString::fromLocal8Bit(proc_->readAllStandardError());
-            if (error.isEmpty()) error = QString::fromLocal8Bit(proc_->readAllStandardOutput());
+            const QString error = QString::fromLocal8Bit(lastOutput_).trimmed();
             failedFiles_ << QString("%1: %2").arg(task.description, error);
         }
 
@@ -2108,7 +2110,7 @@ private:
             proc_->waitForFinished(3000);
         }
         if (progress_) { progress_->close(); }
-        emit handler_->statusMessage(QObject::tr("AWS upload cancelled"), 3000);
+        if (handler_) emit handler_->statusMessage(QObject::tr("AWS upload cancelled"), 3000);
         deleteLater();
     }
 
@@ -2121,11 +2123,11 @@ private:
         if (!uploadedFiles_.isEmpty() && failedFiles_.isEmpty()) {
             QMessageBox::information(parentWidget_, QObject::tr("Upload Complete"),
                 QObject::tr("Successfully uploaded to S3:\n\n%1").arg(uploadedFiles_.join("\n")));
-            emit handler_->statusMessage(QObject::tr("AWS upload complete"), 5000);
+            if (handler_) emit handler_->statusMessage(QObject::tr("AWS upload complete"), 5000);
         } else if (!uploadedFiles_.isEmpty() && !failedFiles_.isEmpty()) {
             QMessageBox::warning(parentWidget_, QObject::tr("Partial Upload"),
                 QObject::tr("Uploaded:\n%1\n\nFailed:\n%2").arg(uploadedFiles_.join("\n"), failedFiles_.join("\n")));
-            emit handler_->statusMessage(QObject::tr("AWS upload partially complete"), 5000);
+            if (handler_) emit handler_->statusMessage(QObject::tr("AWS upload partially complete"), 5000);
         } else if (uploadedFiles_.isEmpty() && !failedFiles_.isEmpty()) {
             QMessageBox::critical(parentWidget_, QObject::tr("Upload Failed"),
                 QObject::tr("All uploads failed:\n\n%1\n\nPlease check:\n"
@@ -2133,18 +2135,18 @@ private:
                    "- AWS credentials are configured\n"
                    "- You have internet connection\n"
                    "- You have permissions for the S3 bucket").arg(failedFiles_.join("\n")));
-            emit handler_->statusMessage(QObject::tr("AWS upload failed"), 5000);
+            if (handler_) emit handler_->statusMessage(QObject::tr("AWS upload failed"), 5000);
         } else {
             QMessageBox::information(parentWidget_, QObject::tr("No Files to Upload"),
                 QObject::tr("No files were uploaded."));
-            emit handler_->statusMessage(QObject::tr("No files to upload"), 3000);
+            if (handler_) emit handler_->statusMessage(QObject::tr("No files to upload"), 3000);
         }
 
         deleteLater();
     }
 
-    QWidget* parentWidget_;
-    SegmentationCommandHandler* handler_;
+    QPointer<QWidget> parentWidget_;
+    QPointer<SegmentationCommandHandler> handler_;
     QString segDir_;
     QString awsProfile_;
     QList<UploadTask> tasks_;
@@ -2152,6 +2154,7 @@ private:
     QProgressDialog* progress_;
     QStringList uploadedFiles_;
     QStringList failedFiles_;
+    QByteArray lastOutput_;
     int taskIndex_{0};
     bool canceled_{false};
 };

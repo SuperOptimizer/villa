@@ -3988,8 +3988,9 @@ void CWindow::onCopyWithNtRequested()
 
 void CWindow::onFocusViewsRequested(uint64_t collectionId, uint64_t pointId)
 {
+    if (!_state) return;
     auto* pointCollection = _state->pointCollection();
-    if (!_state || !pointCollection) return;
+    if (!pointCollection) return;
 
     const auto& collections = pointCollection->getAllCollections();
     auto it = collections.find(collectionId);

@@ -2,7 +2,6 @@
 
 #include <QObject>
 #include <QElapsedTimer>
-#include <QSocketNotifier>
 #include <map>
 #include <set>
 #include <vector>
@@ -10,6 +9,10 @@
 #include <unordered_map>
 #include <chrono>
 #include <functional>
+
+#ifdef __linux__
+#include <QSocketNotifier>
+#endif
 
 class QTimer;
 class CState;
@@ -37,6 +40,7 @@ public:
 signals:
     void statusMessage(const QString& text, int timeout);
 
+#ifdef __linux__
 private slots:
     void onInotifyEvent();
     void processPendingEvents();
@@ -51,12 +55,15 @@ private:
     void scheduleProcessing();
     bool shouldSkipForSegment(const std::string& segmentId, const char* eventCategory);
     void pruneExpiredRecentlyEdited();
+#endif
 
+private:
     CState* _state{nullptr};
     SurfacePanelController* _surfacePanel{nullptr};
     SegmentationModule* _segmentationModule{nullptr};
     SurfaceTreeWidget* _treeWidget{nullptr};
 
+#ifdef __linux__
     int _inotifyFd{-1};
     QSocketNotifier* _inotifyNotifier{nullptr};
     QTimer* _processTimer{nullptr};
@@ -80,4 +87,5 @@ private:
 
     static constexpr int THROTTLE_MS = 100;
     static constexpr int RECENT_EDIT_GRACE_SECONDS = 30;
+#endif
 };
