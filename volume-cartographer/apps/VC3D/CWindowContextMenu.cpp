@@ -3,6 +3,7 @@
 #include "VCSettings.hpp"
 #include "SegmentationCommandHandler.hpp"
 
+#include <QDialogButtonBox>
 #include <QSettings>
 #include <QMessageBox>
 #include <QStandardPaths>

@@ -839,53 +839,12 @@ void MenuActionController::openRemoteScroll(
                 volumeName = picked.toStdString();
             }
 
-            // If no segments found, ask user for an external segments URL
-            if (scrollInfo.segmentIds.empty()) {
-                bool segOk = false;
-                QString segUrl = QInputDialog::getText(
-                    _window,
-                    QObject::tr("Segments Location"),
-                    QObject::tr("No segments found in the volpkg.\n"
-                                "Enter S3/HTTPS URL of directory containing segments\n"
-                                "(leave empty to skip):"),
-                    QLineEdit::Normal, QString(), &segOk);
-
-                if (segOk && !segUrl.trimmed().isEmpty()) {
-                    auto segResolved = vc::resolveRemoteUrl(segUrl.trimmed().toStdString());
-                    vc::cache::HttpAuth segAuth = auth;
-                    if (segResolved.useAwsSigv4 && !segAuth.awsSigv4) {
-                        segAuth.awsSigv4 = true;
-                        segAuth.region = segResolved.awsRegion;
-                    }
-
-                    // Normalize trailing slash
-                    std::string segBaseUrl = segResolved.httpsUrl;
-                    while (!segBaseUrl.empty() && segBaseUrl.back() == '/')
-                        segBaseUrl.pop_back();
-
-                    std::fprintf(stderr, "[RemoteScroll] Probing external segments URL: %s\n",
-                                 segBaseUrl.c_str());
-
-                    // TODO(issue-30): This s3ListObjects call runs on the GUI thread inside
-                    // a QFutureWatcher::finished callback. Moving it to a background thread
-                    // would require an additional watcher + callback chain here.
-                    auto extList = vc::cache::s3ListObjects(segBaseUrl + "/", segAuth);
-                    if (!extList.prefixes.empty()) {
-                        scrollInfo.segmentSource = vc::RemoteSegmentSource::Direct;
-                        scrollInfo.segmentsBaseUrl = segBaseUrl;
-                        scrollInfo.auth = segAuth;  // may have updated auth
-                        for (const auto& name : extList.prefixes) {
-                            std::fprintf(stderr, "[RemoteScroll]   external segment: %s\n",
-                                         name.c_str());
-                            scrollInfo.segmentIds.push_back(name);
-                        }
-                        std::fprintf(stderr, "[RemoteScroll] Found %zu external segments\n",
-                                     scrollInfo.segmentIds.size());
-                    } else {
-                        std::fprintf(stderr, "[RemoteScroll] No segments found at external URL\n");
-                    }
-                }
-            }
+            // Continuation: Phase 2 — open volume + download segments on
+            // background thread.  Captured by value so it can be invoked from
+            // either the fast path (no external-segment probe) or the async
+            // s3ListObjects watcher path below.
+            auto continueWithPhase2 = [this, auth, cachePath](
+                vc::RemoteScrollInfo scrollInfo, const std::string& volumeName) {
 
             // Phase 2: Open volume + download segments on background thread
             if (_window->statusBar()) {
@@ -1020,6 +979,77 @@ void MenuActionController::openRemoteScroll(
                     return result;
                 });
             loadWatcher->setFuture(loadFuture);
+            };  // end continueWithPhase2
+
+            // If no segments found, ask user for an external segments URL
+            if (scrollInfo.segmentIds.empty()) {
+                bool segOk = false;
+                QString segUrl = QInputDialog::getText(
+                    _window,
+                    QObject::tr("Segments Location"),
+                    QObject::tr("No segments found in the volpkg.\n"
+                                "Enter S3/HTTPS URL of directory containing segments\n"
+                                "(leave empty to skip):"),
+                    QLineEdit::Normal, QString(), &segOk);
+
+                if (segOk && !segUrl.trimmed().isEmpty()) {
+                    auto segResolved = vc::resolveRemoteUrl(segUrl.trimmed().toStdString());
+                    vc::cache::HttpAuth segAuth = auth;
+                    if (segResolved.useAwsSigv4 && !segAuth.awsSigv4) {
+                        segAuth.awsSigv4 = true;
+                        segAuth.region = segResolved.awsRegion;
+                    }
+
+                    // Normalize trailing slash
+                    std::string segBaseUrl = segResolved.httpsUrl;
+                    while (!segBaseUrl.empty() && segBaseUrl.back() == '/')
+                        segBaseUrl.pop_back();
+
+                    std::fprintf(stderr, "[RemoteScroll] Probing external segments URL: %s\n",
+                                 segBaseUrl.c_str());
+
+                    // Run s3ListObjects on a background thread to avoid
+                    // blocking the GUI (it has a 30s timeout).
+                    auto* s3Watcher = new QFutureWatcher<vc::cache::S3ListResult>(this);
+                    connect(s3Watcher, &QFutureWatcher<vc::cache::S3ListResult>::finished, this,
+                        [this, s3Watcher, scrollInfo, volumeName, segBaseUrl, segAuth,
+                         continueWithPhase2]() mutable {
+                            s3Watcher->deleteLater();
+
+                            try {
+                                auto extList = s3Watcher->result();
+                                if (!extList.prefixes.empty()) {
+                                    scrollInfo.segmentSource = vc::RemoteSegmentSource::Direct;
+                                    scrollInfo.segmentsBaseUrl = segBaseUrl;
+                                    scrollInfo.auth = segAuth;
+                                    for (const auto& name : extList.prefixes) {
+                                        std::fprintf(stderr, "[RemoteScroll]   external segment: %s\n",
+                                                     name.c_str());
+                                        scrollInfo.segmentIds.push_back(name);
+                                    }
+                                    std::fprintf(stderr, "[RemoteScroll] Found %zu external segments\n",
+                                                 scrollInfo.segmentIds.size());
+                                } else {
+                                    std::fprintf(stderr, "[RemoteScroll] No segments found at external URL\n");
+                                }
+                            } catch (const std::exception& e) {
+                                std::fprintf(stderr, "[RemoteScroll] s3ListObjects failed: %s\n", e.what());
+                            }
+
+                            continueWithPhase2(std::move(scrollInfo), volumeName);
+                        });
+
+                    auto s3Future = QtConcurrent::run(
+                        [segBaseUrl, segAuth]() -> vc::cache::S3ListResult {
+                            return vc::cache::s3ListObjects(segBaseUrl + "/", segAuth);
+                        });
+                    s3Watcher->setFuture(s3Future);
+                    return;  // Phase 2 will be triggered by s3Watcher callback
+                }
+            }
+
+            // Fast path: no external-segment probe needed
+            continueWithPhase2(std::move(scrollInfo), volumeName);
         });
 
     auto discoveryFuture = QtConcurrent::run(

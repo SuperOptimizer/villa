@@ -1961,6 +1961,243 @@ void SegmentationCommandHandler::launchNeighborCopySecondPass()
     });
 }
 
+// ---------------------------------------------------------------------------
+// AWSUploadJob -- async, signal-driven S3 upload that does NOT block the GUI.
+// Uploads are queued and executed one at a time via QProcess::finished.
+// ---------------------------------------------------------------------------
+class AWSUploadJob : public QObject {
+public:
+    struct UploadTask {
+        QString localPath;
+        QString s3Path;
+        QString description;
+        bool    isDirectory{false};
+    };
+
+    AWSUploadJob(QWidget* parentWidget,
+                 const QString& segDir,
+                 const QString& awsProfile,
+                 QList<UploadTask> tasks,
+                 SegmentationCommandHandler* handler)
+        : QObject(handler)
+        , parentWidget_(parentWidget)
+        , handler_(handler)
+        , segDir_(segDir)
+        , awsProfile_(awsProfile)
+        , tasks_(std::move(tasks))
+        , proc_(new QProcess(this))
+        , progress_(new QProgressDialog(
+              QObject::tr("Uploading to AWS S3..."),
+              QObject::tr("Cancel"), 0,
+              std::max(1, static_cast<int>(tasks_.size())),
+              parentWidget))
+    {
+        proc_->setWorkingDirectory(segDir_);
+        proc_->setProcessChannelMode(QProcess::MergedChannels);
+
+        progress_->setWindowModality(Qt::WindowModal);
+        progress_->setAutoClose(false);
+        progress_->setValue(0);
+        progress_->setAttribute(Qt::WA_DeleteOnClose);
+
+        QObject::connect(progress_, &QProgressDialog::canceled,
+                         this, &AWSUploadJob::onCanceled_);
+        QObject::connect(proc_, &QProcess::readyReadStandardOutput,
+                         this, &AWSUploadJob::onStdout_);
+        QObject::connect(proc_, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+                         this, &AWSUploadJob::onFinished_);
+        QObject::connect(proc_, &QProcess::errorOccurred,
+                         this, &AWSUploadJob::onProcError_);
+
+        if (tasks_.isEmpty()) {
+            showSummary_();
+            return;
+        }
+
+        startNext_();
+    }
+
+private:
+    void startNext_() {
+        if (canceled_) return;
+
+        // Skip tasks whose source files don't exist.
+        while (taskIndex_ < tasks_.size()) {
+            const auto& t = tasks_[taskIndex_];
+            if (QFileInfo::exists(t.localPath) &&
+                (!t.isDirectory || QFileInfo(t.localPath).isDir())) {
+                break;
+            }
+            ++taskIndex_;
+        }
+
+        if (taskIndex_ >= tasks_.size()) {
+            showSummary_();
+            return;
+        }
+
+        const auto& task = tasks_[taskIndex_];
+
+        QStringList args;
+        args << "s3" << "cp" << task.localPath << task.s3Path;
+        if (task.isDirectory) args << "--recursive";
+        if (!awsProfile_.isEmpty()) { args << "--profile" << awsProfile_; }
+
+        if (progress_) {
+            progress_->setLabelText(QObject::tr("Uploading %1...").arg(task.description));
+        }
+        emit handler_->statusMessage(QObject::tr("Uploading %1...").arg(task.description), 0);
+
+        proc_->start("aws", args);
+    }
+
+    void onStdout_() {
+        const QString output = QString::fromLocal8Bit(proc_->readAllStandardOutput());
+        if (output.isEmpty()) return;
+        const QStringList lines = output.split('\n', Qt::SkipEmptyParts);
+        for (const QString& line : lines) {
+            if (line.contains("Completed") || line.contains("upload:")) {
+                const QString& desc = tasks_[taskIndex_].description;
+                emit handler_->statusMessage(
+                    QString("Uploading %1: %2").arg(desc, line.trimmed()), 0);
+            }
+        }
+    }
+
+    void onFinished_(int exitCode, QProcess::ExitStatus st) {
+        if (canceled_) return;
+
+        const auto& task = tasks_[taskIndex_];
+        if (st == QProcess::NormalExit && exitCode == 0) {
+            uploadedFiles_ << task.description;
+        } else {
+            QString error = QString::fromLocal8Bit(proc_->readAllStandardError());
+            if (error.isEmpty()) error = QString::fromLocal8Bit(proc_->readAllStandardOutput());
+            failedFiles_ << QString("%1: %2").arg(task.description, error);
+        }
+
+        ++taskIndex_;
+        if (progress_) progress_->setValue(taskIndex_);
+
+        if (taskIndex_ < tasks_.size()) {
+            startNext_();
+        } else {
+            showSummary_();
+        }
+    }
+
+    void onProcError_(QProcess::ProcessError err) {
+        if (canceled_) return;
+        if (err == QProcess::FailedToStart) {
+            const auto& task = tasks_[taskIndex_];
+            failedFiles_ << QString("%1: Failed to start AWS CLI").arg(task.description);
+            ++taskIndex_;
+            if (progress_) progress_->setValue(taskIndex_);
+            if (taskIndex_ < tasks_.size()) {
+                startNext_();
+            } else {
+                showSummary_();
+            }
+        }
+    }
+
+    void onCanceled_() {
+        canceled_ = true;
+        if (proc_->state() != QProcess::NotRunning) {
+            proc_->kill();
+            proc_->waitForFinished(3000);
+        }
+        if (progress_) { progress_->close(); }
+        emit handler_->statusMessage(QObject::tr("AWS upload cancelled"), 3000);
+        deleteLater();
+    }
+
+    void showSummary_() {
+        if (progress_) {
+            progress_->setValue(progress_->maximum());
+            progress_->close();
+        }
+
+        if (!uploadedFiles_.isEmpty() && failedFiles_.isEmpty()) {
+            QMessageBox::information(parentWidget_, QObject::tr("Upload Complete"),
+                QObject::tr("Successfully uploaded to S3:\n\n%1").arg(uploadedFiles_.join("\n")));
+            emit handler_->statusMessage(QObject::tr("AWS upload complete"), 5000);
+        } else if (!uploadedFiles_.isEmpty() && !failedFiles_.isEmpty()) {
+            QMessageBox::warning(parentWidget_, QObject::tr("Partial Upload"),
+                QObject::tr("Uploaded:\n%1\n\nFailed:\n%2").arg(uploadedFiles_.join("\n"), failedFiles_.join("\n")));
+            emit handler_->statusMessage(QObject::tr("AWS upload partially complete"), 5000);
+        } else if (uploadedFiles_.isEmpty() && !failedFiles_.isEmpty()) {
+            QMessageBox::critical(parentWidget_, QObject::tr("Upload Failed"),
+                QObject::tr("All uploads failed:\n\n%1\n\nPlease check:\n"
+                   "- AWS CLI is installed\n"
+                   "- AWS credentials are configured\n"
+                   "- You have internet connection\n"
+                   "- You have permissions for the S3 bucket").arg(failedFiles_.join("\n")));
+            emit handler_->statusMessage(QObject::tr("AWS upload failed"), 5000);
+        } else {
+            QMessageBox::information(parentWidget_, QObject::tr("No Files to Upload"),
+                QObject::tr("No files were uploaded."));
+            emit handler_->statusMessage(QObject::tr("No files to upload"), 3000);
+        }
+
+        deleteLater();
+    }
+
+    QWidget* parentWidget_;
+    SegmentationCommandHandler* handler_;
+    QString segDir_;
+    QString awsProfile_;
+    QList<UploadTask> tasks_;
+    QProcess* proc_;
+    QProgressDialog* progress_;
+    QStringList uploadedFiles_;
+    QStringList failedFiles_;
+    int taskIndex_{0};
+    bool canceled_{false};
+};
+
+// Helper: enqueue upload tasks for one segment directory.
+static void enqueueSegmentUploads(
+    QList<AWSUploadJob::UploadTask>& tasks,
+    const QString& targetDir,
+    const QString& segmentId,
+    const QString& segmentSuffix,
+    const QString& selectedScroll)
+{
+    const QString segmentName = segmentId + segmentSuffix;
+    const QString meshPath = QString("s3://vesuvius-challenge/%1/segments/meshes/%2/")
+        .arg(selectedScroll, segmentName);
+
+    const QString objFile = QDir(targetDir).filePath(segmentName + ".obj");
+    tasks.append({objFile, meshPath, QString("%1.obj").arg(segmentName), false});
+
+    const QString flatboiObjFile = QDir(targetDir).filePath(segmentName + "_flatboi.obj");
+    tasks.append({flatboiObjFile, meshPath, QString("%1_flatboi.obj").arg(segmentName), false});
+
+    const QString xTif = QDir(targetDir).filePath("x.tif");
+    const QString yTif = QDir(targetDir).filePath("y.tif");
+    const QString zTif = QDir(targetDir).filePath("z.tif");
+    const QString metaJson = QDir(targetDir).filePath("meta.json");
+
+    if (QFileInfo::exists(xTif) && QFileInfo::exists(yTif) &&
+        QFileInfo::exists(zTif) && QFileInfo::exists(metaJson)) {
+        tasks.append({xTif, meshPath, QString("%1/x.tif").arg(segmentName), false});
+        tasks.append({yTif, meshPath, QString("%1/y.tif").arg(segmentName), false});
+        tasks.append({zTif, meshPath, QString("%1/z.tif").arg(segmentName), false});
+        tasks.append({metaJson, meshPath, QString("%1/meta.json").arg(segmentName), false});
+    }
+
+    const QString overlappingJson = QDir(targetDir).filePath("overlapping.json");
+    tasks.append({overlappingJson, meshPath, QString("%1/overlapping.json").arg(segmentName), false});
+
+    const QString layersDir = QDir(targetDir).filePath("layers");
+    if (QFileInfo::exists(layersDir) && QFileInfo(layersDir).isDir()) {
+        const QString surfaceVolPath = QString("s3://vesuvius-challenge/%1/segments/surface-volumes/%2/layers/")
+            .arg(selectedScroll, segmentName);
+        tasks.append({layersDir, surfaceVolPath, QString("%1/layers").arg(segmentName), true});
+    }
+}
+
 void SegmentationCommandHandler::onAWSUpload(const std::string& segmentId)
 {
     auto* surface = requireSurfaceAndRunner(segmentId, false);
@@ -1972,9 +2209,7 @@ void SegmentationCommandHandler::onAWSUpload(const std::string& segmentId)
 
     const std::filesystem::path segDirFs = surface->path;
     const QString  segDir   = QString::fromStdString(segDirFs.string());
-    const QString  objPath  = QDir(segDir).filePath(QString::fromStdString(segmentId) + ".obj");
-    const QString  flatObj  = QDir(segDir).filePath(QString::fromStdString(segmentId) + "_flatboi.obj");
-    QString        outTifxyz= segDir + "_flatboi";
+    const QString  outTifxyz= segDir + "_flatboi";
 
     if (!QFileInfo::exists(segDir)) {
         QMessageBox::warning(_parentWidget, tr("Error"), tr("Cannot upload to AWS: Segment directory not found"));
@@ -2015,121 +2250,16 @@ void SegmentationCommandHandler::onAWSUpload(const std::string& segmentId)
 
     if (!awsProfile.isEmpty()) settings.setValue(vc3d::settings::aws::DEFAULT_PROFILE, awsProfile);
 
-    QStringList uploadedFiles;
-    QStringList failedFiles;
-
-    auto uploadFileWithProgress = [&](const QString& localPath, const QString& s3Path, const QString& description, bool isDirectory = false) {
-        if (!QFileInfo::exists(localPath)) return;
-        if (isDirectory && !QFileInfo(localPath).isDir()) return;
-
-        QStringList awsArgs;
-        awsArgs << "s3" << "cp" << localPath << s3Path;
-        if (isDirectory) awsArgs << "--recursive";
-        if (!awsProfile.isEmpty()) { awsArgs << "--profile" << awsProfile; }
-
-        emit statusMessage(tr("Uploading %1...").arg(description), 0);
-
-        QProcess p;
-        p.setWorkingDirectory(segDir);
-        p.setProcessChannelMode(QProcess::MergedChannels);
-        p.start("aws", awsArgs);
-        if (!p.waitForStarted()) { failedFiles << QString("%1: Failed to start AWS CLI").arg(description); return; }
-
-        while (p.state() != QProcess::NotRunning) {
-            if (p.waitForReadyRead(100)) {
-                QString output = QString::fromLocal8Bit(p.readAllStandardOutput());
-                if (!output.isEmpty()) {
-                    const QStringList lines = output.split('\n', Qt::SkipEmptyParts);
-                    for (const QString& line : lines) {
-                        if (line.contains("Completed") || line.contains("upload:")) {
-                            emit statusMessage(QString("Uploading %1: %2").arg(description, line.trimmed()), 0);
-                        }
-                    }
-                }
-            }
-            QCoreApplication::processEvents();
-        }
-
-        p.waitForFinished(-1);
-        if (p.exitStatus() == QProcess::NormalExit && p.exitCode() == 0) {
-            uploadedFiles << description;
-        } else {
-            QString error = QString::fromLocal8Bit(p.readAllStandardError());
-            if (error.isEmpty()) error = QString::fromLocal8Bit(p.readAllStandardOutput());
-            failedFiles << QString("%1: %2").arg(description, error);
-        }
-    };
-
-    auto uploadSegmentContents = [&](const QString& targetDir, const QString& segmentSuffix) {
-        QString segmentName = QString::fromStdString(segmentId) + segmentSuffix;
-
-        QString meshPath = QString("s3://vesuvius-challenge/%1/segments/meshes/%2/")
-            .arg(selectedScroll).arg(segmentName);
-
-        QString objFile = QDir(targetDir).filePath(segmentName + ".obj");
-        uploadFileWithProgress(objFile, meshPath, QString("%1.obj").arg(segmentName));
-
-        QString flatboiObjFile = QDir(targetDir).filePath(segmentName + "_flatboi.obj");
-        uploadFileWithProgress(flatboiObjFile, meshPath, QString("%1_flatboi.obj").arg(segmentName));
-
-        QString xTif = QDir(targetDir).filePath("x.tif");
-        QString yTif = QDir(targetDir).filePath("y.tif");
-        QString zTif = QDir(targetDir).filePath("z.tif");
-        QString metaJson = QDir(targetDir).filePath("meta.json");
-
-        if (QFileInfo::exists(xTif) && QFileInfo::exists(yTif) &&
-            QFileInfo::exists(zTif) && QFileInfo::exists(metaJson)) {
-            uploadFileWithProgress(xTif, meshPath, QString("%1/x.tif").arg(segmentName));
-            uploadFileWithProgress(yTif, meshPath, QString("%1/y.tif").arg(segmentName));
-            uploadFileWithProgress(zTif, meshPath, QString("%1/z.tif").arg(segmentName));
-            uploadFileWithProgress(metaJson, meshPath, QString("%1/meta.json").arg(segmentName));
-        }
-
-        QString overlappingJson = QDir(targetDir).filePath("overlapping.json");
-        uploadFileWithProgress(overlappingJson, meshPath, QString("%1/overlapping.json").arg(segmentName));
-
-        QString layersDir = QDir(targetDir).filePath("layers");
-        if (QFileInfo::exists(layersDir) && QFileInfo(layersDir).isDir()) {
-            QString surfaceVolPath = QString("s3://vesuvius-challenge/%1/segments/surface-volumes/%2/layers/")
-                .arg(selectedScroll).arg(segmentName);
-            uploadFileWithProgress(layersDir, surfaceVolPath, QString("%1/layers").arg(segmentName), true);
-        }
-    };
-
-    QProgressDialog progressDlg(tr("Uploading to AWS S3..."), tr("Cancel"), 0, 0, _parentWidget);
-    progressDlg.setWindowModality(Qt::WindowModal);
-    progressDlg.setAutoClose(false);
-    progressDlg.show();
-
-    uploadSegmentContents(segDir, "");
-    if (progressDlg.wasCanceled()) { emit statusMessage(tr("AWS upload cancelled"), 3000); return; }
+    // Build the upload queue (non-existent files are skipped at upload time).
+    const QString segIdStr = QString::fromStdString(segmentId);
+    QList<AWSUploadJob::UploadTask> tasks;
+    enqueueSegmentUploads(tasks, segDir, segIdStr, QString(), selectedScroll);
     if (QFileInfo::exists(outTifxyz) && QFileInfo(outTifxyz).isDir()) {
-        uploadSegmentContents(outTifxyz, "_flatboi");
+        enqueueSegmentUploads(tasks, outTifxyz, segIdStr, QStringLiteral("_flatboi"), selectedScroll);
     }
 
-    progressDlg.close();
-
-    if (!uploadedFiles.isEmpty() && failedFiles.isEmpty()) {
-        QMessageBox::information(_parentWidget, tr("Upload Complete"),
-            tr("Successfully uploaded to S3:\n\n%1").arg(uploadedFiles.join("\n")));
-        emit statusMessage(tr("AWS upload complete"), 5000);
-    } else if (!uploadedFiles.isEmpty() && !failedFiles.isEmpty()) {
-        QMessageBox::warning(_parentWidget, tr("Partial Upload"),
-            tr("Uploaded:\n%1\n\nFailed:\n%2").arg(uploadedFiles.join("\n"), failedFiles.join("\n")));
-        emit statusMessage(tr("AWS upload partially complete"), 5000);
-    } else if (uploadedFiles.isEmpty() && !failedFiles.isEmpty()) {
-        QMessageBox::critical(_parentWidget, tr("Upload Failed"),
-            tr("All uploads failed:\n\n%1\n\nPlease check:\n"
-               "- AWS CLI is installed\n"
-               "- AWS credentials are configured\n"
-               "- You have internet connection\n"
-               "- You have permissions for the S3 bucket").arg(failedFiles.join("\n")));
-        emit statusMessage(tr("AWS upload failed"), 5000);
-    } else {
-        QMessageBox::information(_parentWidget, tr("No Files to Upload"),
-            tr("No files found to upload for segment: %1").arg(QString::fromStdString(segmentId)));
-        emit statusMessage(tr("No files to upload"), 3000);
-    }
+    // AWSUploadJob is self-deleting (calls deleteLater() when finished).
+    new AWSUploadJob(_parentWidget, segDir, awsProfile, std::move(tasks), this);
 }
 
 void SegmentationCommandHandler::onExportWidthChunks(const std::string& segmentId)
