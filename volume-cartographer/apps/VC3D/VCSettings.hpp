@@ -103,6 +103,16 @@ namespace viewer {
     constexpr bool USE_AXIS_ALIGNED_SLICES_DEFAULT = true;
     constexpr int SLICE_STEP_SIZE_DEFAULT = 1;
 
+    // Remote volume chunk cache directory
+    constexpr auto REMOTE_CACHE_DIR = "viewer/remote_cache_dir";
+    // Default: ~/.VC3D/remote_cache (resolved at runtime via QDir::homePath())
+
+    // Recent remote volume URLs
+    constexpr auto REMOTE_RECENT_URLS = "viewer/remote_recent_urls";
+
+    // Local cache directory for network-mounted volpkgs
+    constexpr auto NETWORK_CACHE_DIR = "viewer/network_cache_dir";
+
     // Audio/UX
     constexpr auto PLAY_SOUND_AFTER_SEG_RUN = "viewer/play_sound_after_seg_run";
     constexpr auto USERNAME = "viewer/username";
@@ -139,6 +149,8 @@ namespace perf {
     constexpr auto DOWNSCALE_OVERRIDE = "perf/downscale_override";
     constexpr auto FAST_INTERPOLATION = "perf/fast_interpolation";
     constexpr auto ENABLE_FILE_WATCHING = "perf/enable_file_watching";
+    constexpr auto RAM_CACHE_SIZE_GB = "perf/ram_cache_size_gb";
+    constexpr auto DISK_CACHE_SIZE_GB = "perf/disk_cache_size_gb";
 
     constexpr int PRELOADED_SLICES_DEFAULT = 200;
     constexpr bool SKIP_IMAGE_FORMAT_CONV_DEFAULT = false;
@@ -147,6 +159,8 @@ namespace perf {
     constexpr int DOWNSCALE_OVERRIDE_DEFAULT = 0;
     constexpr bool FAST_INTERPOLATION_DEFAULT = false;
     constexpr bool ENABLE_FILE_WATCHING_DEFAULT = true;
+    constexpr int RAM_CACHE_SIZE_GB_DEFAULT = 10;
+    constexpr int DISK_CACHE_SIZE_GB_DEFAULT = 100;
 }
 
 // -----------------------------------------------------------------------------
@@ -194,6 +208,9 @@ namespace neighbor_copy {
 // -----------------------------------------------------------------------------
 namespace aws {
     constexpr auto DEFAULT_PROFILE = "aws/default_profile";
+    constexpr auto ACCESS_KEY = "aws/access_key";
+    constexpr auto SECRET_KEY = "aws/secret_key";
+    constexpr auto SESSION_TOKEN = "aws/session_token";
 
     constexpr auto DEFAULT_PROFILE_DEFAULT = "";
 }
