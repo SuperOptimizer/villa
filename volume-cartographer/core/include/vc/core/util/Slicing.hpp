@@ -74,13 +74,4 @@ void sampleTileSlices(
     const std::vector<float>& offsets
 );
 
-// Compute volume gradients at native surface resolution (the raw point grid).
-// Returns normalized gradient vectors at each raw grid point.
-// dsScale converts from world coordinates to dataset coordinates.
-// Uses VcDataset directly for batch reading (not cached).
-cv::Mat_<cv::Vec3f> computeVolumeGradientsNative(
-    vc::VcDataset* ds,
-    const cv::Mat_<cv::Vec3f>& rawPoints,
-    float dsScale);
-
 

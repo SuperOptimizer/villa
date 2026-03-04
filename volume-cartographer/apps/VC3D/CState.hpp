@@ -35,7 +35,6 @@ public:
     void setVpkg(std::shared_ptr<VolumePkg> pkg);
     QString vpkgPath() const;
     bool hasVpkg() const;
-    bool isRemote() const;
 
     // --- Current Volume ---
     std::shared_ptr<Volume> currentVolume() const;

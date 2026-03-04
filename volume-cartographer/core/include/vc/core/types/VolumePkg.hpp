@@ -21,15 +21,6 @@ public:
     ~VolumePkg();
     static std::shared_ptr<VolumePkg> New(const std::filesystem::path& fileLocation);
 
-    // Remote factories
-    static std::shared_ptr<VolumePkg> NewFromScrollInfo(
-        const vc::RemoteScrollInfo& scrollInfo,
-        const std::filesystem::path& cachePath);
-
-    static std::shared_ptr<VolumePkg> NewFromVolume(
-        std::shared_ptr<Volume> vol,
-        const std::filesystem::path& cachePath = {});
-
     [[nodiscard]] std::string name() const;
     [[nodiscard]] int version() const;
     [[nodiscard]] bool hasVolumes() const;
@@ -67,12 +58,6 @@ public:
     bool reloadSingleSegmentation(const std::string& id);
 
 private:
-    // Private remote constructors
-    VolumePkg(const vc::RemoteScrollInfo& scrollInfo,
-              const std::filesystem::path& cachePath);
-    VolumePkg(std::shared_ptr<Volume> vol,
-              const std::filesystem::path& cachePath);
-
     nlohmann::json config_;
     std::filesystem::path rootDir_;
     std::map<std::string, std::shared_ptr<Volume>> volumes_;

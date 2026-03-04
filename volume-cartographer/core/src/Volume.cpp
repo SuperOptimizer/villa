@@ -20,7 +20,6 @@
 #include "vc/core/cache/HttpMetadataFetcher.hpp"
 #include "vc/core/util/RemoteUrl.hpp"
 #include "vc/core/util/NetworkFilesystem.hpp"
-#include "vc/core/util/CoordGrid.hpp"
 #include "vc/core/util/PostProcess.hpp"
 #include "vc/core/types/VcDataset.hpp"
 
@@ -584,101 +583,6 @@ int Volume::sampleCompositeBestEffort(cv::Mat_<uint8_t>& out,
     if (last > level)
         prefetchCompositeChunks(coords, normals, params.zStart, params.zEnd, level);
     return last;
-}
-
-// Helper: scale multi-slice arguments from level-0 coords to pyramid level.
-struct ScaledMultiSliceArgs {
-    cv::Mat_<cv::Vec3f> base;
-    cv::Mat_<cv::Vec3f> dirs;
-    std::vector<float> offsets;
-};
-
-static ScaledMultiSliceArgs scaleMultiSliceArgs(
-    int level,
-    const cv::Mat_<cv::Vec3f>& basePoints,
-    const cv::Mat_<cv::Vec3f>& stepDirs,
-    const std::vector<float>& offsets)
-{
-    float scale = (level > 0) ? (1.0f / static_cast<float>(1 << level)) : 1.0f;
-    ScaledMultiSliceArgs args;
-    args.base = scaleCoords(basePoints, level);
-    args.dirs = (level > 0) ? cv::Mat_<cv::Vec3f>(stepDirs * scale) : stepDirs;
-    args.offsets.resize(offsets.size());
-    for (size_t i = 0; i < offsets.size(); i++)
-        args.offsets[i] = offsets[i] * scale;
-    return args;
-}
-
-void Volume::sampleMultiSlice(std::vector<cv::Mat_<uint8_t>>& out,
-                               const cv::Mat_<cv::Vec3f>& basePoints,
-                               const cv::Mat_<cv::Vec3f>& stepDirs,
-                               const std::vector<float>& offsets,
-                               const vc::SampleParams& params)
-{
-    auto args = scaleMultiSliceArgs(params.level, basePoints, stepDirs, offsets);
-    readMultiSlice(out, tieredCache(), params.level, args.base, args.dirs, args.offsets);
-    if (params.postProcess) {
-        for (auto& slice : out)
-            if (!slice.empty())
-                applyOptionalPostProcess(slice, params);
-    }
-}
-
-void Volume::sampleMultiSlice(std::vector<cv::Mat_<uint16_t>>& out,
-                               const cv::Mat_<cv::Vec3f>& basePoints,
-                               const cv::Mat_<cv::Vec3f>& stepDirs,
-                               const std::vector<float>& offsets,
-                               const vc::SampleParams& params)
-{
-    auto args = scaleMultiSliceArgs(params.level, basePoints, stepDirs, offsets);
-    readMultiSlice(out, tieredCache(), params.level, args.base, args.dirs, args.offsets);
-}
-
-void Volume::sampleMultiSliceST(std::vector<cv::Mat_<uint8_t>>& out,
-                                 const cv::Mat_<cv::Vec3f>& basePoints,
-                                 const cv::Mat_<cv::Vec3f>& stepDirs,
-                                 const std::vector<float>& offsets,
-                                 const vc::SampleParams& params)
-{
-    auto args = scaleMultiSliceArgs(params.level, basePoints, stepDirs, offsets);
-    sampleTileSlices(out, tieredCache(), params.level, args.base, args.dirs, args.offsets);
-    if (params.postProcess) {
-        for (auto& slice : out)
-            if (!slice.empty())
-                applyOptionalPostProcess(slice, params);
-    }
-}
-
-void Volume::sampleMultiSliceST(std::vector<cv::Mat_<uint16_t>>& out,
-                                 const cv::Mat_<cv::Vec3f>& basePoints,
-                                 const cv::Mat_<cv::Vec3f>& stepDirs,
-                                 const std::vector<float>& offsets,
-                                 const vc::SampleParams& params)
-{
-    auto args = scaleMultiSliceArgs(params.level, basePoints, stepDirs, offsets);
-    sampleTileSlices(out, tieredCache(), params.level, args.base, args.dirs, args.offsets);
-}
-
-void Volume::readBlock(xt::xtensor<uint8_t, 3, xt::layout_type::column_major>& out,
-                        const cv::Vec3i& offset,
-                        int level)
-{
-    readArea3D(out, offset, tieredCache(), level);
-}
-
-void Volume::readBlock(xt::xtensor<uint16_t, 3, xt::layout_type::column_major>& out,
-                        const cv::Vec3i& offset,
-                        int level)
-{
-    readArea3D(out, offset, tieredCache(), level);
-}
-
-cv::Mat_<cv::Vec3f> Volume::computeGradients(const cv::Mat_<cv::Vec3f>& rawPoints,
-                                              float dsScale, int level)
-{
-    auto* ds = zarrDataset(level);
-    if (!ds) return cv::Mat_<cv::Vec3f>();
-    return computeVolumeGradientsNative(ds, rawPoints, dsScale);
 }
 
 // ============================================================================

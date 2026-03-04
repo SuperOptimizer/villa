@@ -66,9 +66,6 @@ public:
         const vc::cache::HttpAuth& auth = {});
 
     [[nodiscard]] bool isRemote() const noexcept { return isRemote_; }
-    [[nodiscard]] bool isNetworkMount() const noexcept { return mountInfo_.type == vc::FilesystemType::NetworkMount; }
-    [[nodiscard]] std::string filesystemLabel() const { return mountInfo_.label; }
-    [[nodiscard]] const vc::NetworkMountInfo& mountInfo() const noexcept { return mountInfo_; }
     [[nodiscard]] std::string id() const;
     [[nodiscard]] std::string name() const;
     void setName(const std::string& n);
@@ -123,65 +120,15 @@ public:
                          const cv::Mat_<cv::Vec3f>& coords,
                          const vc::SampleParams& params);
 
-    // Composite blocking (coords + normals)
-    void sampleComposite(cv::Mat_<uint8_t>& out,
-                         const cv::Mat_<cv::Vec3f>& coords,
-                         const cv::Mat_<cv::Vec3f>& normals,
-                         const vc::SampleParams& params);
-
     // Composite non-blocking (returns actual level used)
     int sampleCompositeBestEffort(cv::Mat_<uint8_t>& out,
                                   const cv::Mat_<cv::Vec3f>& coords,
                                   const cv::Mat_<cv::Vec3f>& normals,
                                   const vc::SampleParams& params);
 
-    // Multi-slice (OMP parallel, uint8)
-    void sampleMultiSlice(std::vector<cv::Mat_<uint8_t>>& out,
-                          const cv::Mat_<cv::Vec3f>& basePoints,
-                          const cv::Mat_<cv::Vec3f>& stepDirs,
-                          const std::vector<float>& offsets,
-                          const vc::SampleParams& params);
-
-    // Multi-slice (OMP parallel, uint16)
-    void sampleMultiSlice(std::vector<cv::Mat_<uint16_t>>& out,
-                          const cv::Mat_<cv::Vec3f>& basePoints,
-                          const cv::Mat_<cv::Vec3f>& stepDirs,
-                          const std::vector<float>& offsets,
-                          const vc::SampleParams& params);
-
-    // Multi-slice single-threaded (for use inside OMP regions, uint8)
-    void sampleMultiSliceST(std::vector<cv::Mat_<uint8_t>>& out,
-                            const cv::Mat_<cv::Vec3f>& basePoints,
-                            const cv::Mat_<cv::Vec3f>& stepDirs,
-                            const std::vector<float>& offsets,
-                            const vc::SampleParams& params);
-
-    // Multi-slice single-threaded (for use inside OMP regions, uint16)
-    void sampleMultiSliceST(std::vector<cv::Mat_<uint16_t>>& out,
-                            const cv::Mat_<cv::Vec3f>& basePoints,
-                            const cv::Mat_<cv::Vec3f>& stepDirs,
-                            const std::vector<float>& offsets,
-                            const vc::SampleParams& params);
-
-    // Block read (xtensor output, blocking)
-    void readBlock(xt::xtensor<uint8_t, 3, xt::layout_type::column_major>& out,
-                   const cv::Vec3i& offset,
-                   int level = 0);
-
-    void readBlock(xt::xtensor<uint16_t, 3, xt::layout_type::column_major>& out,
-                   const cv::Vec3i& offset,
-                   int level = 0);
-
-    // Compute volume gradients at native surface resolution.
-    [[nodiscard]] cv::Mat_<cv::Vec3f> computeGradients(const cv::Mat_<cv::Vec3f>& rawPoints,
-                                         float dsScale, int level = 0);
-
     // Pin the coarsest pyramid level in the hot tier (never evicted).
     // Guarantees sampleBestEffort() always returns data immediately.
     void pinCoarsestLevel(bool blocking = false);
-
-    // --- Chunk prefetch ---
-    void prefetchChunks(const cv::Mat_<cv::Vec3f>& coords, int level);
 
     // Prefetch all chunks overlapping a world-space axis-aligned bounding box.
     // lo/hi are in world (level 0) coordinates, (x, y, z).
@@ -198,9 +145,6 @@ public:
 
     // Scan the coarsest pyramid level to find non-zero data extent.
     void computeDataBounds();
-
-    // --- Query ---
-    [[nodiscard]] bool allChunksCached(const cv::Mat_<cv::Vec3f>& coords, int level) const;
 
     [[nodiscard]] static bool checkDir(std::filesystem::path path);
 
@@ -236,6 +180,13 @@ protected:
         int minIx, maxIx, minIy, maxIy, minIz, maxIz;
     };
     ChunkBBox coordsToChunkBBox(const cv::Mat_<cv::Vec3f>& coords, int level) const;
+    bool allChunksCached(const cv::Mat_<cv::Vec3f>& coords, int level) const;
+    void prefetchChunks(const cv::Mat_<cv::Vec3f>& coords, int level);
+
+    void sampleComposite(cv::Mat_<uint8_t>& out,
+                         const cv::Mat_<cv::Vec3f>& coords,
+                         const cv::Mat_<cv::Vec3f>& normals,
+                         const vc::SampleParams& params);
 
     // Composite-aware chunk helpers: expand bbox by normal offsets
     ChunkBBox compositeChunkBBox(const cv::Mat_<cv::Vec3f>& coords,

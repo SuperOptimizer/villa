@@ -38,8 +38,6 @@ QString CState::vpkgPath() const
 
 bool CState::hasVpkg() const { return _vpkg != nullptr; }
 
-bool CState::isRemote() const { return _vpkg && _vpkg->isRemote(); }
-
 std::shared_ptr<Volume> CState::currentVolume() const { return _currentVolume; }
 
 std::string CState::currentVolumeId() const { return _currentVolumeId; }
