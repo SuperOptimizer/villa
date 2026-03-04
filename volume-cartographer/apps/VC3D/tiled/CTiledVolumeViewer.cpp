@@ -445,15 +445,15 @@ void CTiledVolumeViewer::onPinComplete()
     // For remote volumes with no surface, create a default PlaneSurface
     // centered in the volume so the axis-aligned viewers can render.
     if (!_surfWeak.lock() && _volume && isAxisAlignedView()) {
-        auto shape = _volume->shape();  // (z, y, x) at scale 0
+        auto shape = _volume->shape();  // {width, height, slices} = {x, y, z}
         const auto& db = _volume->dataBounds();
         cv::Vec3f center;
         if (db.valid) {
-            center = cv::Vec3f((db.minZ + db.maxZ) * 0.5f,
+            center = cv::Vec3f((db.minX + db.maxX) * 0.5f,
                                (db.minY + db.maxY) * 0.5f,
-                               (db.minX + db.maxX) * 0.5f);
+                               (db.minZ + db.maxZ) * 0.5f);
         } else {
-            center = cv::Vec3f(shape[2] * 0.5f, shape[1] * 0.5f, shape[0] * 0.5f);
+            center = cv::Vec3f(shape[0] * 0.5f, shape[1] * 0.5f, shape[2] * 0.5f);
         }
         cv::Vec3f normal;
         if (_surfName == "xy plane") normal = cv::Vec3f(0, 0, 1);

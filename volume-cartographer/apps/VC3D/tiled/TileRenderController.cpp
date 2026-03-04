@@ -240,8 +240,13 @@ void TileRenderController::tick()
 
                 int maxRefine = std::min(static_cast<int>(stale.size()),
                                          tiled_config::DRAIN_BATCH_SIZE);
+                const uint64_t epoch = _currentEpoch->load(std::memory_order_relaxed);
                 for (int i = 0; i < maxRefine; i++) {
                     TileRenderParams params = _lastBuildParams(stale[i]);
+                    // Use current controller epoch, not camera epoch — buildRenderParams
+                    // copies _camera.epoch which is stale after markChunkArrived() bumped
+                    // the controller epoch.
+                    params.epoch = epoch;
                     _renderPool->submit(params, _lastSurface, _lastVolume, _currentEpoch, _controllerId);
                 }
                 moreWork = true;
