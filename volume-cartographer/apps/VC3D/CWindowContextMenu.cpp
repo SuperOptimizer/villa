@@ -5,6 +5,9 @@
 
 #include <QSettings>
 #include <QMessageBox>
+#include <QStandardPaths>
+#include <QtConcurrent>
+#include <QProgressDialog>
 
 #include "CommandLineToolRunner.hpp"
 #include "vc/core/types/VolumePkg.hpp"
@@ -940,3 +943,5 @@ bool CWindow::initializeCommandLineRunner()
     }
     return true;
 }
+
+#include "CWindowContextMenu.moc"

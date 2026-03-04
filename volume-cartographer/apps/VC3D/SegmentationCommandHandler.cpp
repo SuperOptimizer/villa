@@ -54,7 +54,7 @@
 #include "vc/core/types/Segmentation.hpp"
 #include "vc/core/util/Surface.hpp"
 #include "vc/core/util/QuadSurface.hpp"
-#include "vc/core/util/ABFFlattening.hpp"
+#include "vc/flattening/ABFFlattening.hpp"
 #include "ToolDialogs.hpp"
 #include "elements/VolumeSelector.hpp"
 #include "elements/JsonProfilePresets.hpp"
