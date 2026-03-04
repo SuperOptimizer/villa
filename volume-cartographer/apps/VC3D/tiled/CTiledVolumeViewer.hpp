@@ -253,6 +253,10 @@ private:
     // Mark overlays dirty on the render controller AND notify external listeners
     void invalidateOverlays();
 
+    // Coalesced overlay update: batches multiple overlaysUpdated() emissions
+    // into a single deferred emission on the next event loop iteration.
+    void scheduleOverlayUpdate();
+
     // Recompute and update the params hash on the render controller
     void updateParamsHash();
 
@@ -383,10 +387,18 @@ private:
     mutable ActiveSegmentationHandle _activeSegHandle;
     mutable bool _activeSegHandleDirty = true;
 
+    // --- Cached QuadSurface bounding box (for fitSurfaceInView) ---
+    struct CachedSurfBBox {
+        int colMin = 0, colMax = -1, rowMin = 0, rowMax = -1;
+        const void* surfPtr = nullptr;  // identity check
+    };
+    mutable CachedSurfBBox _surfBBoxCache;
+
     // --- Status ---
     QLabel* _lbl = nullptr;
     bool _dirtyWhileMinimized = false;
     std::chrono::steady_clock::time_point _lastStatusUpdate;  // debounce status label
+    bool _overlayUpdatePending = false;  // coalescing flag for scheduleOverlayUpdate()
 
     // --- Zoom limits ---
     float _contentMinScale = TiledViewerCamera::MIN_SCALE;  // dynamic minimum so content fills viewport

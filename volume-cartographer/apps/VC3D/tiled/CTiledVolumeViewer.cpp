@@ -141,7 +141,7 @@ CTiledVolumeViewer::~CTiledVolumeViewer()
 void CTiledVolumeViewer::setPointCollection(VCCollection* pc)
 {
     _pointCollection = pc;
-    emit overlaysUpdated();
+    scheduleOverlayUpdate();
 }
 
 void CTiledVolumeViewer::setSurface(const std::string& name)
@@ -253,6 +253,7 @@ void CTiledVolumeViewer::onSurfaceChanged(std::string name, std::shared_ptr<Surf
 
     if (_surfName == name) {
         _surfWeak = surf;
+        _surfBBoxCache = {};  // invalidate bounding box cache
         if (!surf) {
             clearAllOverlayGroups();
             _tileScene->sceneCleared();
@@ -262,7 +263,7 @@ void CTiledVolumeViewer::onSurfaceChanged(std::string name, std::shared_ptr<Surf
             _ov.intersectItems.clear();
             _ov.sliceVisItems.clear();
             _paths.clear();
-            emit overlaysUpdated();
+            scheduleOverlayUpdate();
             // Grid will be rebuilt when new surface is set
         } else {
             invalidateVis();
@@ -310,7 +311,7 @@ void CTiledVolumeViewer::onVolumeClosing()
         _ov.intersectItems.clear();
         _ov.sliceVisItems.clear();
         _paths.clear();
-        emit overlaysUpdated();
+        scheduleOverlayUpdate();
         _contentBounds = ContentBounds{};
     } else {
         onSurfaceChanged(_surfName, nullptr);
@@ -932,11 +933,27 @@ void CTiledVolumeViewer::updateParamsHash()
     auto h = utils::hash_combine_values(
         _baseWindowLow, _baseWindowHigh, _stretchValues,
         _baseColormapId, _useFastInterpolation,
+        // Composite settings — all fields that affect rendered output
         _compositeSettings.enabled,
         _compositeSettings.layersFront, _compositeSettings.layersBehind,
+        _compositeSettings.reverseDirection,
         _compositeSettings.planeEnabled,
+        _compositeSettings.planeLayersFront, _compositeSettings.planeLayersBehind,
+        _compositeSettings.useVolumeGradients,
+        // CompositeParams
         _compositeSettings.params.method,
-        _compositeSettings.params.isoCutoff);
+        _compositeSettings.params.isoCutoff,
+        _compositeSettings.params.alphaMin, _compositeSettings.params.alphaMax,
+        _compositeSettings.params.alphaOpacity, _compositeSettings.params.alphaCutoff,
+        _compositeSettings.params.blExtinction, _compositeSettings.params.blEmission,
+        _compositeSettings.params.blAmbient,
+        _compositeSettings.params.lightingEnabled,
+        _compositeSettings.params.lightAzimuth, _compositeSettings.params.lightElevation,
+        _compositeSettings.params.lightDiffuse, _compositeSettings.params.lightAmbient,
+        // Postprocessing
+        _compositeSettings.postStretchValues,
+        _compositeSettings.postRemoveSmallComponents,
+        _compositeSettings.postMinComponentSize);
 
     _renderController->setParamsHash(h);
 }
@@ -1066,7 +1083,7 @@ void CTiledVolumeViewer::onCursorMove(QPointF scene_loc)
         highlight_done:
 
         if (oldHighlighted != _highlightedPointId) {
-            emit overlaysUpdated();
+            scheduleOverlayUpdate();
         }
     }
 }
@@ -1203,7 +1220,7 @@ void CTiledVolumeViewer::onPOIChanged(std::string name, POI* poi)
         if (auto* plane = dynamic_cast<PlaneSurface*>(surf.get())) {
             if (poi->p == plane->origin()) return;
             plane->setOrigin(poi->p);
-            emit overlaysUpdated();
+            scheduleOverlayUpdate();
             _state->setSurface(_surfName, surf);
         } else if (auto* quad = dynamic_cast<QuadSurface*>(surf.get())) {
             cv::Vec3f ptr(0, 0, 0);
@@ -1339,17 +1356,23 @@ void CTiledVolumeViewer::fitSurfaceInView()
 
     auto* quadSurf = dynamic_cast<QuadSurface*>(surf.get());
 
-    // Auto-crop: find bounding box of valid (non-sentinel) points
+    // Auto-crop: find bounding box of valid (non-sentinel) points.
+    // Cache the result keyed on surface identity to avoid O(n²) scan every call.
     const cv::Mat_<cv::Vec3f>& pts = quadSurf->rawPoints();
-    int colMin = pts.cols, colMax = -1, rowMin = pts.rows, rowMax = -1;
-    for (int j = 0; j < pts.rows; j++)
-        for (int i = 0; i < pts.cols; i++)
-            if (pts(j, i)[0] != -1 && std::isfinite(pts(j, i)[0])) {
-                colMin = std::min(colMin, i);
-                colMax = std::max(colMax, i);
-                rowMin = std::min(rowMin, j);
-                rowMax = std::max(rowMax, j);
-            }
+    if (_surfBBoxCache.surfPtr != quadSurf || _surfBBoxCache.colMax < _surfBBoxCache.colMin) {
+        int colMin = pts.cols, colMax = -1, rowMin = pts.rows, rowMax = -1;
+        for (int j = 0; j < pts.rows; j++)
+            for (int i = 0; i < pts.cols; i++)
+                if (pts(j, i)[0] != -1 && std::isfinite(pts(j, i)[0])) {
+                    colMin = std::min(colMin, i);
+                    colMax = std::max(colMax, i);
+                    rowMin = std::min(rowMin, j);
+                    rowMax = std::max(rowMax, j);
+                }
+        _surfBBoxCache = {colMin, colMax, rowMin, rowMax, quadSurf};
+    }
+    int colMin = _surfBBoxCache.colMin, colMax = _surfBBoxCache.colMax;
+    int rowMin = _surfBBoxCache.rowMin, rowMax = _surfBBoxCache.rowMax;
 
     if (colMax < colMin || rowMax < rowMin) {
         _camera.scale = 1.0f;
@@ -1529,12 +1552,22 @@ void CTiledVolumeViewer::clearAllOverlayGroups()
 void CTiledVolumeViewer::invalidateOverlays()
 {
     _renderController->markOverlaysDirty();
-    emit overlaysUpdated();
+    scheduleOverlayUpdate();
+}
+
+void CTiledVolumeViewer::scheduleOverlayUpdate()
+{
+    if (_overlayUpdatePending) return;
+    _overlayUpdatePending = true;
+    QMetaObject::invokeMethod(this, [this]() {
+        _overlayUpdatePending = false;
+        scheduleOverlayUpdate();
+    }, Qt::QueuedConnection);
 }
 
 void CTiledVolumeViewer::updateAllOverlays()
 {
-    emit overlaysUpdated();
+    scheduleOverlayUpdate();
 }
 
 // ============================================================================
@@ -1557,20 +1590,20 @@ void CTiledVolumeViewer::onPathsChanged(const QList<ViewerOverlayControllerBase:
     _paths.clear();
     _paths.reserve(paths.size());
     for (const auto& path : paths) _paths.push_back(path);
-    emit overlaysUpdated();
+    scheduleOverlayUpdate();
 }
 
 void CTiledVolumeViewer::onCollectionSelected(uint64_t id)
 {
     _selectedCollectionId = id;
-    emit overlaysUpdated();
+    scheduleOverlayUpdate();
 }
 
 void CTiledVolumeViewer::onPointSelected(uint64_t pointId)
 {
     if (_selectedPointId == pointId) return;
     _selectedPointId = pointId;
-    emit overlaysUpdated();
+    scheduleOverlayUpdate();
 }
 
 void CTiledVolumeViewer::onDrawingModeActive(bool active, float brushSize, bool isSquare)
@@ -1622,7 +1655,7 @@ void CTiledVolumeViewer::setBBoxMode(bool enabled)
     _bboxMode = enabled;
     if (!enabled && _activeBBoxSceneRect) {
         _activeBBoxSceneRect.reset();
-        emit overlaysUpdated();
+        scheduleOverlayUpdate();
     }
 }
 
@@ -1648,5 +1681,5 @@ auto CTiledVolumeViewer::selections() const -> std::vector<std::pair<QRectF, QCo
 void CTiledVolumeViewer::clearSelections()
 {
     _selections.clear();
-    emit overlaysUpdated();
+    scheduleOverlayUpdate();
 }

@@ -146,12 +146,10 @@ void RenderPool::pushResult(TileRenderResult result)
         std::lock_guard<std::mutex> lock(resultsMutex_);
         completedResults_.push_back(std::move(result));
     }
-    auto prev = pendingCount_.load(std::memory_order_relaxed);
-    while (prev > 0 && !pendingCount_.compare_exchange_weak(prev, prev - 1, std::memory_order_acq_rel))
-        ;
+    auto prev = pendingCount_.fetch_sub(1, std::memory_order_acq_rel);
 
     // When all pending tasks have completed, reset the submission tracker
-    if (prev > 0 && prev - 1 <= 0) {
+    if (prev == 1) {
         std::lock_guard<std::mutex> lock(timeMutex_);
         hasSubmissions_ = false;
     }

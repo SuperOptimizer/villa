@@ -47,8 +47,19 @@ protected:
     /// Round “ideal” length to 1,2 or 5 × 10^n
     double chooseNiceLength(double nominal) const;
 
-    // µm per scene-unit (pixel)  
+    // µm per scene-unit (pixel)
     double m_vx = 32.0, m_vy = 32.0;
     bool _middleButtonPanEnabled = true;
     bool _scrollPanDisabled = false;
+
+    // Scalebar cache — avoid recomputing font/text every frame
+    mutable QFont _cachedFont;
+    mutable bool _scalebarCacheDirty = true;
+    mutable double _cachedBarPx = 0;
+    mutable QString _cachedBarLabel;
+    mutable double _cachedM11 = 0;
+    mutable double _cachedDpr = 0;
+    mutable int _cachedVpW = 0;
+    mutable int _cachedVpH = 0;
+    mutable double _cachedVx = 0;
 };
