@@ -141,6 +141,7 @@ target_include_directories(VC3D
         ${CMAKE_SOURCE_DIR}/libs/edt
         ${CMAKE_SOURCE_DIR}/libs/cc3d
         ${CMAKE_SOURCE_DIR}/libs/djikstra3d
+        ${CMAKE_SOURCE_DIR}/libs/c-blosc/blosc
 )
 
 # Avahi for mDNS service discovery (Linux only)
@@ -162,5 +163,7 @@ target_link_libraries(VC3D
     Qt6::Network
     opencv_ximgproc
     $<$<BOOL:${AVAHI_FOUND}>:PkgConfig::AVAHI>
+    blosc_static
+    ${CMAKE_DL_LIBS}
 )
 
