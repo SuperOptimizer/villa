@@ -618,10 +618,6 @@ private:
         }
     }
 
-    static void removeDirIfExists_(const QString& p){
-        if (QFileInfo::exists(p)) { QDir d(p); d.removeRecursively(); }
-    }
-
 private:
     QWidget* parentWidget_ = nullptr;
     SegmentationCommandHandler* handler_ = nullptr;
@@ -924,6 +920,9 @@ QuadSurface* SegmentationCommandHandler::requireSurfaceAndRunner(
         }
     }
 
+    // Safe to return raw pointer: getSurface() returns a shared_ptr backed by
+    // Segmentation::surface_ (a cached member), so the pointed-to object remains
+    // alive as long as the Segmentation exists in the VolumePkg.
     return surf.get();
 }
 
@@ -1752,16 +1751,17 @@ void SegmentationCommandHandler::onAlphaCompRefine(const std::string& segmentId)
     }
 
     QJsonObject paramsJson = dlg.paramsJson();
-    QString paramsPath = QDir(QDir::tempPath()).filePath(
-        QStringLiteral("vc_objrefine_%1.json").arg(QDateTime::currentMSecsSinceEpoch()));
 
-    QFile paramsFile(paramsPath);
-    if (!paramsFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        QMessageBox::warning(_parentWidget, tr("Error"), tr("Failed to write params JSON: %1").arg(paramsPath));
+    auto paramsFile = std::make_unique<QTemporaryFile>(QDir::temp().filePath("vc_objrefine_XXXXXX.json"));
+    if (!paramsFile->open()) {
+        QMessageBox::warning(_parentWidget, tr("Error"), tr("Failed to create temporary params JSON file"));
         return;
     }
-    paramsFile.write(QJsonDocument(paramsJson).toJson(QJsonDocument::Indented));
-    paramsFile.close();
+    paramsFile->write(QJsonDocument(paramsJson).toJson(QJsonDocument::Indented));
+    paramsFile->flush();
+    QString paramsPath = paramsFile->fileName();
+    paramsFile->setAutoRemove(false); // CommandLineToolRunner will use the file after this scope
+    paramsFile->close();
 
     _cmdRunner->setObjRefineParams(dlg.volumePath(), dlg.srcPath(), dlg.dstPath(), paramsPath);
     _cmdRunner->setOmpThreads(dlg.ompThreads());

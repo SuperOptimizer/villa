@@ -219,7 +219,10 @@ std::vector<WorldTileKey> TileScene::staleTilesInRect(int desiredLevel, uint64_t
             size_t idx = static_cast<size_t>(r) * _bounds.totalCols + c;
             if (idx >= _meta.size()) continue;
             const auto& m = _meta[idx];
-            if (m.epoch == epoch && (m.level < 0 || m.level > desiredLevel)) {
+            // A tile is stale if it has a worse-than-desired level (regardless
+            // of epoch), OR if it was rendered at the correct level but with
+            // an older epoch (meaning partial data that a new chunk may improve).
+            if (m.level < 0 || m.level > desiredLevel || m.epoch < epoch) {
                 result.push_back(_bounds.worldKeyAt(c, r));
             }
         }

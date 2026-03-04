@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cassert>
 #include <cmath>
 #include <climits>
 #include <limits>
@@ -41,6 +42,8 @@ struct CacheParams {
         cz = cs[0]; cy = cs[1]; cx = cs[2];
         auto shape = cache->levelShape(level);
         sz = shape[0]; sy = shape[1]; sx = shape[2];
+        auto isPow2 = [](int v) { return v > 0 && (v & (v - 1)) == 0; };
+        assert(isPow2(cz) && isPow2(cy) && isPow2(cx) && "Chunk dimensions must be powers of two");
         czShift = log2_pow2(cz); cyShift = log2_pow2(cy); cxShift = log2_pow2(cx);
         czMask = cz - 1; cyMask = cy - 1; cxMask = cx - 1;
         chunksZ = (sz + cz - 1) / cz;
@@ -321,7 +324,7 @@ static void readVolumeImpl(
             if (p.dbValid && (ciz < p.dbMinCz || ciz > p.dbMaxCz ||
                               ciy < p.dbMinCy || ciy > p.dbMaxCy ||
                               cix < p.dbMinCx || cix > p.dbMaxCx)) return;
-            size_t idx = ciz * p.chunksY * p.chunksX + ciy * p.chunksX + cix;
+            size_t idx = static_cast<size_t>(ciz) * p.chunksY * p.chunksX + static_cast<size_t>(ciy) * p.chunksX + cix;
             if (!needed[idx]) {
                 needed[idx] = 1;
                 minIz = std::min(minIz, ciz); maxIz = std::max(maxIz, ciz);
@@ -378,7 +381,7 @@ static void readVolumeImpl(
         for (int cix = minIx; cix <= maxIx; cix++)
             for (int ciy = minIy; ciy <= maxIy; ciy++)
                 for (int ciz = minIz; ciz <= maxIz; ciz++)
-                    if (needed[ciz * p.chunksY * p.chunksX + ciy * p.chunksX + cix])
+                    if (needed[static_cast<size_t>(ciz) * p.chunksY * p.chunksX + static_cast<size_t>(ciy) * p.chunksX + cix])
                         neededChunks.push_back({ciz, ciy, cix});
 
         // Load chunks — check if any are uncached before spawning threads.

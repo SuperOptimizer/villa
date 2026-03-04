@@ -2590,7 +2590,7 @@ void CWindow::keyPressEvent(QKeyEvent* event)
 
     if (event->key() == vc3d::keybinds::keypress::FocusHistoryBack.key) {
         if (event->modifiers() == vc3d::keybinds::keypress::FocusHistoryBack.modifiers) {
-            auto* entry = _focusHistory.step(-1);
+            auto entry = _focusHistory.step(-1);
             if (entry) {
                 _focusHistory.setNavigating(true);
                 centerFocusAt(entry->position, entry->normal, entry->surfaceId, false);
@@ -2599,7 +2599,7 @@ void CWindow::keyPressEvent(QKeyEvent* event)
             event->accept();
             return;
         } else if (event->modifiers() == vc3d::keybinds::keypress::FocusHistoryForward.modifiers) {
-            auto* entry = _focusHistory.step(1);
+            auto entry = _focusHistory.step(1);
             if (entry) {
                 _focusHistory.setNavigating(true);
                 centerFocusAt(entry->position, entry->normal, entry->surfaceId, false);
@@ -3911,4 +3911,14 @@ cv::Vec3b CWindow::getOverlayColorBGR(size_t index) const
 {
     QColor c = getOverlayColor(index);
     return cv::Vec3b(c.blue(), c.green(), c.red());
+}
+
+void CWindow::onCopyWithNtRequested()
+{
+    // TODO: Not yet implemented
+}
+
+void CWindow::onFocusViewsRequested(uint64_t /*collectionId*/, uint64_t /*pointId*/)
+{
+    // TODO: Not yet implemented
 }

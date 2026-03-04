@@ -124,6 +124,10 @@ CTiledVolumeViewer::CTiledVolumeViewer(CState* state,
 
 CTiledVolumeViewer::~CTiledVolumeViewer()
 {
+    if (_chunkCbId != 0 && _volume && _volume->tieredCache()) {
+        _volume->tieredCache()->removeChunkReadyListener(_chunkCbId);
+        _chunkCbId = 0;
+    }
     delete _tileScene;
     // fGraphicsView and _scene are parented to this QWidget and will be
     // destroyed by Qt's parent-child ownership — do not delete them here.
@@ -191,7 +195,7 @@ void CTiledVolumeViewer::OnVolumeChanged(std::shared_ptr<Volume> vol)
     _hadValidDataBounds = false;
 
     // Set up tiered chunk cache for progressive rendering
-    if (_volume->numScales() >= 1) {
+    if (_volume && _volume->numScales() >= 1) {
         // Wire chunk-ready listener BEFORE pin to ensure no callbacks are missed
         auto* ctrl = _renderController;
         auto* viewer = this;
@@ -577,7 +581,6 @@ void CTiledVolumeViewer::zoomStepsAt(int steps, const QPointF& scenePos)
     _camera.surfacePtr[1] += dy * (1.0f / _camera.scale - 1.0f / newScale);
     _camera.scale = newScale;
 
-    int oldDsIdx = _camera.dsScaleIdx;
     if (_volume) {
         float oldDs = _camera.dsScale;
         _camera.recalcPyramidLevel(_volume->numScales());
@@ -1273,7 +1276,8 @@ void CTiledVolumeViewer::updateStatusLabel()
 
     if (_compositeSettings.enabled) {
         QString method = QString::fromStdString(_compositeSettings.params.method);
-        method[0] = method[0].toUpper();
+        if (!method.isEmpty())
+            method[0] = method[0].toUpper();
         status += QString(" | %1(%2)").arg(method).arg(
             _compositeSettings.layersFront + _compositeSettings.layersBehind);
     }

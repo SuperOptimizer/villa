@@ -186,12 +186,30 @@ void SegmentationOverlayController::applyState(const State& state)
     if (now - _lastRefreshTime < kMinRefreshInterval) {
         // state changed but we're throttling - save state for next refresh
         _currentState = std::move(sanitized);
+        // ensure a deferred refresh fires after the throttle window
+        if (!_deferredRefreshTimer) {
+            _deferredRefreshTimer = new QTimer(this);
+            _deferredRefreshTimer->setSingleShot(true);
+            connect(_deferredRefreshTimer, &QTimer::timeout, this, [this]() {
+                _lastRefreshTime = {};  // Reset so next applyState proceeds
+                if (_currentState) {
+                    refreshAll();
+                }
+            });
+        }
+        _deferredRefreshTimer->start(static_cast<int>(kMinRefreshInterval.count()));
         return;
     }
     _lastRefreshTime = now;
 
     _currentState = std::move(sanitized);
     refreshAll();
+}
+
+void SegmentationOverlayController::detachViewer(VolumeViewerBase* viewer)
+{
+    _viewerCaches.erase(viewer);
+    ViewerOverlayControllerBase::detachViewer(viewer);
 }
 
 void SegmentationOverlayController::loadApprovalMaskImage(QuadSurface* surface)

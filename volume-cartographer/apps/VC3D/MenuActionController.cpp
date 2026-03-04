@@ -52,6 +52,7 @@
 #include <QStyle>
 #include <QTemporaryDir>
 #include <QTreeWidget>
+#include <QTimer>
 #include <QTreeWidgetItem>
 #include <QTextStream>
 #include <QUrl>
@@ -672,11 +673,23 @@ void MenuActionController::openRemoteZarr(
                         QMessageBox::Yes | QMessageBox::No);
 
                     if (reply == QMessageBox::Yes) {
-                        // Re-prompt for credentials by calling openRemoteUrl again
-                        // which will detect missing saved creds and prompt
-                        QString defaultCache = QDir::homePath() + "/.VC3D/remote_cache";
+                        // Re-prompt for credentials by calling openRemoteUrl again.
+                        // Use QTimer::singleShot to break the call stack and avoid
+                        // deep recursion on repeated auth failures (Issue 31).
+                        static int authRetries = 0;
+                        if (authRetries >= 3) {
+                            if (_window->statusBar()) {
+                                _window->statusBar()->showMessage(
+                                    QObject::tr("Authentication failed after 3 attempts"), 5000);
+                            }
+                            authRetries = 0;
+                            return;
+                        }
+                        authRetries++;
                         _openRemoteAct->setEnabled(false);
-                        openRemoteUrl(QString::fromStdString(httpsUrl));
+                        QTimer::singleShot(0, this, [this, httpsUrl]() {
+                            openRemoteUrl(QString::fromStdString(httpsUrl));
+                        });
                         return;
                     }
                 } else {
@@ -776,8 +789,23 @@ void MenuActionController::openRemoteScroll(
                 settings.setValue(vc3d::settings::aws::SESSION_TOKEN,
                                   QString::fromStdString(freshAuth.sessionToken));
 
-                // Retry discovery with fresh credentials
-                openRemoteScroll(httpsUrl, freshAuth, cachePath);
+                // Retry discovery with fresh credentials.
+                // Use QTimer::singleShot to break the call stack and limit
+                // recursive re-entry on repeated auth failures (Issue 31).
+                static int scrollAuthRetries = 0;
+                if (scrollAuthRetries >= 3) {
+                    if (_window->statusBar()) {
+                        _window->statusBar()->showMessage(
+                            QObject::tr("Authentication failed after 3 attempts"), 5000);
+                    }
+                    scrollAuthRetries = 0;
+                    _openRemoteAct->setEnabled(true);
+                    return;
+                }
+                scrollAuthRetries++;
+                QTimer::singleShot(0, this, [this, httpsUrl, freshAuth, cachePath]() {
+                    openRemoteScroll(httpsUrl, freshAuth, cachePath);
+                });
                 return;
             }
 
@@ -838,6 +866,9 @@ void MenuActionController::openRemoteScroll(
                     std::fprintf(stderr, "[RemoteScroll] Probing external segments URL: %s\n",
                                  segBaseUrl.c_str());
 
+                    // TODO(issue-30): This s3ListObjects call runs on the GUI thread inside
+                    // a QFutureWatcher::finished callback. Moving it to a background thread
+                    // would require an additional watcher + callback chain here.
                     auto extList = vc::cache::s3ListObjects(segBaseUrl + "/", segAuth);
                     if (!extList.prefixes.empty()) {
                         scrollInfo.segmentSource = vc::RemoteSegmentSource::Direct;

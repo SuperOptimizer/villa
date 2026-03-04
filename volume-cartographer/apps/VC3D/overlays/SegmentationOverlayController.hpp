@@ -163,6 +163,7 @@ protected:
     bool isOverlayEnabledFor(VolumeViewerBase* viewer) const override;
     void collectPrimitives(VolumeViewerBase* viewer,
                            ViewerOverlayControllerBase::OverlayBuilder& builder) override;
+    void detachViewer(VolumeViewerBase* viewer) override;
 
 private slots:
     void onSurfaceChanged(std::string name, std::shared_ptr<Surface> surface);
@@ -232,4 +233,7 @@ private:
 
     // Approval mask overlay opacity (0-100, where 50 is default)
     int _approvalMaskOpacity{50};
+
+    // Deferred refresh timer - fires after throttle window to apply pending state
+    QTimer* _deferredRefreshTimer{nullptr};
 };

@@ -67,7 +67,7 @@ struct ContentBounds {
 namespace tiled_config {
     constexpr int VISIBLE_BUFFER_TILES = 1;   // extra tiles around viewport for smooth scrolling
     constexpr int MAX_COARSER_LEVELS   = 8;   // fallback levels searched in SliceCache::getBest()
-    constexpr int ZOOM_SETTLE_TICKS    = 6;   // ticks before zoom settle fires (~200ms at 33ms/tick)
+    constexpr int ZOOM_SETTLE_TICKS    = 5;   // ticks before zoom settle fires (~200ms at 33ms/tick)
     constexpr int DRAIN_BATCH_SIZE     = 32;  // max results drained per tick cycle
 }
 

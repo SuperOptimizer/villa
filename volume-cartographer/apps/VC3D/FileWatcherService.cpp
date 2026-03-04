@@ -121,6 +121,12 @@ void FileWatcherService::onInotifyEvent()
     while (i < length) {
         struct inotify_event* event = reinterpret_cast<struct inotify_event*>(&buffer[i]);
 
+        // IN_Q_OVERFLOW events have len == 0, so check before the len > 0 block
+        if (event->mask & IN_Q_OVERFLOW) {
+            std::cerr << "Inotify queue overflow - some events may have been lost" << std::endl;
+            // Could trigger a full reload here if needed
+        }
+
         if (event->len > 0) {
             std::string fileName(event->name);
 
@@ -189,12 +195,6 @@ void FileWatcherService::onInotifyEvent()
                     // Segment modified or closed after writing
                     // Use set to avoid duplicate updates for the same segment
                     _pendingSegmentUpdates.insert({dirName, fileName});
-                }
-
-                // Handle overflow
-                if (event->mask & IN_Q_OVERFLOW) {
-                    std::cerr << "Inotify queue overflow - some events may have been lost" << std::endl;
-                    // Could trigger a full reload here if needed
                 }
             }
         }

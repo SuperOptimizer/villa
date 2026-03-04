@@ -27,13 +27,13 @@
 Q_DECLARE_LOGGING_CATEGORY(lcSegGrowth)
 
 namespace
-{void createRotatingBackup(QuadSurface* surface, const std::filesystem::path& surfacePath, int maxBackups = 10)
+{void createRotatingBackup(QuadSurface* surface, int maxBackups = 10)
 {
     if (!surface) {
         return;
     }
 
-    qCInfo(lcSegGrowth) << "Creating backup for:" << QString::fromStdString(surfacePath.string());
+    qCInfo(lcSegGrowth) << "Creating backup for:" << QString::fromStdString(surface->path.string());
 
     try {
         // Create a rotating backup snapshot
@@ -373,7 +373,7 @@ TracerGrowthResult runTracerGrowth(const SegmentationGrowthRequest& request,
     nlohmann::json params = buildTracerParams(request);
 
     int startGen = 0;
-    if (context.resumeSurface) {
+    {
         cv::Mat resumeGenerations = context.resumeSurface->channel("generations");
         if (!resumeGenerations.empty()) {
             double minVal = 0.0;
@@ -417,8 +417,6 @@ TracerGrowthResult runTracerGrowth(const SegmentationGrowthRequest& request,
 
     if (requestedSteps > 0) {
         targetGenerations = startGen + requestedSteps;
-    } else if (!context.resumeSurface) {
-        targetGenerations = std::max(startGen + 1, 1);
     }
 
     if (targetGenerations < startGen) {
@@ -494,8 +492,7 @@ TracerGrowthResult runTracerGrowth(const SegmentationGrowthRequest& request,
             }
         }
         qCInfo(lcSegGrowth) << "  params:" << QString::fromStdString(params.dump());
-        std::filesystem::path surface_path = context.resumeSurface->path;
-        createRotatingBackup(context.resumeSurface, surface_path);
+        createRotatingBackup(context.resumeSurface);
         QuadSurface* surface = tracer(dataset,
                                       1.0f,
                                       context.volume->tieredCache(),

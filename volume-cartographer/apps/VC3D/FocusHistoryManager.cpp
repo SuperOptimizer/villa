@@ -36,10 +36,10 @@ void FocusHistoryManager::record(const cv::Vec3f& position, const cv::Vec3f& nor
     _index = static_cast<int>(_history.size()) - 1;
 }
 
-const FocusHistoryManager::Entry* FocusHistoryManager::step(int direction)
+std::optional<FocusHistoryManager::Entry> FocusHistoryManager::step(int direction)
 {
     if (_history.empty() || direction == 0 || _index < 0) {
-        return nullptr;
+        return std::nullopt;
     }
 
     const int lastIndex = static_cast<int>(_history.size()) - 1;
@@ -47,11 +47,11 @@ const FocusHistoryManager::Entry* FocusHistoryManager::step(int direction)
     targetIndex = std::max(0, std::min(targetIndex, lastIndex));
 
     if (targetIndex == _index) {
-        return nullptr;
+        return std::nullopt;
     }
 
     _index = targetIndex;
-    return &_history[_index];
+    return _history[_index];
 }
 
 void FocusHistoryManager::clear()

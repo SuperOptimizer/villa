@@ -87,6 +87,8 @@ public slots:
                                    bool inpaintOnly);
     void onFocusPOIChanged(std::string name, POI* poi);
     void onPointDoubleClicked(uint64_t pointId);
+    void onCopyWithNtRequested();
+    void onFocusViewsRequested(uint64_t collectionId, uint64_t pointId);
 
 public:
     explicit CWindow(size_t cacheSizeGB = CHUNK_CACHE_SIZE_GB);
@@ -169,6 +171,7 @@ private:
 
     SeedingWidget* _seedingWidget;
     SegmentationWidget* _segmentationWidget{nullptr};
+    QDockWidget* _lasagnaDock{nullptr};
     DrawingWidget* _drawingWidget;
     CPointCollectionWidget* _point_collection_widget;
 

@@ -287,6 +287,10 @@ void TileRenderController::markOverlaysDirty()
 void TileRenderController::markChunkArrived()
 {
     _chunkArrived = true;
+    // Bump epoch so tiles rendered at the correct level with partial data are
+    // considered stale — staleTilesInRect will include them (m.epoch < epoch),
+    // and setTile will accept the re-render (new epoch > old epoch).
+    _currentEpoch->fetch_add(1, std::memory_order_relaxed);
     ensureTickRunning();
 }
 

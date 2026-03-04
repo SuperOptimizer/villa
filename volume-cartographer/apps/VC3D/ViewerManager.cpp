@@ -31,15 +31,6 @@
 
 Q_LOGGING_CATEGORY(lcViewerManager, "vc.viewer.manager")
 
-namespace {
-struct CellRegion {
-    int rowStart = 0;
-    int rowEnd = 0;
-    int colStart = 0;
-    int colEnd = 0;
-};
-
-} // namespace
 
 ViewerManager::ViewerManager(CState* state,
                              VCCollection* points,
@@ -132,10 +123,9 @@ CTiledVolumeViewer* ViewerManager::createViewer(const std::string& surfaceName,
     _viewers.push_back(viewer);
 
     // Clean up when viewer is destroyed (e.g. MDI sub-window closed)
-    connect(viewer, &QObject::destroyed, this, [this](QObject* obj) {
-        auto* v = static_cast<CTiledVolumeViewer*>(obj);
-        _viewers.erase(std::remove(_viewers.begin(), _viewers.end(), v), _viewers.end());
-        _resetDefaults.erase(v);
+    connect(viewer, &QObject::destroyed, this, [this, viewer]() {
+        _viewers.erase(std::remove(_viewers.begin(), _viewers.end(), viewer), _viewers.end());
+        _resetDefaults.erase(viewer);
     });
 
     for (auto* overlay : _allOverlays) {
@@ -161,6 +151,9 @@ CTiledVolumeViewer* ViewerManager::createViewer(const std::string& surfaceName,
 void ViewerManager::registerOverlay(ViewerOverlayControllerBase* overlay)
 {
     if (!overlay) {
+        return;
+    }
+    if (std::find(_allOverlays.begin(), _allOverlays.end(), overlay) != _allOverlays.end()) {
         return;
     }
     _allOverlays.push_back(overlay);

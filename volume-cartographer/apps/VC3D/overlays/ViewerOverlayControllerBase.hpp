@@ -152,7 +152,7 @@ public:
     ~ViewerOverlayControllerBase() override;
 
     void attachViewer(VolumeViewerBase* viewer);
-    void detachViewer(VolumeViewerBase* viewer);
+    virtual void detachViewer(VolumeViewerBase* viewer);
 
     void bindToViewerManager(ViewerManager* manager);
 

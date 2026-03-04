@@ -284,6 +284,7 @@ void ViewerOverlayControllerBase::bindToViewerManager(ViewerManager* manager)
                                                attachViewer(viewer);
                                            });
 
+    QObject::disconnect(_managerDestroyedConn);
     _managerDestroyedConn = QObject::connect(_manager, &QObject::destroyed,
                                              this, [this]() {
                                                  _manager = nullptr;

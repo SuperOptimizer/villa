@@ -2,6 +2,7 @@
 
 #include <opencv2/core.hpp>
 #include <deque>
+#include <optional>
 #include <string>
 
 class FocusHistoryManager
@@ -18,8 +19,8 @@ public:
     // Record a new focus point (deduplicates if unchanged)
     void record(const cv::Vec3f& position, const cv::Vec3f& normal, const std::string& surfaceId);
 
-    // Step forward or backward. Returns nullptr if can't step, or pointer to entry.
-    const Entry* step(int direction);
+    // Step forward or backward. Returns nullopt if can't step, or a copy of the entry.
+    std::optional<Entry> step(int direction);
 
     // Clear all history
     void clear();

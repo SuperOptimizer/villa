@@ -30,9 +30,31 @@ TileRenderResult TileRenderer::renderTile(
         return result;
     }
 
-    // Generate coordinates for this tile
+    // Check for composite rendering (needed before generateTileCoords to
+    // avoid calling gen() twice for the QuadSurface composite path)
+    PlaneSurface* plane = dynamic_cast<PlaneSurface*>(surface.get());
+    const bool useComposite = (params.compositeSettings.enabled &&
+                               (params.compositeSettings.layersFront > 0 ||
+                                params.compositeSettings.layersBehind > 0));
+    const bool usePlaneComposite = (plane != nullptr &&
+                                    params.compositeSettings.planeEnabled &&
+                                    (params.compositeSettings.planeLayersFront > 0 ||
+                                     params.compositeSettings.planeLayersBehind > 0));
+
+    // Generate coordinates for this tile.
+    // For the QuadSurface composite path we also need normals, so request both
+    // in a single gen() call instead of calling gen() twice.
     cv::Mat_<cv::Vec3f> coords;
-    generateTileCoords(coords, params, surface);
+    cv::Mat_<cv::Vec3f> normals;
+    if (useComposite && !plane) {
+        surface->gen(&coords, &normals, cv::Size(params.tileW, params.tileH),
+                     cv::Vec3f(0, 0, 0), params.scale,
+                     {params.surfaceROI.x * params.scale,
+                      params.surfaceROI.y * params.scale,
+                      params.zOff});
+    } else {
+        generateTileCoords(coords, params, surface);
+    }
 
     if (coords.empty()) {
         return result;
@@ -88,25 +110,8 @@ TileRenderResult TileRenderer::renderTile(
     // Sample volume data
     cv::Mat_<uint8_t> gray;
 
-    // Check for composite rendering
-    PlaneSurface* plane = dynamic_cast<PlaneSurface*>(surface.get());
-    const bool useComposite = (params.compositeSettings.enabled &&
-                               (params.compositeSettings.layersFront > 0 ||
-                                params.compositeSettings.layersBehind > 0));
-    const bool usePlaneComposite = (plane != nullptr &&
-                                    params.compositeSettings.planeEnabled &&
-                                    (params.compositeSettings.planeLayersFront > 0 ||
-                                     params.compositeSettings.planeLayersBehind > 0));
-
     if (useComposite && !plane) {
-        // QuadSurface composite: need normals
-        cv::Mat_<cv::Vec3f> normals;
-
-        surface->gen(&coords, &normals, cv::Size(params.tileW, params.tileH),
-                     cv::Vec3f(0, 0, 0), params.scale,
-                     {params.surfaceROI.x * params.scale,
-                      params.surfaceROI.y * params.scale,
-                      params.zOff});
+        // QuadSurface composite: coords and normals already generated above
 
         vc::SampleParams sp;
         sp.level = params.dsScaleIdx;
