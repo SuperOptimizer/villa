@@ -198,6 +198,7 @@ std::vector<WorldTileKey> TileScene::visibleTiles(const QRectF& viewportSceneRec
     visibleGridRange(viewportSceneRect, buffer, firstCol, firstRow, lastCol, lastRow);
 
     std::vector<WorldTileKey> result;
+    if (firstCol > lastCol || firstRow > lastRow) return result;
     result.reserve(static_cast<size_t>(lastCol - firstCol + 1) * (lastRow - firstRow + 1));
     for (int r = firstRow; r <= lastRow; ++r) {
         for (int c = firstCol; c <= lastCol; ++c) {
@@ -215,6 +216,7 @@ std::vector<WorldTileKey> TileScene::staleTilesInRect(int desiredLevel, uint64_t
     visibleGridRange(viewportSceneRect, buffer, firstCol, firstRow, lastCol, lastRow);
 
     std::vector<WorldTileKey> result;
+    if (firstCol > lastCol || firstRow > lastRow) return result;
     result.reserve(static_cast<size_t>(lastCol - firstCol + 1) * (lastRow - firstRow + 1));
     for (int r = firstRow; r <= lastRow; ++r) {
         for (int c = firstCol; c <= lastCol; ++c) {

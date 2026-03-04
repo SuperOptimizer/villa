@@ -198,20 +198,23 @@ void CTiledVolumeViewer::OnVolumeChanged(std::shared_ptr<Volume> vol)
     if (_volume && _volume->numScales() >= 1) {
         // Wire chunk-ready listener BEFORE pin to ensure no callbacks are missed
         auto* ctrl = _renderController;
-        auto* viewer = this;
         int coarsestLevel = static_cast<int>(_volume->numScales()) - 1;
         auto* cache = _volume->tieredCache();
+        QPointer<CTiledVolumeViewer> viewerGuard(this);
         _chunkCbId = cache->addChunkReadyListener(
-            [ctrl, viewer, cache, coarsestLevel](const vc::cache::ChunkKey& key) {
+            [ctrl, viewerGuard, cache, coarsestLevel](const vc::cache::ChunkKey& key) {
                 QMetaObject::invokeMethod(ctrl, [ctrl, cache]() {
                     ctrl->markChunkArrived();
                     cache->clearChunkArrivedFlag();
                 }, Qt::QueuedConnection);
                 // Track coarsest-level pin progress for status display
-                if (key.level == coarsestLevel && viewer->_pinTotal.load(std::memory_order_relaxed) > 0) {
-                    QMetaObject::invokeMethod(viewer, [viewer]() {
-                        viewer->_pinReceived++;
-                        viewer->updateStatusLabel();
+                if (key.level == coarsestLevel) {
+                    QMetaObject::invokeMethod(qApp, [viewerGuard]() {
+                        if (!viewerGuard) return;
+                        if (viewerGuard->_pinTotal.load(std::memory_order_relaxed) > 0) {
+                            viewerGuard->_pinReceived++;
+                            viewerGuard->updateStatusLabel();
+                        }
                     }, Qt::QueuedConnection);
                 }
             });
