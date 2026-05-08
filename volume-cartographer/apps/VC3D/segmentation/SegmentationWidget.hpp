@@ -50,8 +50,6 @@ public:
     [[nodiscard]] SegmentationGrowthMethod growthMethod() const;
     [[nodiscard]] SegmentationGrowthMethod lastNonManualGrowthMethod() const { return _lastNonManualGrowthMethod; }
     [[nodiscard]] int growthSteps() const;
-    [[nodiscard]] QString customParamsText() const;
-    [[nodiscard]] QString customParamsProfile() const;
     [[nodiscard]] bool customParamsValid() const;
     [[nodiscard]] QString customParamsError() const;
     [[nodiscard]] utils::Json customParamsJson() const;
@@ -92,8 +90,6 @@ public:
     void setSmoothingIterations(int value);
     void setGrowthMethod(SegmentationGrowthMethod method);
     void setGrowthInProgress(bool running);
-    void setShowHoverMarker(bool enabled);
-    void setEraseBrushActive(bool active);
     void setManualAddActive(bool active);
     ManualAddTool::LinePreviewMode cycleManualAddLinePreviewMode();
 
@@ -111,7 +107,6 @@ public:
     void setCorrectionsEnabled(bool enabled);
     void setCorrectionCollections(const QVector<QPair<uint64_t, QString>>& collections,
                                    std::optional<uint64_t> activeId);
-    void setGrowthSteps(int steps, bool persist = true);
     [[nodiscard]] std::optional<std::pair<int, int>> correctionsZRange() const;
 
     [[nodiscard]] std::vector<SegmentationGrowthDirection> allowedGrowthDirections() const;
@@ -119,8 +114,6 @@ public:
 
     // Approval mask getters — delegated to panel
     [[nodiscard]] bool showApprovalMask() const;
-    [[nodiscard]] bool editApprovedMask() const;
-    [[nodiscard]] bool editUnapprovedMask() const;
     [[nodiscard]] bool autoApprovalEnabled() const;
     [[nodiscard]] float autoApprovalRadius() const;
     [[nodiscard]] float autoApprovalThreshold() const;
@@ -135,29 +128,9 @@ public:
     void setShowApprovalMask(bool enabled);
     void setEditApprovedMask(bool enabled);
     void setEditUnapprovedMask(bool enabled);
-    void setAutoApprovalEnabled(bool enabled);
-    void setAutoApprovalRadius(float radius);
-    void setAutoApprovalThreshold(float threshold);
-    void setAutoApprovalMaxDistance(float distance);
 
-    void setApprovalBrushRadius(float radius);
-    void setApprovalBrushDepth(float depth);
-    void setApprovalMaskOpacity(int opacity);
-    void setApprovalBrushColor(const QColor& color);
 
     // Neural tracer setters
-    void setNeuralTracerEnabled(bool enabled);
-    void setNeuralCheckpointPath(const QString& path);
-    void setNeuralPythonPath(const QString& path);
-    void setNeuralVolumeScale(int scale);
-    void setNeuralBatchSize(int size);
-    void setNeuralModelType(NeuralTracerModelType type);
-    void setNeuralOutputMode(NeuralTracerOutputMode mode);
-    void setDenseTtaMode(DenseTtaMode mode);
-    void setDenseTtaMergeMethod(const QString& method);
-    void setDenseTtaOutlierDropThresh(double threshold);
-    void setDenseCheckpointPath(const QString& path);
-    void setCopyCheckpointPath(const QString& path);
 
     /**
      * Set the volume zarr path for neural tracing.
@@ -169,20 +142,8 @@ public:
     [[nodiscard]] SegmentationLasagnaPanel* lasagnaPanel() const { return _lasagnaPanel; }
 
     // Lasagna getters — delegated to panel
-    [[nodiscard]] QString lasagnaDataInputPath() const;
-    [[nodiscard]] QString lasagnaConfigText() const;
-    [[nodiscard]] int lasagnaMode() const;
-    [[nodiscard]] int newModelWidth() const;
-    [[nodiscard]] int newModelHeight() const;
-    [[nodiscard]] int newModelWindings() const;
-    [[nodiscard]] QString seedPointText() const;
-    [[nodiscard]] QString newModelOutputName() const;
-    [[nodiscard]] double offsetValue() const;
-    [[nodiscard]] int windowSize() const;
-    [[nodiscard]] int windowOverlap() const;
 
     // Lasagna setters
-    void setLasagnaDataInputPath(const QString& path);
     void setSeedFromFocus(int x, int y, int z);
 
     void setAnnotateChecked(bool checked);
@@ -250,7 +211,6 @@ private:
     void buildUi();
     void syncUiState();
     void restoreSettings();
-    void writeSetting(const QString& key, const QVariant& value);
     void updateEditingState(bool enabled, bool notifyListeners);
     void noteGrowthMethod(SegmentationGrowthMethod method);
 

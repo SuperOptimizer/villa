@@ -245,14 +245,6 @@ void SegmentationWidget::restoreSettings()
     noteGrowthMethod(_growthPanel->growthMethod());
 }
 
-void SegmentationWidget::writeSetting(const QString& key, const QVariant& value)
-{
-    QSettings settings(vc3d::settingsFilePath(), QSettings::IniFormat);
-    settings.beginGroup(QStringLiteral("segmentation_edit"));
-    settings.setValue(key, value);
-    settings.endGroup();
-}
-
 void SegmentationWidget::updateEditingState(bool enabled, bool notifyListeners)
 {
     if (_editingEnabled == enabled) {
@@ -300,13 +292,9 @@ void SegmentationWidget::setAlphaPushPullConfig(const AlphaPushPullConfig& confi
 void SegmentationWidget::setEditScale(float value) { _editingPanel->setEditScale(value); }
 void SegmentationWidget::setSmoothingStrength(float value) { _editingPanel->setSmoothingStrength(value); }
 void SegmentationWidget::setSmoothingIterations(int value) { _editingPanel->setSmoothingIterations(value); }
-void SegmentationWidget::setShowHoverMarker(bool enabled) { _editingPanel->setShowHoverMarker(enabled); }
-
 // --- Approval mask delegations ---
 
 bool SegmentationWidget::showApprovalMask() const { return _approvalMaskPanel->showApprovalMask(); }
-bool SegmentationWidget::editApprovedMask() const { return _approvalMaskPanel->editApprovedMask(); }
-bool SegmentationWidget::editUnapprovedMask() const { return _approvalMaskPanel->editUnapprovedMask(); }
 bool SegmentationWidget::autoApprovalEnabled() const { return _approvalMaskPanel->autoApprovalEnabled(); }
 float SegmentationWidget::autoApprovalRadius() const { return _approvalMaskPanel->autoApprovalRadius(); }
 float SegmentationWidget::autoApprovalThreshold() const { return _approvalMaskPanel->autoApprovalThreshold(); }
@@ -320,16 +308,6 @@ QColor SegmentationWidget::approvalBrushColor() const { return _approvalMaskPane
 void SegmentationWidget::setShowApprovalMask(bool enabled) { _approvalMaskPanel->setShowApprovalMask(enabled); syncUiState(); }
 void SegmentationWidget::setEditApprovedMask(bool enabled) { _approvalMaskPanel->setEditApprovedMask(enabled); }
 void SegmentationWidget::setEditUnapprovedMask(bool enabled) { _approvalMaskPanel->setEditUnapprovedMask(enabled); }
-void SegmentationWidget::setAutoApprovalEnabled(bool enabled) { _approvalMaskPanel->setAutoApprovalEnabled(enabled); }
-void SegmentationWidget::setAutoApprovalRadius(float radius) { _approvalMaskPanel->setAutoApprovalRadius(radius); }
-void SegmentationWidget::setAutoApprovalThreshold(float threshold) { _approvalMaskPanel->setAutoApprovalThreshold(threshold); }
-void SegmentationWidget::setAutoApprovalMaxDistance(float distance) { _approvalMaskPanel->setAutoApprovalMaxDistance(distance); }
-
-void SegmentationWidget::setApprovalBrushRadius(float radius) { _approvalMaskPanel->setApprovalBrushRadius(radius); }
-void SegmentationWidget::setApprovalBrushDepth(float depth) { _approvalMaskPanel->setApprovalBrushDepth(depth); }
-void SegmentationWidget::setApprovalMaskOpacity(int opacity) { _approvalMaskPanel->setApprovalMaskOpacity(opacity); }
-void SegmentationWidget::setApprovalBrushColor(const QColor& color) { _approvalMaskPanel->setApprovalBrushColor(color); }
-
 void SegmentationWidget::setPendingChanges(bool pending)
 {
     if (_pending == pending) {
@@ -392,7 +370,6 @@ void SegmentationWidget::setManualAddActive(bool active)
     _manualAddActive = active;
     syncUiState();
 }
-void SegmentationWidget::setGrowthSteps(int steps, bool persist) { _growthPanel->setGrowthSteps(steps, persist); }
 void SegmentationWidget::setGrowthInProgress(bool running)
 {
     if (_growthInProgress == running) {
@@ -429,8 +406,6 @@ std::vector<SegmentationDirectionFieldConfig> SegmentationWidget::directionField
 
 // --- Custom params delegations ---
 
-QString SegmentationWidget::customParamsText() const { return _customParamsPanel->customParamsText(); }
-QString SegmentationWidget::customParamsProfile() const { return _customParamsPanel->customParamsProfile(); }
 bool SegmentationWidget::customParamsValid() const { return _customParamsPanel->customParamsValid(); }
 QString SegmentationWidget::customParamsError() const { return _customParamsPanel->customParamsError(); }
 utils::Json SegmentationWidget::customParamsJson() const { return _customParamsPanel->customParamsJson(); }
@@ -451,35 +426,8 @@ double SegmentationWidget::denseTtaOutlierDropThresh() const { return _neuralTra
 QString SegmentationWidget::denseCheckpointPath() const { return _neuralTracerPanel->denseCheckpointPath(); }
 QString SegmentationWidget::copyCheckpointPath() const { return _neuralTracerPanel->copyCheckpointPath(); }
 
-void SegmentationWidget::setNeuralTracerEnabled(bool enabled) { _neuralTracerPanel->setNeuralTracerEnabled(enabled); }
-void SegmentationWidget::setNeuralCheckpointPath(const QString& path) { _neuralTracerPanel->setNeuralCheckpointPath(path); }
-void SegmentationWidget::setNeuralPythonPath(const QString& path) { _neuralTracerPanel->setNeuralPythonPath(path); }
-void SegmentationWidget::setNeuralVolumeScale(int scale) { _neuralTracerPanel->setNeuralVolumeScale(scale); }
-void SegmentationWidget::setNeuralBatchSize(int size) { _neuralTracerPanel->setNeuralBatchSize(size); }
-void SegmentationWidget::setNeuralModelType(NeuralTracerModelType type) { _neuralTracerPanel->setNeuralModelType(type); }
-void SegmentationWidget::setNeuralOutputMode(NeuralTracerOutputMode mode) { _neuralTracerPanel->setNeuralOutputMode(mode); }
-void SegmentationWidget::setDenseTtaMode(DenseTtaMode mode) { _neuralTracerPanel->setDenseTtaMode(mode); }
-void SegmentationWidget::setDenseTtaMergeMethod(const QString& method) { _neuralTracerPanel->setDenseTtaMergeMethod(method); }
-void SegmentationWidget::setDenseTtaOutlierDropThresh(double threshold) { _neuralTracerPanel->setDenseTtaOutlierDropThresh(threshold); }
-void SegmentationWidget::setDenseCheckpointPath(const QString& path) { _neuralTracerPanel->setDenseCheckpointPath(path); }
-void SegmentationWidget::setCopyCheckpointPath(const QString& path) { _neuralTracerPanel->setCopyCheckpointPath(path); }
 void SegmentationWidget::setVolumeZarrPath(const QString& path) { _neuralTracerPanel->setVolumeZarrPath(path); }
-
-void SegmentationWidget::setEraseBrushActive(bool /*active*/) {}
 
 // --- Lasagna delegations ---
 
-QString SegmentationWidget::lasagnaDataInputPath() const { return _lasagnaPanel->lasagnaDataInputPath(); }
-QString SegmentationWidget::lasagnaConfigText() const { return _lasagnaPanel->lasagnaConfigText(); }
-int SegmentationWidget::lasagnaMode() const { return static_cast<int>(_lasagnaPanel->lasagnaMode()); }
-int SegmentationWidget::newModelWidth() const { return _lasagnaPanel->newModelWidth(); }
-int SegmentationWidget::newModelHeight() const { return _lasagnaPanel->newModelHeight(); }
-int SegmentationWidget::newModelWindings() const { return _lasagnaPanel->newModelWindings(); }
-QString SegmentationWidget::seedPointText() const { return _lasagnaPanel->seedPointText(); }
-QString SegmentationWidget::newModelOutputName() const { return _lasagnaPanel->newModelOutputName(); }
-double SegmentationWidget::offsetValue() const { return _lasagnaPanel->offsetValue(); }
-int SegmentationWidget::windowSize() const { return _lasagnaPanel->windowSize(); }
-int SegmentationWidget::windowOverlap() const { return _lasagnaPanel->windowOverlap(); }
-
-void SegmentationWidget::setLasagnaDataInputPath(const QString& path) { _lasagnaPanel->setLasagnaDataInputPath(path); }
 void SegmentationWidget::setSeedFromFocus(int x, int y, int z) { _lasagnaPanel->setSeedFromFocus(x, y, z); }
