@@ -67,40 +67,6 @@ void generate_bidir_spiral(
 
 void visualize_spiral(cv::Mat& vis, const std::vector<SpiralPoint>& spiral, const cv::Scalar& color, const cv::Scalar& endpoint_color, bool draw_endpoints);
 
-// JSON serialization for SpiralPoint
-void visualize_annotations(
-    const cv::Size& slice_size,
-    const VCCollection::Collection& collection,
-    const ColPoint& start_point_fw,
-    const ColPoint& start_point_bw,
-    const std::string& path
-) {
-    cv::Mat viz = cv::Mat::zeros(slice_size, CV_8UC3);
-    cv::RNG rng(12345);
-    cv::Scalar color(rng.uniform(0, 256), rng.uniform(0, 256), rng.uniform(0, 256));
-
-    for (const auto& [id, point] : collection.points) {
-        cv::Point p(point.p[0], point.p[1]);
-        cv::circle(viz, p, 3, color, -1);
-        std::stringstream ss;
-        ss << collection.name << ":" << std::fixed << std::setprecision(2) << point.winding_annotation;
-        cv::putText(viz, ss.str(), p + cv::Point(5, 5), cv::FONT_HERSHEY_SIMPLEX, 0.4, cv::Scalar(255, 255, 255), 1, cv::LINE_AA);
-    }
-
-    // Highlight start points
-    cv::Point p_fw(start_point_fw.p[0], start_point_fw.p[1]);
-    cv::circle(viz, p_fw, 8, cv::Scalar(0, 255, 0), 2); // Green circle for forward start
-
-    cv::Point p_bw(start_point_bw.p[0], start_point_bw.p[1]);
-    cv::circle(viz, p_bw, 8, cv::Scalar(0, 0, 255), 2); // Blue circle for backward start
-
-    if (!cv::imwrite(path, viz)) {
-        std::cerr << "Error: Failed to write annotation visualization to " << path << std::endl;
-    } else {
-        std::cout << "Saved annotation visualization to " << path << std::endl;
-    }
-}
-
 const float snap_trigger_th = 2.0;
 const float snap_search_range = 8.0;
 const float  snapping_w = 50.0;

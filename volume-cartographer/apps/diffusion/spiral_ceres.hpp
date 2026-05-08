@@ -9,8 +9,6 @@
 #include <vc/core/util/GridStore.hpp>
 #include "spiral_common.hpp"
 
-void visualize_normal_constraints(const cv::Mat& sheet_binary, const std::vector<std::pair<cv::Point, cv::Point>>& constraints, const std::string& path);
-
 ceres::CostFunction* CreateNormalConstraint(const vc::core::util::GridStore& normal_grid, float roi_radius, double weight);
 ceres::CostFunction* CreateSnappingConstraint(const vc::core::util::GridStore& normal_grid, float roi_radius, double weight, double snap_trig_th, double snap_search_range);
 
@@ -604,22 +602,3 @@ struct NormalConstraint {
 
 
 
-class SheetConstraintCallback : public ceres::IterationCallback {
-public:
-    SheetConstraintCallback(
-        std::vector<SpiralPoint>* all_points,
-        const std::vector<double>* positions,
-        const std::vector<SheetConstraintRay>* constraint_rays,
-        std::vector<PointInfluences>* all_influences,
-        const cv::Point* umbilicus
-    );
-
-    virtual ceres::CallbackReturnType operator()(const ceres::IterationSummary& summary);
-
-private:
-    std::vector<SpiralPoint>* all_points_;
-    const std::vector<double>* positions_;
-    const std::vector<SheetConstraintRay>* constraint_rays_;
-    std::vector<PointInfluences>* all_influences_;
-    const cv::Point* umbilicus_;
-};

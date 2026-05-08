@@ -3,8 +3,6 @@
 #include "common.hpp"
 #include "utils/Json.hpp"
 
-struct SpiralIntersection;
-
 struct SheetConstraintRay {
     cv::Point2f dir;
     std::vector<std::pair<cv::Point, cv::Point>> constraints;
@@ -20,13 +18,6 @@ struct SpiralPoint {
     double fraction_low;
     double fraction_high;
 };
-
-bool find_intersections(
-    const cv::Point2f& ray_origin,
-    const cv::Point2f& ray_dir,
-    const std::vector<SpiralPoint>& all_points,
-    std::vector<SpiralIntersection>& intersections
-);
 
 void visualize_spiral(
     cv::Mat& viz,
@@ -48,11 +39,3 @@ void visualize_spiral(
 
 void to_json(utils::Json& j, const SpiralPoint& p);
 void from_json(const utils::Json& j, SpiralPoint& p);
-
-struct SpiralIntersection {
-    int point_idx1;
-    int point_idx2;
-    double t;
-    cv::Point2d intersection_point;
-    double winding;
-};
