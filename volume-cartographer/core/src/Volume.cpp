@@ -338,11 +338,6 @@ void downsampleMeanZYX(Array3D<T>& out,
     }
 }
 
-std::array<int, 3> xyzToZyx(const std::array<int, 3>& xyz)
-{
-    return {xyz[2], xyz[1], xyz[0]};
-}
-
 utils::ZarrDtype zarrDtypeFromChunkDtype(vc::render::ChunkDtype dtype)
 {
     switch (dtype) {
@@ -1567,178 +1562,12 @@ bool Volume::readZYX(Array3D<uint8_t>& out,
     return readVolumeZYXWithPolicy(*this, out, offsetZYX, level, missingPolicy);
 }
 
-bool Volume::readZYX(Array3D<uint16_t>& out,
-                           const std::array<int, 3>& offsetZYX,
-                           int level,
-                           MissingScaleLevelPolicy missingPolicy)
-{
-    return readVolumeZYXWithPolicy(*this, out, offsetZYX, level, missingPolicy);
-}
-
 void Volume::readZYX(Array3D<uint8_t>& out,
                            const std::array<int, 3>& offsetZYX,
                            vc::render::IChunkedArray& array,
                            int level)
 {
     readFromChunkedArrayZYX(out, offsetZYX, array, level);
-}
-
-void Volume::readZYX(Array3D<uint16_t>& out,
-                           const std::array<int, 3>& offsetZYX,
-                           vc::render::IChunkedArray& array,
-                           int level)
-{
-    readFromChunkedArrayZYX(out, offsetZYX, array, level);
-}
-
-bool Volume::readXYZ(Array3D<uint8_t>& out,
-                           const std::array<int, 3>& offsetXYZ,
-                           int level,
-                           MissingScaleLevelPolicy missingPolicy)
-{
-    return readZYX(out, xyzToZyx(offsetXYZ), level, missingPolicy);
-}
-
-bool Volume::readXYZ(Array3D<uint16_t>& out,
-                           const std::array<int, 3>& offsetXYZ,
-                           int level,
-                           MissingScaleLevelPolicy missingPolicy)
-{
-    return readZYX(out, xyzToZyx(offsetXYZ), level, missingPolicy);
-}
-
-template <typename T>
-static void writeVolumeZYX(Volume& volume,
-                           const Array3D<T>& data,
-                           const std::array<int, 3>& offsetZYX,
-                           int level)
-{
-    if (volume.isRemote())
-        throw std::runtime_error("Volume::write is only supported for local zarr volumes");
-    if (level < 0)
-        throw std::out_of_range("Volume::write level must be non-negative");
-    if (!volume.hasScaleLevel(level))
-        throw std::out_of_range("Volume::write requested missing zarr scale level " + std::to_string(level));
-    if (volume.dtype() != chunkDtypeFor<T>())
-        throw std::runtime_error("Volume::write dtype does not match volume dtype");
-
-    std::array<size_t, 3> writeOffset{};
-    for (size_t d = 0; d < 3; ++d) {
-        if (offsetZYX[d] < 0)
-            throw std::out_of_range("Volume::write offset must be non-negative");
-        writeOffset[d] = static_cast<size_t>(offsetZYX[d]);
-    }
-
-    auto array = openLocalZarrArrayForWrite(zarrArrayPathForLevel(volume.path(), level));
-    writeZarrRegionZYX(array, data, writeOffset);
-
-    std::array<size_t, 3> affectedOffset = writeOffset;
-    std::array<size_t, 3> affectedShape = data.shape();
-    for (int dstLevel = level + 1;
-         dstLevel < static_cast<int>(volume.numScales()) && volume.hasScaleLevel(dstLevel);
-         ++dstLevel) {
-        const int srcLevel = dstLevel - 1;
-        auto srcArray = openLocalZarrArrayForWrite(zarrArrayPathForLevel(volume.path(), srcLevel));
-        auto dstArray = openLocalZarrArrayForWrite(zarrArrayPathForLevel(volume.path(), dstLevel));
-        const auto srcVolumeShapeInt = volume.shape(srcLevel);
-        const auto dstVolumeShapeInt = volume.shape(dstLevel);
-        std::array<size_t, 3> srcVolumeShape{
-            static_cast<size_t>(srcVolumeShapeInt[0]),
-            static_cast<size_t>(srcVolumeShapeInt[1]),
-            static_cast<size_t>(srcVolumeShapeInt[2]),
-        };
-        std::array<size_t, 3> dstVolumeShape{
-            static_cast<size_t>(dstVolumeShapeInt[0]),
-            static_cast<size_t>(dstVolumeShapeInt[1]),
-            static_cast<size_t>(dstVolumeShapeInt[2]),
-        };
-        std::array<double, 3> scaleZYX{};
-        for (size_t d = 0; d < 3; ++d) {
-            scaleZYX[d] = static_cast<double>(srcVolumeShape[d]) /
-                          static_cast<double>(std::max<size_t>(1, dstVolumeShape[d]));
-            if (scaleZYX[d] < 1.0)
-                scaleZYX[d] = 1.0;
-        }
-
-        std::array<size_t, 3> dstOffset{};
-        std::array<size_t, 3> dstEnd{};
-        std::array<size_t, 3> dstShape{};
-        for (size_t d = 0; d < 3; ++d) {
-            const size_t srcEnd = affectedOffset[d] + affectedShape[d];
-            dstOffset[d] = std::min(
-                dstVolumeShape[d],
-                static_cast<size_t>(std::floor(static_cast<double>(affectedOffset[d]) / scaleZYX[d])));
-            dstEnd[d] = std::min(
-                dstVolumeShape[d],
-                static_cast<size_t>(std::ceil(static_cast<double>(srcEnd) / scaleZYX[d])));
-            dstShape[d] = dstEnd[d] > dstOffset[d] ? dstEnd[d] - dstOffset[d] : 0;
-        }
-        if (dstShape[0] == 0 || dstShape[1] == 0 || dstShape[2] == 0)
-            break;
-
-        std::array<size_t, 3> srcReadOffset{
-            std::min(srcVolumeShape[0], static_cast<size_t>(std::floor(static_cast<double>(dstOffset[0]) * scaleZYX[0]))),
-            std::min(srcVolumeShape[1], static_cast<size_t>(std::floor(static_cast<double>(dstOffset[1]) * scaleZYX[1]))),
-            std::min(srcVolumeShape[2], static_cast<size_t>(std::floor(static_cast<double>(dstOffset[2]) * scaleZYX[2]))),
-        };
-        std::array<size_t, 3> srcReadEnd{
-            std::min(srcVolumeShape[0], static_cast<size_t>(std::ceil(static_cast<double>(dstEnd[0]) * scaleZYX[0]))),
-            std::min(srcVolumeShape[1], static_cast<size_t>(std::ceil(static_cast<double>(dstEnd[1]) * scaleZYX[1]))),
-            std::min(srcVolumeShape[2], static_cast<size_t>(std::ceil(static_cast<double>(dstEnd[2]) * scaleZYX[2]))),
-        };
-        std::array<size_t, 3> srcReadShape{
-            srcReadEnd[0] > srcReadOffset[0] ? srcReadEnd[0] - srcReadOffset[0] : 0,
-            srcReadEnd[1] > srcReadOffset[1] ? srcReadEnd[1] - srcReadOffset[1] : 0,
-            srcReadEnd[2] > srcReadOffset[2] ? srcReadEnd[2] - srcReadOffset[2] : 0,
-        };
-        if (srcReadShape[0] == 0 || srcReadShape[1] == 0 || srcReadShape[2] == 0)
-            break;
-
-        Array3D<T> source(srcReadShape);
-        readZarrRegionZYX(srcArray, source, srcReadOffset);
-
-        Array3D<T> downsampled(dstShape);
-        downsampleZYX(downsampled,
-                      source,
-                      srcReadOffset,
-                      srcVolumeShape,
-                      scaleZYX,
-                      volume.pyramidReduction());
-        writeZarrRegionZYX(dstArray, downsampled, dstOffset);
-
-        affectedOffset = dstOffset;
-        affectedShape = dstShape;
-    }
-
-    volume.invalidateCache();
-}
-
-void Volume::writeZYX(const Array3D<uint8_t>& data,
-                      const std::array<int, 3>& offsetZYX,
-                      int level)
-{
-    writeVolumeZYX(*this, data, offsetZYX, level);
-}
-
-void Volume::writeZYX(const Array3D<uint16_t>& data,
-                      const std::array<int, 3>& offsetZYX,
-                      int level)
-{
-    writeVolumeZYX(*this, data, offsetZYX, level);
-}
-
-void Volume::writeXYZ(const Array3D<uint8_t>& data,
-                      const std::array<int, 3>& offsetXYZ,
-                      int level)
-{
-    writeZYX(data, xyzToZyx(offsetXYZ), level);
-}
-
-void Volume::writeXYZ(const Array3D<uint16_t>& data,
-                      const std::array<int, 3>& offsetXYZ,
-                      int level)
-{
-    writeZYX(data, xyzToZyx(offsetXYZ), level);
 }
 
 std::optional<std::vector<std::byte>> Volume::readChunk(

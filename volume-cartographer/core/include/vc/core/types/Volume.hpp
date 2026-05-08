@@ -110,7 +110,6 @@ public:
     // Coordinate/UI order: [x, y, z] = [width, height, slices].
     [[nodiscard]] std::array<int, 3> shapeXyz() const noexcept;
     [[nodiscard]] double voxelSize() const;
-    [[nodiscard]] vc::render::ChunkDtype dtype() const noexcept { return zarrDtype_; }
     [[nodiscard]] size_t dtypeSize() const noexcept;
     [[nodiscard]] double fillValue() const noexcept { return zarrFillValue_; }
 
@@ -161,46 +160,10 @@ public:
                  const std::array<int, 3>& offsetZYX,
                  int level = 0,
                  MissingScaleLevelPolicy missingPolicy = MissingScaleLevelPolicy::Error);
-    bool readZYX(Array3D<uint16_t>& out,
-                 const std::array<int, 3>& offsetZYX,
-                 int level = 0,
-                 MissingScaleLevelPolicy missingPolicy = MissingScaleLevelPolicy::Error);
     static void readZYX(Array3D<uint8_t>& out,
                         const std::array<int, 3>& offsetZYX,
                         vc::render::IChunkedArray& array,
                         int level = 0);
-    static void readZYX(Array3D<uint16_t>& out,
-                        const std::array<int, 3>& offsetZYX,
-                        vc::render::IChunkedArray& array,
-                        int level = 0);
-
-    // UI/coordinate-order convenience:
-    //   offset = [x, y, z], shape = [x, y, z].
-    // Returned Array3D is still stored/indexed as [z, y, x].
-    bool readXYZ(Array3D<uint8_t>& out,
-                 const std::array<int, 3>& offsetXYZ,
-                 int level = 0,
-                 MissingScaleLevelPolicy missingPolicy = MissingScaleLevelPolicy::Error);
-    bool readXYZ(Array3D<uint16_t>& out,
-                 const std::array<int, 3>& offsetXYZ,
-                 int level = 0,
-                 MissingScaleLevelPolicy missingPolicy = MissingScaleLevelPolicy::Error);
-
-    // Local zarr region writes. Input arrays are indexed/stored as [z, y, x].
-    // Writes update coarser pyramid levels by mean downsampling using each
-    // adjacent level's shape ratio.
-    void writeZYX(const Array3D<uint8_t>& data,
-                  const std::array<int, 3>& offsetZYX,
-                  int level = 0);
-    void writeZYX(const Array3D<uint16_t>& data,
-                  const std::array<int, 3>& offsetZYX,
-                  int level = 0);
-    void writeXYZ(const Array3D<uint8_t>& data,
-                  const std::array<int, 3>& offsetXYZ,
-                  int level = 0);
-    void writeXYZ(const Array3D<uint16_t>& data,
-                  const std::array<int, 3>& offsetXYZ,
-                  int level = 0);
 
     // Local zarr chunk I/O. Chunk coordinates are [z, y, x]. Data is raw,
     // uncompressed chunk payload with exactly chunk_elems * dtype_size bytes.
