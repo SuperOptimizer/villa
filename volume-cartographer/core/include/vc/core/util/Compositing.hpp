@@ -172,24 +172,3 @@ float compositeLayerStack(
     const LayerStack& stack,
     const CompositeParams& params
 ) noexcept;
-
-// Utility: check if method requires all layer values to be stored
-// (as opposed to running accumulator like max/min)
-bool methodRequiresLayerStorage(const std::string& method) noexcept;
-
-// Build a 256-entry u8→u8 LUT from a 4-knot piecewise-linear transfer
-// function with implicit endpoints (0,0) and (255,255). When `enabled` is
-// false, writes the identity mapping. Knot x coordinates are clamped and
-// sorted internally, so the caller does not need to pre-sort; degenerate
-// runs (x1 == x2) collapse to a step. Safe for tight rendering loops — a
-// 256-byte array fits trivially in L1D.
-void buildTfLut256(bool enabled,
-                   uint8_t x1, uint8_t y1,
-                   uint8_t x2, uint8_t y2,
-                   uint8_t lut[256]) noexcept;
-
-// Compute directional lighting factor for a surface normal
-// Returns a multiplier (0-1) based on Lambertian diffuse lighting
-// normal: surface normal (should be normalized)
-// params: contains light direction and strength settings
-float computeLightingFactor(const cv::Vec3f& normal, const CompositeParams& params) noexcept;

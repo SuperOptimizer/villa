@@ -73,7 +73,7 @@ set_source_files_properties(src/Slicing.cpp PROPERTIES
 )
 
 qt6_wrap_cpp(metrics_moc include/vc/ui/VCCollection.hpp)
-add_library(vc_ui src/VCCollection.cpp src/UDataManipulateUtils.cpp src/surface_metrics.cpp ${metrics_moc})
+add_library(vc_ui src/VCCollection.cpp src/surface_metrics.cpp ${metrics_moc})
 target_link_libraries(vc_ui PUBLIC vc_core Qt6::Core Qt6::Gui Qt6::Widgets)
 
 add_library(vc_flattening src/ABFFlattening.cpp)

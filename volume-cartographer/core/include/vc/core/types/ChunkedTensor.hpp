@@ -54,11 +54,6 @@ struct passTroughComputor
     }
 };
 
-static uint64_t miss = 0;
-static uint64_t total = 0;
-static uint64_t chunk_compute_collisions = 0;
-static uint64_t chunk_compute_total = 0;
-
 template <typename T, typename C> class Chunked3dAccessor;
 
 inline std::unique_ptr<vc::render::ChunkCache> openChunkedArrayCache(
@@ -268,13 +263,9 @@ public:
                 _chunks[id] = chunk;
             }
             else {
-#pragma omp atomic
-                chunk_compute_collisions++;
                 munmap(chunk, len_bytes);
                 chunk = _chunks[id];
             }
-#pragma omp atomic
-            chunk_compute_total++;
             _mutex.unlock();
 
             return chunk;
@@ -337,14 +328,10 @@ public:
                 throw std::runtime_error("oops rename failed!");
         }
         else {
-#pragma omp atomic
-            chunk_compute_collisions++;
             munmap(chunk, len_bytes);
             unlink(tmp_path.string().c_str());
             chunk = _chunks[id];
         }
-#pragma omp atomic
-        chunk_compute_total++;
         _mutex.unlock();
 
         return chunk;
@@ -384,12 +371,8 @@ public:
             _chunks[id] = chunk;
         }
         else {
-#pragma omp atomic
-            chunk_compute_collisions++;
             chunk = _chunks[id];
         }
-#pragma omp atomic
-        chunk_compute_total++;
         _mutex.unlock();
 
         return chunk;
@@ -447,8 +430,6 @@ public:
     std::vector<int> _shape;
 };
 
-void print_accessor_stats();
-
 template <typename T, typename C>
 class Chunked3dAccessor
 {
@@ -480,8 +461,6 @@ public:
                 get_chunk(p);
         }
 
-        total++;
-
         return _chunk[_ar.calc_off({p[0]-_corner[0],p[1]-_corner[1],p[2]-_corner[2]})];
     }
 
@@ -510,9 +489,6 @@ public:
                 get_chunk_safe(p);
         }
 
-        #pragma omp atomic
-        total++;
-
         // size_t pos_xt = &_chunk->operator()(p[0]-_corner[0],p[1]-_corner[1],p[2]-_corner[2]) - &_chunk->operator()(0,0,0);
         // if (pos_xt != _ar.calc_off({p[0]-_corner[0],p[1]-_corner[1],p[2]-_corner[2]})) {
         //     std::cout << pos_xt << cv::Vec3i({p[0]-_corner[0],p[1]-_corner[1],p[2]-_corner[2]}) << _ar.calc_off({p[0]-_corner[0],p[1]-_corner[1],p[2]-_corner[2]}) << std::endl;
@@ -530,7 +506,6 @@ public:
 
     void get_chunk(const cv::Vec3i &p)
     {
-        miss++;
         cv::Vec3i id = {p[0]/C::CHUNK_SIZE,p[1]/C::CHUNK_SIZE,p[2]/C::CHUNK_SIZE};
         _chunk = _ar.chunk(id);
         _corner = id*C::CHUNK_SIZE;
@@ -538,8 +513,6 @@ public:
 
     void get_chunk_safe(const cv::Vec3i &p)
     {
-        #pragma omp atomic
-        miss++;
         cv::Vec3i id = {p[0]/C::CHUNK_SIZE,p[1]/C::CHUNK_SIZE,p[2]/C::CHUNK_SIZE};
         _chunk = _ar.chunk_safe(id);
         _corner = id*C::CHUNK_SIZE;

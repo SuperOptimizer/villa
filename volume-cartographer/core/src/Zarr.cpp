@@ -15,49 +15,6 @@
 
 using Json = utils::Json;
 
-// ============================================================
-// writeZarrBand
-// ============================================================
-
-template <typename T>
-void writeZarrBand(vc::VcDataset* dsOut, const std::vector<cv::Mat>& slices,
-                   uint32_t bandIdx, const std::vector<size_t>& chunks0,
-                   size_t tilesXSrc, size_t tilesYSrc,
-                   int rotQuad, int flipAxis)
-{
-    int outH = slices[0].rows, outW = slices[0].cols;
-    size_t numZ = slices.size();
-    size_t chunkZ = chunks0[0], chunkY = chunks0[1], chunkX = chunks0[2];
-
-    for (size_t tx = 0; tx < tilesXSrc; tx++) {
-        size_t x0s = tx * chunkX;
-        size_t dxc = std::min(chunkX, size_t(outW) - x0s);
-
-        int dstTx = int(tx), dstTy = int(bandIdx), dTX, dTY;
-        if (rotQuad >= 0 || flipAxis >= 0)
-            mapTileIndex(int(tx), int(bandIdx), int(tilesXSrc), int(tilesYSrc),
-                         std::max(rotQuad, 0), flipAxis, dstTx, dstTy, dTX, dTY);
-
-        std::vector<T> chunkBuf(chunkZ * chunkY * chunkX, T(0));
-        size_t dy_actual = std::min(chunkY, size_t(outH));
-        size_t dx_actual = std::min(chunkX, dxc);
-        for (size_t zi = 0; zi < numZ; zi++) {
-            size_t sliceOff = zi * chunkY * chunkX;
-            for (size_t yy = 0; yy < dy_actual; yy++) {
-                const T* row = slices[zi].ptr<T>(int(yy));
-                std::memcpy(&chunkBuf[sliceOff + yy * chunkX], &row[x0s], dx_actual * sizeof(T));
-            }
-        }
-        dsOut->writeChunk(0, size_t(dstTy), size_t(dstTx),
-                          chunkBuf.data(), chunkBuf.size() * sizeof(T));
-    }
-}
-
-template void writeZarrBand<uint8_t>(vc::VcDataset*, const std::vector<cv::Mat>&,
-    uint32_t, const std::vector<size_t>&, size_t, size_t, int, int);
-template void writeZarrBand<uint16_t>(vc::VcDataset*, const std::vector<cv::Mat>&,
-    uint32_t, const std::vector<size_t>&, size_t, size_t, int, int);
-
 void writeZarrRegionU8ByChunk(vc::VcDataset* dsOut,
                               const std::vector<size_t>& offset,
                               const std::vector<size_t>& regionShape,
@@ -147,66 +104,6 @@ void writeZarrRegionU8ByChunk(vc::VcDataset* dsOut,
         }
     }
 }
-
-// ============================================================
-// downsampleChunk
-// ============================================================
-
-template <typename T>
-void downsampleChunk(const T* src, size_t srcZ, size_t srcY, size_t srcX,
-                     T* dst, size_t dstZ, size_t dstY, size_t dstX,
-                     size_t srcActualZ, size_t srcActualY, size_t srcActualX)
-{
-    for (size_t zz = 0; zz < dstZ; zz++)
-        for (size_t yy = 0; yy < dstY; yy++)
-            for (size_t xx = 0; xx < dstX; xx++) {
-                uint32_t sum = 0; int cnt = 0;
-                for (int d0 = 0; d0 < 2 && 2*zz+d0 < srcActualZ; d0++)
-                    for (int d1 = 0; d1 < 2 && 2*yy+d1 < srcActualY; d1++)
-                        for (int d2 = 0; d2 < 2 && 2*xx+d2 < srcActualX; d2++) {
-                            sum += src[(2*zz+d0)*srcY*srcX + (2*yy+d1)*srcX + (2*xx+d2)];
-                            cnt++;
-                        }
-                dst[zz*dstY*dstX + yy*dstX + xx] = T((sum + cnt/2) / std::max(1, cnt));
-            }
-}
-
-template void downsampleChunk<uint8_t>(const uint8_t*, size_t, size_t, size_t,
-    uint8_t*, size_t, size_t, size_t, size_t, size_t, size_t);
-template void downsampleChunk<uint16_t>(const uint16_t*, size_t, size_t, size_t,
-    uint16_t*, size_t, size_t, size_t, size_t, size_t, size_t);
-
-// ============================================================
-// downsampleTileInto
-// ============================================================
-
-template <typename T>
-void downsampleTileInto(const T* src, size_t srcZ, size_t srcY, size_t srcX,
-                        T* dst, size_t dstZ, size_t dstY, size_t dstX,
-                        size_t srcActualZ, size_t srcActualY, size_t srcActualX,
-                        size_t dstOffY, size_t dstOffX)
-{
-    size_t halfZ = (srcActualZ + 1) / 2;
-    size_t halfY = (srcActualY + 1) / 2;
-    size_t halfX = (srcActualX + 1) / 2;
-    for (size_t zz = 0; zz < halfZ && zz < dstZ; zz++)
-        for (size_t yy = 0; yy < halfY && (dstOffY + yy) < dstY; yy++)
-            for (size_t xx = 0; xx < halfX && (dstOffX + xx) < dstX; xx++) {
-                uint32_t sum = 0; int cnt = 0;
-                for (int d0 = 0; d0 < 2 && 2*zz+d0 < srcActualZ; d0++)
-                    for (int d1 = 0; d1 < 2 && 2*yy+d1 < srcActualY; d1++)
-                        for (int d2 = 0; d2 < 2 && 2*xx+d2 < srcActualX; d2++) {
-                            sum += src[(2*zz+d0)*srcY*srcX + (2*yy+d1)*srcX + (2*xx+d2)];
-                            cnt++;
-                        }
-                dst[zz*dstY*dstX + (dstOffY+yy)*dstX + (dstOffX+xx)] = T((sum + cnt/2) / std::max(1, cnt));
-            }
-}
-
-template void downsampleTileInto<uint8_t>(const uint8_t*, size_t, size_t, size_t,
-    uint8_t*, size_t, size_t, size_t, size_t, size_t, size_t, size_t, size_t);
-template void downsampleTileInto<uint16_t>(const uint16_t*, size_t, size_t, size_t,
-    uint16_t*, size_t, size_t, size_t, size_t, size_t, size_t, size_t, size_t);
 
 template <typename T>
 void downsampleTileIntoPreserveZ(const T* src, size_t srcZ, size_t srcY, size_t srcX,

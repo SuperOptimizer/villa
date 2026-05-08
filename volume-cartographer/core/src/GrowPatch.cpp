@@ -4598,7 +4598,6 @@ QuadSurface *tracer(Volume& volume, float scale, int level, cv::Vec3f origin, co
 
         timer_gen.unit = succ_gen * vx_per_quad;
         timer_gen.unit_string = "vx^2";
-        // print_accessor_stats();
 
         if (!tgt_path.empty() && snapshot_interval > 0 && generation % snapshot_interval == 0) {
             QuadSurface* surf = create_surface_from_state();

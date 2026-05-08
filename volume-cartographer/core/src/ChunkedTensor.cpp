@@ -27,9 +27,3 @@ void write_cache_meta_json(const std::filesystem::path& dir, const std::filesyst
     std::ofstream o(dir / "meta.json");
     o << meta.dump(4) << std::endl;
 }
-
-void print_accessor_stats()
-{
-    std::cout << "acc miss/total " << miss << " " << total << " " << double(miss)/total << std::endl;
-    std::cout << "chunk compute overhead/total " << chunk_compute_collisions << " " << chunk_compute_total << " " << double(chunk_compute_collisions)/chunk_compute_total << std::endl;
-}
