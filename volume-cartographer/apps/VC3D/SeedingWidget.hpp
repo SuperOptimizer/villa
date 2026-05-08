@@ -73,16 +73,12 @@ private:
     
     void setupUI();
     void computeDistanceTransform();
-    void castRays();
-    void findPeaksAlongRay(const cv::Vec2f& rayDir, const cv::Vec3f& startPoint);
     void runSegmentation();
     QString findExecutablePath();
     QString findNeuralTracePyPath();
     QString findPythonExecutable();
     void updateParameterPreview();
     void updateModeUI();
-    void analyzePaths();
-    void findPeaksAlongPath(const ViewerOverlayControllerBase::PathPrimitive& path);
     void startDrawing(cv::Vec3f startPoint);
     void addPointToPath(cv::Vec3f point);
     void finalizePath();
@@ -93,7 +89,6 @@ private:
     QColor generatePathColor();
     void displayPaths();
     void updatePointsDisplay();
-    void updateInfoLabel();
     void updateButtonStates();
     
 private:

@@ -26,7 +26,6 @@ public:
 
     void populateMenus(QMenuBar* menuBar);
     void updateRecentVolpkgList(const QString& path);
-    void removeRecentVolpkgEntry(const QString& path);
     void refreshRecentMenu();
     void openVolpkgAt(const QString& path);
 

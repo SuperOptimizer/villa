@@ -42,11 +42,6 @@ public:
     void stopService();
 
     /**
-     * Check if the service is currently running.
-     */
-    [[nodiscard]] bool isRunning() const;
-
-    /**
      * Get the socket path for connecting to the service.
      * Returns empty string if service is not running.
      */

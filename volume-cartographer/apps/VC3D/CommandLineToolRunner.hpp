@@ -60,10 +60,6 @@ public:
     void setTraceParams(QString volumePath, QString srcDir, QString tgtDir, QString jsonParams, QString srcSegment);
     void setToObjParams(QString tifxyzPath, QString objPath);
     void setToObjOptions(bool normalizeUV, bool alignGrid);
-    void setObj2TifxyzParams(const QString& objPath, const QString& outputDir,
-                             float stretchFactor = 1000.0f,
-                             float meshUnits = 1.0f,
-                             int stepSize = 20);
     void setObjRefineParams(const QString& volumePath,
                             const QString& srcSurface,
                             const QString& dstSurface,
@@ -78,8 +74,6 @@ public:
     bool isRunning() const;
     
     void showConsoleOutput();
-    void hideConsoleOutput();
-    void setAutoShowConsoleOutput(bool autoShow);
     void setIncludeTifs(bool include);
     void setOmpThreads(int threads);
     void setFlattenOptions(bool flatten, int iterations, int downsample = 1);

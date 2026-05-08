@@ -313,14 +313,6 @@ void MenuActionController::updateRecentVolpkgList(const QString& path)
     refreshRecentMenu();
 }
 
-void MenuActionController::removeRecentVolpkgEntry(const QString& path)
-{
-    QStringList files = loadRecentPaths();
-    files.removeAll(path);
-    saveRecentPaths(files);
-    refreshRecentMenu();
-}
-
 void MenuActionController::openVolpkg()
 {
     if (!_window) {

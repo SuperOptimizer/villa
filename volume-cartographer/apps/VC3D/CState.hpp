@@ -74,8 +74,6 @@ public:
     // --- POIs (inlined from CSurfaceCollection) ---
     void setPOI(const std::string& name, POI* poi);
     POI* poi(const std::string& name);
-    std::vector<POI*> pois();
-    std::vector<std::string> poiNames();
 
 signals:
     void vpkgChanged(std::shared_ptr<VolumePkg> vpkg);

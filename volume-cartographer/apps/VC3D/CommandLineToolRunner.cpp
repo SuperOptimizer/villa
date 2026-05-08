@@ -426,18 +426,6 @@ void CommandLineToolRunner::showConsoleOutput()
     }
 }
 
-void CommandLineToolRunner::hideConsoleOutput()
-{
-    if (_consoleDialog) {
-        _consoleDialog->hide();
-    }
-}
-
-void CommandLineToolRunner::setAutoShowConsoleOutput(bool autoShow)
-{
-    _autoShowConsole = autoShow;
-}
-
 void CommandLineToolRunner::setPreserveConsoleOutput(bool preserve)
 {
     _preserveConsoleOutput = preserve;
@@ -695,16 +683,6 @@ QString CommandLineToolRunner::getOutputPath() const
 
     QFileInfo outputInfo(_outputPattern);
     return outputInfo.dir().path();
-}
-
-void CommandLineToolRunner::setObj2TifxyzParams(const QString& objPath, const QString& outputDir,
-                                                float stretchFactor, float meshUnits, int stepSize)
-{
-    _objPath = objPath;
-    _objOutputDir = outputDir;
-    _objStretchFactor = stretchFactor;
-    _objMeshUnits = meshUnits;
-    _objStepSize = stepSize;
 }
 
 void CommandLineToolRunner::setObjRefineParams(const QString& volumePath,

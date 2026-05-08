@@ -50,7 +50,6 @@ public:
 
     void setMdiArea(QMdiArea* mdiArea) { _mdiArea = mdiArea; }
     void setFiberViewer(int index, CTiledVolumeViewer* viewer);
-    CTiledVolumeViewer* fiberViewer(int index) const;
     int fiberStep() const { return _fiberStep; }
 
     static std::string fiberSurfaceName(int index);

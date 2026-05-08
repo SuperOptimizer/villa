@@ -369,10 +369,6 @@ void NeuralTraceServiceManager::stopService()
     emit serviceStopped();
 }
 
-bool NeuralTraceServiceManager::isRunning() const
-{
-    return _process && _process->state() == QProcess::Running && _serviceReady;
-}
 
 QString NeuralTraceServiceManager::socketPath() const
 {

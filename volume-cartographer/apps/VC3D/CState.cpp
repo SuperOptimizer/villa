@@ -243,23 +243,3 @@ POI* CState::poi(const std::string& name)
     return it->second.get();
 }
 
-std::vector<POI*> CState::pois()
-{
-    std::vector<POI*> result;
-    result.reserve(_pois.size());
-
-    for (auto& [key, ptr] : _pois) {
-        result.push_back(ptr.get());
-    }
-
-    return result;
-}
-
-std::vector<std::string> CState::poiNames()
-{
-    std::vector<std::string> keys;
-    for (auto& it : _pois)
-        keys.push_back(it.first);
-
-    return keys;
-}

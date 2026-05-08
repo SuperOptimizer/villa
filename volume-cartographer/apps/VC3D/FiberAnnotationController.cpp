@@ -37,11 +37,6 @@ void FiberAnnotationController::setFiberViewer(int index, CTiledVolumeViewer* vi
         _fiberViewers[index] = viewer;
 }
 
-CTiledVolumeViewer* FiberAnnotationController::fiberViewer(int index) const
-{
-    return (index >= 0 && index < kNumViews) ? _fiberViewers[index] : nullptr;
-}
-
 void FiberAnnotationController::beginNewFiber()
 {
     closeAnnotationViewer();
