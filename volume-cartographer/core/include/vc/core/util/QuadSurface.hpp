@@ -317,10 +317,6 @@ public:
     // True iff this surface was loaded from disk and can be safely unloaded.
     bool canUnload() const { return !path.empty(); }
 
-    // Drop _points and all derived caches; ensureLoaded() will re-read from
-    // disk on next access. No-op for in-memory-only surfaces.
-    void unloadPoints();
-
     virtual cv::Mat_<cv::Vec3f> rawPoints() { ensureLoaded(); return *_points; }
     virtual cv::Mat_<cv::Vec3f> *rawPointsPtr() { ensureLoaded(); return _points.get(); }
     virtual const cv::Mat_<cv::Vec3f> *rawPointsPtr() const { const_cast<QuadSurface*>(this)->ensureLoaded(); return _points.get(); }
@@ -360,9 +356,6 @@ public:
 
     // Generate validity mask at native resolution (255=valid, 0=invalid)
     cv::Mat_<uint8_t> validMask() const;
-
-    // Write validity mask to path/mask.tif. If img is provided, writes multi-layer TIFF.
-    void writeValidMask(const cv::Mat& img = cv::Mat());
 
     mutable cv::Mat_<uint8_t> _validMaskCache;
     // Set when _validMaskCache contains no 0s — gen() can skip the
@@ -417,11 +410,9 @@ public:
     void addOverlappingId(const std::string& id) { _overlappingIds.insert(id); }
     void removeOverlappingId(const std::string& id) { _overlappingIds.erase(id); }
     void readOverlappingJson();   // Load from path/overlapping.json
-    void writeOverlappingJson() const;
 
     // Mask timestamp caching
     std::optional<std::filesystem::file_time_type> maskTimestamp() const { return _maskTimestamp; }
-    void refreshMaskTimestamp();
     static std::optional<std::filesystem::file_time_type> readMaskTimestamp(const std::filesystem::path& dir);
 
     // DPI for TIFF output (0 = don't set). Set via setDpi() or voxelSizeToDpi().

@@ -63,11 +63,6 @@ cv::Matx44d loadAffineTransformMatrixFromString(const std::string& text)
     return parseAffineTransformMatrix(utils::Json::parse(text));
 }
 
-cv::Matx44d composeAffineTransform(const cv::Matx44d& first, const cv::Matx44d& second)
-{
-    return second * first;
-}
-
 std::optional<cv::Matx44d> tryInvertAffineTransformMatrix(const cv::Matx44d& matrix)
 {
     const cv::Matx33d linear(matrix(0, 0), matrix(0, 1), matrix(0, 2),
@@ -120,24 +115,6 @@ cv::Matx44d invertAffineTransformMatrix(const cv::Matx44d& matrix)
     throw std::runtime_error("transform is not invertible");
 }
 
-bool applyAffineTransform(const cv::Vec3d& point,
-                          const cv::Matx44d& matrix,
-                          cv::Vec3d& transformed)
-{
-    if (!std::isfinite(point[0]) || !std::isfinite(point[1]) || !std::isfinite(point[2])) {
-        return false;
-    }
-
-    const cv::Vec4d homogeneous(point[0], point[1], point[2], 1.0);
-    const cv::Vec4d result = matrix * homogeneous;
-    if (!std::isfinite(result[0]) || !std::isfinite(result[1]) || !std::isfinite(result[2])) {
-        return false;
-    }
-
-    transformed = cv::Vec3d(result[0], result[1], result[2]);
-    return true;
-}
-
 cv::Vec3f applyAffineTransform(const cv::Vec3f& point,
                                const cv::Matx44d& matrix)
 {
@@ -150,76 +127,6 @@ cv::Vec3f applyAffineTransform(const cv::Vec3f& point,
     return cv::Vec3f(static_cast<float>(transformed[0]),
                      static_cast<float>(transformed[1]),
                      static_cast<float>(transformed[2]));
-}
-
-cv::Vec3f transformNormal(const cv::Vec3f& normal,
-                          const cv::Matx44d& matrix)
-{
-    if (!std::isfinite(normal[0]) || !std::isfinite(normal[1]) || !std::isfinite(normal[2])) {
-        return normal;
-    }
-
-    const cv::Matx33d linear(matrix(0, 0), matrix(0, 1), matrix(0, 2),
-                             matrix(1, 0), matrix(1, 1), matrix(1, 2),
-                             matrix(2, 0), matrix(2, 1), matrix(2, 2));
-    const double determinant = cv::determinant(linear);
-    if (!std::isfinite(determinant) || std::abs(determinant) < std::numeric_limits<double>::epsilon()) {
-        return normal;
-    }
-
-    const cv::Matx33d inverseTranspose = linear.inv().t();
-    const cv::Vec3d transformed(
-        inverseTranspose(0, 0) * normal[0] + inverseTranspose(0, 1) * normal[1] + inverseTranspose(0, 2) * normal[2],
-        inverseTranspose(1, 0) * normal[0] + inverseTranspose(1, 1) * normal[1] + inverseTranspose(1, 2) * normal[2],
-        inverseTranspose(2, 0) * normal[0] + inverseTranspose(2, 1) * normal[1] + inverseTranspose(2, 2) * normal[2]);
-
-    if (!std::isfinite(transformed[0]) || !std::isfinite(transformed[1]) || !std::isfinite(transformed[2])) {
-        return normal;
-    }
-
-    const double lengthSquared = transformed.dot(transformed);
-    if (!std::isfinite(lengthSquared) || lengthSquared <= 0.0) {
-        return normal;
-    }
-
-    const double invLength = 1.0 / std::sqrt(lengthSquared);
-    return cv::Vec3f(static_cast<float>(transformed[0] * invLength),
-                     static_cast<float>(transformed[1] * invLength),
-                     static_cast<float>(transformed[2] * invLength));
-}
-
-std::optional<double> affineUniformScaleFactor(const cv::Matx44d& matrix)
-{
-    cv::Mat linear(3, 3, CV_64F);
-    for (int row = 0; row < 3; ++row) {
-        for (int col = 0; col < 3; ++col) {
-            linear.at<double>(row, col) = matrix(row, col);
-        }
-    }
-
-    cv::SVD svd(linear, cv::SVD::NO_UV);
-    if (svd.w.rows < 3) {
-        return std::nullopt;
-    }
-
-    const double s0 = svd.w.at<double>(0, 0);
-    const double s1 = svd.w.at<double>(1, 0);
-    const double s2 = svd.w.at<double>(2, 0);
-    if (!(std::isfinite(s0) && std::isfinite(s1) && std::isfinite(s2))) {
-        return std::nullopt;
-    }
-    if (s0 <= 0.0 || s1 <= 0.0 || s2 <= 0.0) {
-        return std::nullopt;
-    }
-
-    const double mean = (s0 + s1 + s2) / 3.0;
-    const double maxDeviation = std::max({std::abs(s0 - mean), std::abs(s1 - mean), std::abs(s2 - mean)});
-    const double relativeDeviation = maxDeviation / mean;
-    if (!std::isfinite(relativeDeviation) || relativeDeviation > 1e-4) {
-        return std::nullopt;
-    }
-
-    return mean;
 }
 
 cv::Vec3f applyPreAffineScale(const cv::Vec3f& point, int scale)

@@ -610,27 +610,6 @@ int QuadSurface::countValidQuads() const
     return static_cast<int>(std::distance(range.begin(), range.end()));
 }
 
-void QuadSurface::unloadPoints()
-{
-    if (path.empty()) return;  // No disk backing — can't reload.
-    std::lock_guard<std::mutex> lock(_loadMutex);
-    if (_needsLoad) return;    // Already unloaded.
-    std::size_t mb = 0;
-    if (_points) {
-        mb = static_cast<std::size_t>(_points->rows) * _points->cols
-             * sizeof(cv::Vec3f) / (1024 * 1024);
-    }
-    _points.reset();
-    _channels.clear();
-    _validMaskCache = cv::Mat_<uint8_t>();
-    _validMaskAllValid = false;
-    _normalCache = cv::Mat_<cv::Vec3f>();
-    _needsLoad = true;
-    if (DebugLoggingEnabled()) {
-        std::fprintf(stderr, "[SURF] unload %s (%zu MB freed)\n", id.c_str(), mb);
-    }
-}
-
 void QuadSurface::unloadCaches()
 {
     _validMaskCache = cv::Mat_<uint8_t>();
@@ -689,22 +668,6 @@ cv::Mat_<uint8_t> QuadSurface::validMask() const
     _validMaskAllValid = (anyInvalid == 0);
     _validMaskCache = mask;
     return mask;
-}
-
-void QuadSurface::writeValidMask(const cv::Mat& img)
-{
-    if (path.empty()) {
-        return;
-    }
-    std::filesystem::path maskPath = path / "mask.tif";
-    cv::Mat_<uint8_t> mask = validMask();
-
-    if (img.empty()) {
-        writeTiff(maskPath, mask, -1, 1024, 1024, -1.0f, COMPRESSION_LZW, dpi_);
-    } else {
-        std::vector<cv::Mat> layers = {mask, img};
-        cv::imwritemulti(maskPath.string(), layers);
-    }
 }
 
 void QuadSurface::invalidateCache()
@@ -2224,14 +2187,6 @@ void QuadSurface::readOverlappingJson()
     _overlappingIds = read_overlapping_json(path);
 }
 
-void QuadSurface::writeOverlappingJson() const
-{
-    if (path.empty()) {
-        return;
-    }
-    write_overlapping_json(path, _overlappingIds);
-}
-
 std::optional<std::filesystem::file_time_type> QuadSurface::readMaskTimestamp(const std::filesystem::path& dir)
 {
     const std::filesystem::path maskPath = dir / "mask.tif";
@@ -2244,11 +2199,6 @@ std::optional<std::filesystem::file_time_type> QuadSurface::readMaskTimestamp(co
         return std::nullopt;
     }
     return ts;
-}
-
-void QuadSurface::refreshMaskTimestamp()
-{
-    _maskTimestamp = readMaskTimestamp(path);
 }
 
 // Surface overlap/containment tests

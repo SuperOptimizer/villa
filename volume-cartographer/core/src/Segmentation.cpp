@@ -13,16 +13,6 @@ Segmentation::Segmentation(std::filesystem::path path)
 
 Segmentation::~Segmentation() = default;
 
-Segmentation::Segmentation(std::filesystem::path path, std::string uuid, std::string name)
-    : path_(std::move(path))
-{
-    metadata_["uuid"] = uuid;
-    metadata_["name"] = name;
-    metadata_["type"] = "seg";
-    metadata_["volume"] = std::string{};
-    saveMetadata();
-}
-
 void Segmentation::loadMetadata()
 {
     auto metaPath = path_ / METADATA_FILE;
@@ -41,11 +31,6 @@ void Segmentation::setId(const std::string& newId)
     metadata_["uuid"] = newId;
 }
 
-std::string Segmentation::name() const
-{
-    return metadata_["name"].get_string();
-}
-
 void Segmentation::setName(const std::string& n)
 {
     metadata_["name"] = n;
@@ -61,22 +46,6 @@ void Segmentation::saveMetadata()
     }
 }
 
-void Segmentation::ensureScrollSource(const std::string& scrollName, const std::string& volumeUuid)
-{
-    bool changed = false;
-    if (!metadata_.contains("scroll_source") || metadata_["scroll_source"].get_string().empty()) {
-        metadata_["scroll_source"] = scrollName;
-        changed = true;
-    }
-    if (!metadata_.contains("volume") || metadata_["volume"].get_string().empty()) {
-        metadata_["volume"] = volumeUuid;
-        changed = true;
-    }
-    if (changed) {
-        saveMetadata();
-    }
-}
-
 bool Segmentation::checkDir(std::filesystem::path path)
 {
     return std::filesystem::is_directory(path) && std::filesystem::exists(path / METADATA_FILE);
@@ -85,11 +54,6 @@ bool Segmentation::checkDir(std::filesystem::path path)
 std::shared_ptr<Segmentation> Segmentation::New(const std::filesystem::path& path)
 {
     return std::make_shared<Segmentation>(path);
-}
-
-std::shared_ptr<Segmentation> Segmentation::New(const std::filesystem::path& path, const std::string& uuid, const std::string& name)
-{
-    return std::make_shared<Segmentation>(path, uuid, name);
 }
 
 bool Segmentation::isSurfaceLoaded() const
