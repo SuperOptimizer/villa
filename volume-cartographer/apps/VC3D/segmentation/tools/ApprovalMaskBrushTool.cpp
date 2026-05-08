@@ -50,11 +50,6 @@ ApprovalMaskBrushTool::ApprovalMaskBrushTool(SegmentationModule& module,
 {
 }
 
-void ApprovalMaskBrushTool::setDependencies(SegmentationWidget* widget)
-{
-    _widget = widget;
-}
-
 void ApprovalMaskBrushTool::setSurface(QuadSurface* surface)
 {
     _surface = surface;
@@ -315,75 +310,6 @@ void ApprovalMaskBrushTool::finishStroke()
     }
 }
 
-bool ApprovalMaskBrushTool::applyPending(float /*dragRadiusSteps*/)
-{
-    QElapsedTimer totalTimer;
-    totalTimer.start();
-
-    if (!_surface) {
-        qCWarning(lcApprovalMask) << "Cannot apply: no surface";
-        return false;
-    }
-
-    if (_strokeActive) {
-        finishStroke();
-    }
-
-    // Since we're painting in real-time, just save the QImage to disk
-    auto overlay = _module.overlay();
-    if (!overlay) {
-        qCWarning(lcApprovalMask) << "Cannot apply: no overlay controller";
-        return false;
-    }
-
-    // Save the approval mask QImage to disk
-    overlay->saveApprovalMaskToSurface(_surface);
-
-    qCDebug(lcApprovalMask) << "Saved approval mask to disk in" << totalTimer.elapsed() << "ms";
-
-    // Clear pending strokes and overlay segments (but keep the painted QImage)
-    _strokeActive = false;
-    _currentStroke.clear();
-    _pendingStrokes.clear();
-    _overlayPoints.clear();
-    _overlayStrokeSegments.clear();
-    _accumulatedGridPositions.clear();
-    _accumulatedGridPosSet.clear();
-    _lastGridSample.reset();
-
-    _module.refreshOverlay();
-
-    Q_EMIT _module.statusMessageRequested(
-        QCoreApplication::translate("ApprovalMaskBrushTool", "Applied approval mask to surface."),
-        2000);
-
-    return true;
-}
-
-void ApprovalMaskBrushTool::clear()
-{
-    _strokeActive = false;
-    _currentStroke.clear();
-    _pendingStrokes.clear();
-    _overlayPoints.clear();
-    _overlayStrokeSegments.clear();
-    _accumulatedGridPositions.clear();
-    _accumulatedGridPosSet.clear();
-    _lastGridSample.reset();
-    _hasLastSample = false;
-    _hasLastOverlaySample = false;
-    _hasLastSearchCache = false;
-
-    // Reload approval mask from disk to discard pending changes
-    auto overlay = _module.overlay();
-    if (overlay && _surface) {
-        overlay->loadApprovalMaskImage(_surface);
-        qCDebug(lcApprovalMask) << "Reloaded approval mask from disk (discarded pending changes)";
-    }
-
-    _module.refreshOverlay();
-}
-
 void ApprovalMaskBrushTool::paintAccumulatedPointsToImage()
 {
     if (_accumulatedGridPositions.empty()) {
@@ -462,28 +388,6 @@ void ApprovalMaskBrushTool::addInterpolatedGridPositions(const std::pair<int, in
         const int col = static_cast<int>(std::lround(static_cast<float>(from.second) + static_cast<float>(dc) * t));
         addAccumulatedGridPosition({row, col});
     }
-}
-
-std::vector<std::pair<int, int>> ApprovalMaskBrushTool::findGridCellsInSphere(const cv::Vec3f& worldPos, float radius) const
-{
-    std::vector<std::pair<int, int>> result;
-
-    if (!_surface || _pointIndex.empty() || _pointIndexCols <= 0) {
-        return result;
-    }
-
-    // Use PointIndex for O(log n + k) spatial query instead of grid window iteration
-    auto queryResults = _pointIndex.queryRadius(worldPos, radius);
-
-    result.reserve(queryResults.size());
-    for (const auto& qr : queryResults) {
-        // Decode ID back to grid position: id = row * cols + col
-        const int row = static_cast<int>(qr.id / _pointIndexCols);
-        const int col = static_cast<int>(qr.id % _pointIndexCols);
-        result.emplace_back(row, col);
-    }
-
-    return result;
 }
 
 std::vector<std::pair<int, int>> ApprovalMaskBrushTool::findGridCellsInCylinder(
@@ -689,120 +593,6 @@ void ApprovalMaskBrushTool::finishStrokeFromPlane()
     _effectivePaintRadiusNative = 0.0f;
 
     finishStrokeFromWorld();
-}
-
-void ApprovalMaskBrushTool::startStrokeFromWorld(const cv::Vec3f& worldPos, float worldRadius)
-{
-    qCDebug(lcApprovalMask) << "Starting approval stroke from world pos:" << worldPos[0] << worldPos[1] << worldPos[2]
-                           << "radius:" << worldRadius;
-    _strokeActive = true;
-    _currentStroke.clear();
-    _currentStroke.push_back(worldPos);
-
-    _overlayPoints.clear();
-    _overlayPoints.push_back(worldPos);
-
-    _lastSample = worldPos;
-    _hasLastSample = true;
-    _lastOverlaySample = worldPos;
-    _hasLastOverlaySample = true;
-
-    _lastRefreshTimer.start();
-    _lastRefreshTime = 0;
-    _pendingRefresh = false;
-
-    _accumulatedGridPositions.clear();
-    _accumulatedGridPosSet.clear();
-
-    // Find all grid cells within the sphere and add them
-    auto cells = findGridCellsInSphere(worldPos, worldRadius);
-    qCDebug(lcApprovalMask) << "  Found" << cells.size() << "grid cells in sphere";
-
-    for (const auto& cell : cells) {
-        const uint64_t hash = (static_cast<uint64_t>(cell.first) << 32) | static_cast<uint64_t>(cell.second);
-        if (_accumulatedGridPosSet.insert(hash).second) {
-            _accumulatedGridPositions.push_back(cell);
-        }
-    }
-
-    // Paint immediately
-    if (!_accumulatedGridPositions.empty()) {
-        paintAccumulatedPointsToImage();
-    }
-
-    _module.refreshOverlay();
-}
-
-void ApprovalMaskBrushTool::extendStrokeFromWorld(const cv::Vec3f& worldPos, float worldRadius, bool forceSample)
-{
-    if (!_strokeActive) {
-        return;
-    }
-
-    const float spacing = kBrushSampleSpacing;
-    const float spacingSq = spacing * spacing;
-
-    // Check if we've moved enough to sample
-    if (_hasLastSample && !forceSample) {
-        const cv::Vec3f delta = worldPos - _lastSample;
-        const float distanceSq = delta.dot(delta);
-        if (distanceSq < spacingSq) {
-            return;
-        }
-    }
-
-    _currentStroke.push_back(worldPos);
-    _lastSample = worldPos;
-    _hasLastSample = true;
-
-    // Find cells in sphere and add to accumulated
-    auto cells = findGridCellsInSphere(worldPos, worldRadius);
-    for (const auto& cell : cells) {
-        const uint64_t hash = (static_cast<uint64_t>(cell.first) << 32) | static_cast<uint64_t>(cell.second);
-        if (_accumulatedGridPosSet.insert(hash).second) {
-            _accumulatedGridPositions.push_back(cell);
-        }
-    }
-
-    // Paint periodically
-    constexpr size_t kPaintBatchSize = 20;
-    if (forceSample || _accumulatedGridPositions.size() >= kPaintBatchSize) {
-        paintAccumulatedPointsToImage();
-    }
-
-    // Update overlay points for visualization
-    const float overlaySpacing = kOverlayPointSpacing;
-    const float overlaySpacingSq = overlaySpacing * overlaySpacing;
-
-    bool overlayNeedsRefresh = false;
-    if (_hasLastOverlaySample) {
-        const cv::Vec3f overlayDelta = worldPos - _lastOverlaySample;
-        const float overlayDistSq = overlayDelta.dot(overlayDelta);
-        if (forceSample || overlayDistSq >= overlaySpacingSq) {
-            _overlayPoints.push_back(worldPos);
-            _lastOverlaySample = worldPos;
-            overlayNeedsRefresh = true;
-        }
-    } else {
-        _overlayPoints.push_back(worldPos);
-        _lastOverlaySample = worldPos;
-        _hasLastOverlaySample = true;
-        overlayNeedsRefresh = true;
-    }
-
-    if (overlayNeedsRefresh) {
-        const qint64 currentTime = _lastRefreshTimer.elapsed();
-        const qint64 timeSinceLastRefresh = currentTime - _lastRefreshTime;
-        constexpr qint64 kMinRefreshIntervalMs = 50;
-
-        if (timeSinceLastRefresh >= kMinRefreshIntervalMs) {
-            _module.refreshOverlay();
-            _lastRefreshTime = currentTime;
-            _pendingRefresh = false;
-        } else {
-            _pendingRefresh = true;
-        }
-    }
 }
 
 void ApprovalMaskBrushTool::finishStrokeFromWorld()

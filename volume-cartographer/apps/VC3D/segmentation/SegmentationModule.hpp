@@ -293,7 +293,6 @@ private:
     uint64_t createCorrectionCollection(bool announce);
     void handleCorrectionPointAdded(const cv::Vec3f& worldPos, uint64_t collectionId = 0);
     void handleCorrectionPointRemove(const cv::Vec3f& worldPos);
-    void beginCorrectionDrag(int row, int col, VolumeViewerBase* viewer, const cv::Vec3f& worldPos);
     void updateCorrectionDrag(const cv::Vec3f& worldPos);
     void finishCorrectionDrag();
     void cancelCorrectionDrag();
@@ -302,7 +301,6 @@ private:
     void updatePointMoveDrag(const cv::Vec3f& worldPos);
     void finishPointMoveDrag();
 
-    void pruneMissingCorrections();
     void onCorrectionsCreateRequested();
     void onCorrectionsCollectionSelected(uint64_t id);
     void onCorrectionsZRangeChanged(bool enabled, int zMin, int zMax);
@@ -353,9 +351,7 @@ private:
                      const cv::Vec3f& worldPos);
     void onSurfaceCollectionChanged(std::string name, std::shared_ptr<Surface> surface);
 
-    [[nodiscard]] bool captureUndoSnapshot();
     [[nodiscard]] bool captureUndoDelta();  // Capture delta from current edited vertices
-    void discardLastUndoSnapshot();
     bool restoreUndoSnapshot();
     void clearUndoStack();
 
@@ -372,7 +368,6 @@ private:
 
     void updateHover(VolumeViewerBase* viewer, const cv::Vec3f& worldPos, const QPointF& scenePos);
     [[nodiscard]] bool isNearRotationHandle(VolumeViewerBase* viewer, const cv::Vec3f& worldPos) const;
-    SegmentationEditManager::GridSearchResolution hoverLookupDetail(const cv::Vec3f& worldPos);
     void resetHoverLookupDetail();
     bool recoverHoverPointerFromCursor();
     void recordPointerSample(VolumeViewerBase* viewer, const cv::Vec3f& worldPos);
@@ -380,7 +375,6 @@ private:
     bool startPushPull(int direction, std::optional<bool> alphaOverride = std::nullopt);
     void stopPushPull(int direction);
     void stopAllPushPull();
-    bool applyPushPullStep();
 
     void markAutosaveNeeded(bool immediate = false);
     void performAutosave();

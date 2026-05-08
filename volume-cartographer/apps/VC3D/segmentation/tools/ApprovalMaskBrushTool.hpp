@@ -32,7 +32,6 @@ public:
                           SegmentationEditManager* editManager,
                           SegmentationWidget* widget);
 
-    void setDependencies(SegmentationWidget* widget);
     void setSurface(QuadSurface* surface);
     void setPaintMode(PaintMode mode) { _paintMode = mode; }
     [[nodiscard]] PaintMode paintMode() const { return _paintMode; }
@@ -61,11 +60,7 @@ public:
     void finishStrokeFromPlane();
 
     // Legacy methods (for compatibility) - delegate to plane methods with zero normal (sphere mode)
-    void startStrokeFromWorld(const cv::Vec3f& worldPos, float worldRadius);
-    void extendStrokeFromWorld(const cv::Vec3f& worldPos, float worldRadius, bool forceSample);
     void finishStrokeFromWorld();
-    bool applyPending(float dragRadiusSteps);
-    void clear();
 
     [[nodiscard]] const std::vector<cv::Vec3f>& overlayPoints() const { return _overlayPoints; }
     [[nodiscard]] const std::vector<std::vector<cv::Vec3f>>& overlayStrokeSegments() const { return _overlayStrokeSegments; }
@@ -80,16 +75,13 @@ public:
                           const std::optional<cv::Vec3f>& planeNormal = std::nullopt);
     void clearHoverWorldPos() { _hoverWorldPos = std::nullopt; _hoverEffectiveRadius = 0.0f; _hoverSurfacePos = std::nullopt; _hoverPlaneNormal = std::nullopt; }
 
-    void cancel() { clear(); }
+    void cancel() {}
     [[nodiscard]] bool isActive() const { return brushActive() || strokeActive(); }
 
 private:
     // Convert surface parameter coordinates to integer grid indices.
     // Formula: gridPos = (surfacePos + center) * surfaceScale
     std::optional<std::pair<int, int>> surfaceToGridIndex(const QPointF& surfacePos) const;
-
-    // Find all grid cells whose 3D world positions are within radius of the given world position
-    std::vector<std::pair<int, int>> findGridCellsInSphere(const cv::Vec3f& worldPos, float radius) const;
 
     // Find all grid cells within a cylinder centered at worldPos.
     // The cylinder has its axis along planeNormal, with given radius and depth (half-depth on each side).

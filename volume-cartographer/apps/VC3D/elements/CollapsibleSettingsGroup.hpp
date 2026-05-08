@@ -25,21 +25,12 @@ public:
     void setExpanded(bool expanded);
     bool isExpanded() const { return _expanded; }
 
-    void setColumns(int columns);
-    void setRows(int rows);
-    void setGrid(int rows, int columns);
-
     QWidget* addLabeledWidget(const QString& label,
                               QWidget* widget,
                               const QString& tooltip = {});
     QWidget* addRow(const QString& label,
                     const std::function<void(QHBoxLayout*)>& builder,
                     const QString& tooltip = {});
-    QSpinBox* addSpinBox(const QString& label,
-                         int minimum,
-                         int maximum,
-                         int step = 1,
-                         const QString& tooltip = {});
 
     QDoubleSpinBox* addDoubleSpinBox(const QString& label,
                                      double minimum,
@@ -48,7 +39,6 @@ public:
                                      int decimals = 2,
                                      const QString& tooltip = {});
 
-    QCheckBox* addCheckBox(const QString& text, const QString& tooltip = {});
     void addFullWidthWidget(QWidget* widget, const QString& tooltip = {});
 
     QWidget* contentWidget() const { return _contentWidget; }

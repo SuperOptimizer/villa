@@ -67,47 +67,6 @@ void CollapsibleSettingsGroup::setExpanded(bool expanded)
     emit toggled(expanded);
 }
 
-void CollapsibleSettingsGroup::setColumns(int columns)
-{
-    const int normalized = std::max(1, columns);
-    if (_preferredColumns == normalized && _preferredRows == 0) {
-        return;
-    }
-    _preferredColumns = normalized;
-    _preferredRows = 0;
-    rebuildGrid();
-}
-
-void CollapsibleSettingsGroup::setRows(int rows)
-{
-    const int normalized = std::max(1, rows);
-    if (_preferredRows == normalized && _preferredColumns == 0) {
-        return;
-    }
-    _preferredRows = normalized;
-    _preferredColumns = 0;
-    rebuildGrid();
-}
-
-void CollapsibleSettingsGroup::setGrid(int rows, int columns)
-{
-    const int normalizedRows = std::max(0, rows);
-    const int normalizedColumns = std::max(0, columns);
-
-    int newRows = normalizedRows;
-    int newColumns = normalizedColumns;
-    if (newRows == 0 && newColumns == 0) {
-        newColumns = 1;
-    }
-
-    if (_preferredRows == newRows && _preferredColumns == newColumns) {
-        return;
-    }
-
-    _preferredRows = newRows;
-    _preferredColumns = newColumns;
-    rebuildGrid();
-}
 
 QWidget* CollapsibleSettingsGroup::addLabeledWidget(const QString& labelText,
                                                     QWidget* widget,
@@ -152,19 +111,6 @@ QWidget* CollapsibleSettingsGroup::addRow(const QString& label,
     return addLabeledWidget(label, container, tooltip);
 }
 
-QSpinBox* CollapsibleSettingsGroup::addSpinBox(const QString& label,
-                                               int minimum,
-                                               int maximum,
-                                               int step,
-                                               const QString& tooltip)
-{
-    auto* spin = new QSpinBox(_contentWidget);
-    spin->setRange(minimum, maximum);
-    spin->setSingleStep(step);
-    addLabeledWidget(label, spin, tooltip);
-    return spin;
-}
-
 QDoubleSpinBox* CollapsibleSettingsGroup::addDoubleSpinBox(const QString& label,
                                                            double minimum,
                                                            double maximum,
@@ -178,13 +124,6 @@ QDoubleSpinBox* CollapsibleSettingsGroup::addDoubleSpinBox(const QString& label,
     spin->setSingleStep(step);
     addLabeledWidget(label, spin, tooltip);
     return spin;
-}
-
-QCheckBox* CollapsibleSettingsGroup::addCheckBox(const QString& text, const QString& tooltip)
-{
-    auto* checkbox = new QCheckBox(text, _contentWidget);
-    addLabeledWidget(QString(), checkbox, tooltip);
-    return checkbox;
 }
 
 void CollapsibleSettingsGroup::addFullWidthWidget(QWidget* widget, const QString& tooltip)

@@ -149,23 +149,6 @@ void SegmentationModule::onSurfaceCollectionChanged(std::string name, std::share
     setEditingEnabled(false);
 }
 
-bool SegmentationModule::captureUndoSnapshot()
-{
-    if (_suppressUndoCapture) {
-        return false;
-    }
-    if (!_editManager || !_editManager->hasSession()) {
-        return false;
-    }
-
-    const auto& previewPoints = _editManager->previewPoints();
-    if (previewPoints.empty()) {
-        return false;
-    }
-
-    return _undoHistory.capture(previewPoints);
-}
-
 bool SegmentationModule::captureUndoDelta()
 {
     if (_suppressUndoCapture) {
@@ -188,11 +171,6 @@ bool SegmentationModule::captureUndoDelta()
     }
 
     return _undoHistory.captureDelta(deltas);
-}
-
-void SegmentationModule::discardLastUndoSnapshot()
-{
-    _undoHistory.discardLast();
 }
 
 bool SegmentationModule::restoreUndoSnapshot()

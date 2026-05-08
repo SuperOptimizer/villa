@@ -1438,29 +1438,6 @@ void SegmentationModule::handleCorrectionPointRemove(const cv::Vec3f& worldPos)
     }
 }
 
-void SegmentationModule::pruneMissingCorrections()
-{
-    if (_corrections) {
-        _corrections->pruneMissing();
-        _corrections->refreshWidget();
-    }
-}
-
-void SegmentationModule::beginCorrectionDrag(int row, int col, VolumeViewerBase* viewer, const cv::Vec3f& worldPos)
-{
-    _correctionDrag.active = true;
-    _correctionDrag.anchorRow = row;
-    _correctionDrag.anchorCol = col;
-    _correctionDrag.startWorld = worldPos;
-    _correctionDrag.currentWorld = worldPos;
-    _correctionDrag.viewer = viewer;
-    _correctionDrag.moved = false;
-
-    qCInfo(lcSegModule) << "Correction drag started at grid" << row << col << "world" << worldPos[0] << worldPos[1] << worldPos[2];
-    emit statusMessageRequested(tr("Drag to correction target position..."), kStatusShort);
-    refreshOverlay();
-}
-
 void SegmentationModule::updateCorrectionDrag(const cv::Vec3f& worldPos)
 {
     if (!_correctionDrag.active) {
@@ -2267,55 +2244,6 @@ bool SegmentationModule::isNearRotationHandle(VolumeViewerBase* viewer, const cv
     return _rotationHandleHitTester(viewer, worldPos);
 }
 
-SegmentationEditManager::GridSearchResolution SegmentationModule::hoverLookupDetail(const cv::Vec3f& worldPos)
-{
-    if (!_editingEnabled || !_editManager || !_editManager->hasSession()) {
-        resetHoverLookupDetail();
-        return SegmentationEditManager::GridSearchResolution::High;
-    }
-
-    if (!_hoverLookup.initialized) {
-        _hoverLookup.initialized = true;
-        _hoverLookup.lastWorld = worldPos;
-        _hoverLookup.smoothedWorldUnitsPerSecond = 0.0f;
-        _hoverLookup.timer.start();
-        return SegmentationEditManager::GridSearchResolution::High;
-    }
-
-    const qint64 elapsedNs = _hoverLookup.timer.nsecsElapsed();
-    _hoverLookup.timer.restart();
-    double dtSec = static_cast<double>(elapsedNs) / 1e9;
-    if (dtSec <= 1e-4) {
-        dtSec = 1e-4;
-    }
-
-    const cv::Vec3f delta = worldPos - _hoverLookup.lastWorld;
-    _hoverLookup.lastWorld = worldPos;
-
-    const float distance = cv::norm(delta);
-    const float instantaneousSpeed = distance / static_cast<float>(dtSec);
-
-    constexpr float kSmoothing = 0.2f;
-    if (_hoverLookup.smoothedWorldUnitsPerSecond <= 0.0f) {
-        _hoverLookup.smoothedWorldUnitsPerSecond = instantaneousSpeed;
-    } else {
-        _hoverLookup.smoothedWorldUnitsPerSecond =
-            _hoverLookup.smoothedWorldUnitsPerSecond * (1.0f - kSmoothing) +
-            instantaneousSpeed * kSmoothing;
-    }
-
-    constexpr float kMediumThreshold = 4.0f;
-    constexpr float kLowThreshold = 12.0f;
-
-    if (_hoverLookup.smoothedWorldUnitsPerSecond >= kLowThreshold) {
-        return SegmentationEditManager::GridSearchResolution::Low;
-    }
-    if (_hoverLookup.smoothedWorldUnitsPerSecond >= kMediumThreshold) {
-        return SegmentationEditManager::GridSearchResolution::Medium;
-    }
-    return SegmentationEditManager::GridSearchResolution::High;
-}
-
 void SegmentationModule::resetHoverLookupDetail()
 {
     if (_hoverLookup.timer.isValid()) {
@@ -2501,11 +2429,6 @@ void SegmentationModule::stopAllPushPull()
     if (_pushPullTool) {
         _pushPullTool->stopAll();
     }
-}
-
-bool SegmentationModule::applyPushPullStep()
-{
-    return _pushPullTool ? _pushPullTool->applyStep() : false;
 }
 
 void SegmentationModule::markAutosaveNeeded(bool immediate)
