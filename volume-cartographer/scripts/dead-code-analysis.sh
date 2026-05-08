@@ -151,16 +151,38 @@ c++filt < "$out/dead-symbols-mangled.txt" > "$out/dead-symbols-raw.txt"
 grep -vE '^(GCC_except_table|DW\.ref\.|__|\.L|guard variable for |vtable for |typeinfo (name )?for |construction vtable for |VTT for |non-virtual thunk |virtual thunk )' \
     "$out/dead-symbols-raw.txt" > "$out/dead-symbols.txt" || true
 
-# Per-(file, symbol) map: nm with --print-file-name emits each symbol
-# as `path:type:name` so we can group by file. Used both for "fully
-# dead .o" detection and for the per-TU dead-symbols view below.
-nm --defined-only --print-file-name --no-sort "${src_objs[@]}" 2>/dev/null \
-    | awk -v RS='\n' '$2 ~ /^[TtDdBbRrWwVv]$/ {
-        n = split($1, a, ":"); file = a[1];
-        for (i=2;i<n;i++) file = file ":" a[i];
-        sym = $NF;
-        print file "\t" sym
-    }' > "$out/object-symbols.tsv"
+# Per-(object, mangled-symbol, type, source-location) map. Three signals
+# downstream filters use to separate handwritten code from noise:
+#   - type column (T/t/D/d/B/b strong globals + statics + handwritten
+#     data, vs W/V/R weak template/RTTI/inline-header instantiations
+#     headers emit into many TUs and the linker dedupes). Cheap filter.
+#   - source-location column (from -l / DWARF debug info): the file:line
+#     where each symbol was defined. Lets us distinguish stdlib /
+#     vendored-template noise (e.g. /usr/include/c++/15/bits/stl_heap.h)
+#     from our own code (e.g. apps/diffusion/spiral_common.cpp). Only
+#     populated when the build has debug info — the dead-code preset
+#     forces Debug, so this is reliable.
+#
+# Output: <obj>\t<mangled-sym>\t<type>\t<source-loc>
+nm --defined-only --print-file-name --no-sort -l "${src_objs[@]}" 2>/dev/null \
+    | awk '
+        # Match: "<obj>:<addr> <type> <symbol>[\t<source>:<line>]" where
+        # type is a single letter we care about. Find " <T> " by regex
+        # so we can split correctly even when obj path contains colons.
+        match($0, /[[:space:]]([TtDdBbRrWwVv])[[:space:]]/) {
+            type = substr($0, RSTART + 1, 1)
+            pre  = substr($0, 1, RSTART - 1)
+            post = substr($0, RSTART + RLENGTH)
+            # pre = "<obj>:<addr>" — strip last colon-and-addr
+            n = length(pre); i = n
+            while (i > 0 && substr(pre, i, 1) != ":") { i-- }
+            obj = substr(pre, 1, i - 1)
+            # post = "<symbol>[\t<src>:<line>]"
+            ti = index(post, "\t")
+            if (ti) { sym = substr(post, 1, ti - 1); src = substr(post, ti + 1) }
+            else    { sym = post;                    src = "" }
+            print obj "\t" sym "\t" type "\t" src
+        }' > "$out/object-symbols.tsv"
 
 # ------------------------------------------------------------------
 # 1b. Per-TU dead symbols (cross-file-dependency-aware attribution)
@@ -189,14 +211,39 @@ awk -F'\t' '
 ' "$out/dead-symbols-mangled.txt" "$out/object-symbols.tsv" \
     | sort -u > "$out/dead-symbols-per-file-mangled.tsv"
 
+# Demangle the symbol column (col 2); preserve obj (col 1), type (col 3),
+# and source-location (col 4).
 awk -F'\t' '{ print $2 }' "$out/dead-symbols-per-file-mangled.tsv" \
     | c++filt > "$out/.demangled.tmp"
 paste \
     <(awk -F'\t' '{ print $1 }' "$out/dead-symbols-per-file-mangled.tsv") \
     "$out/.demangled.tmp" \
+    <(awk -F'\t' '{ print $3 }' "$out/dead-symbols-per-file-mangled.tsv") \
+    <(awk -F'\t' '{ print $4 }' "$out/dead-symbols-per-file-mangled.tsv") \
     | grep -vE $'\t(GCC_except_table|DW\\.ref\\.|__|\\.L|guard variable for |vtable for |typeinfo (name )?for |construction vtable for |VTT for |non-virtual thunk |virtual thunk )' \
     | sort -u > "$out/dead-symbols-per-file.tsv"
 rm -f "$out/.demangled.tmp"
+
+# Actionable cleanup targets — two filters combined:
+#   1. type IN T/t/D/d/B/b: strong globals, file-local statics, and
+#      handwritten data globals. Excludes W/V/R weak template/RTTI
+#      instantiation noise (header templates emitted into many TUs).
+#   2. source-location is in our source tree: filters out the OTHER
+#      kind of template noise — TU-local instantiations of stdlib
+#      internals (e.g. std::__sort, __gnu_cxx::__ops::_Iter_comp_iter)
+#      that the compiler emits as `t` symbols when a TU calls
+#      std::sort with a TU-local lambda. Those have type=t but their
+#      DWARF source-location points into /usr/include/c++/.../bits/.
+#
+# Known false-negative still: an `inline` function we wrote in our
+# own header that no TU calls is emitted as W and gets filtered by
+# rule 1. Use dead-symbols.txt (broad list) to audit unused inline
+# helpers.
+roots_alt="$(IFS='|'; echo "${src_roots_existing[*]}")"
+awk -F'\t' -v roots="$roots_alt" '
+    BEGIN { srcre = "(^|/)(" roots ")/" }
+    $3 ~ /^[TtDdBb]$/ && $4 ~ srcre
+' "$out/dead-symbols-per-file.tsv" > "$out/dead-symbols-actionable.tsv"
 
 # Per-.o liveness: an object is "fully dead" iff none of its defined
 # symbols appear in any binary.
@@ -224,6 +271,7 @@ n_bin=$(wc -l < "$out/binary-syms.txt")
 n_dead_sym_raw=$(wc -l < "$out/dead-symbols-raw.txt")
 n_dead_sym=$(wc -l < "$out/dead-symbols.txt")
 n_dead_sym_per_file=$(wc -l < "$out/dead-symbols-per-file.tsv")
+n_dead_sym_actionable=$(wc -l < "$out/dead-symbols-actionable.tsv")
 n_warn=$(wc -l < "$out/compile-warnings.txt")
 
 {
@@ -245,6 +293,10 @@ n_warn=$(wc -l < "$out/compile-warnings.txt")
     echo "  Dead (raw):                           $n_dead_sym_raw"
     echo "  Dead (after compiler-noise filter):   $n_dead_sym"
     echo "  Dead per-TU (nm-attributed, cross-file aware): $n_dead_sym_per_file"
+    echo "  Dead per-TU, actionable (T/t/D/d/B/b symbol types AND DWARF source"
+    echo "    location inside our src_roots — excludes both W/V/R weak"
+    echo "    template/RTTI noise from headers AND TU-local instantiations of"
+    echo "    stdlib internals like std::__sort): $n_dead_sym_actionable"
     echo
     echo "Compile-time -Wunused* / -Wunreachable* warnings: $n_warn"
     echo
@@ -262,9 +314,14 @@ n_warn=$(wc -l < "$out/compile-warnings.txt")
     echo "Top 30 dead symbols (demangled, noise-filtered):"
     head -30 "$out/dead-symbols.txt"
     echo
-    echo "Top 30 dead symbols per-TU (source-file<TAB>symbol):"
-    head -30 "$out/dead-symbols-per-file.tsv" \
-        | sed -E "s|^${build_dir%/}/||; s|^[^/]+/CMakeFiles/[^/]+\.dir/||; s|\.cpp\.o\t|\.cpp\t|"
+    echo "Top 30 dead symbols per-TU, ACTIONABLE (source-loc<TAB>symbol<TAB>type):"
+    echo "  Filtered to handwritten code (DWARF source-loc inside our src_roots)"
+    echo "  with strong-linkage symbol type (T/t/D/d/B/b)."
+    head -30 "$out/dead-symbols-actionable.tsv" | awk -F'\t' '{ print $4 "\t" $2 "\t" $3 }'
+    echo
+    echo "Top 10 source files by actionable-dead count (DWARF source path):"
+    awk -F'\t' '{ sub(/:[0-9?]+$/, "", $4); print $4 }' "$out/dead-symbols-actionable.tsv" \
+        | sort | uniq -c | sort -rn | head -10
     echo
     echo "Top 20 compile warnings:"
     head -20 "$out/compile-warnings.txt"
