@@ -285,26 +285,10 @@ void VCCollection::setCollectionAnchor2d(uint64_t collectionId, const std::optio
     }
 }
 
-std::optional<cv::Vec2f> VCCollection::getCollectionAnchor2d(uint64_t collectionId) const
-{
-    if (_collections.count(collectionId)) {
-        return _collections.at(collectionId).anchor2d;
-    }
-    return std::nullopt;
-}
-
 void VCCollection::setCollectionTag(uint64_t collectionId, const std::string& key, const std::string& value)
 {
     if (_collections.count(collectionId)) {
         _collections.at(collectionId).tags[key] = value;
-        emit collectionChanged(collectionId);
-    }
-}
-
-void VCCollection::removeCollectionTag(uint64_t collectionId, const std::string& key)
-{
-    if (_collections.count(collectionId)) {
-        _collections.at(collectionId).tags.erase(key);
         emit collectionChanged(collectionId);
     }
 }
@@ -416,14 +400,6 @@ VCCollection::WindingFillMode VCCollection::getAutoFillMode(uint64_t collectionI
         return _collections.at(collectionId).autoFillMode;
     }
     return WindingFillMode::None;
-}
-
-float VCCollection::getAutoFillConstant(uint64_t collectionId) const
-{
-    if (_collections.count(collectionId)) {
-        return _collections.at(collectionId).autoFillConstant;
-    }
-    return 0.0f;
 }
 
 float VCCollection::computeAutoFillValue(uint64_t collectionId) const

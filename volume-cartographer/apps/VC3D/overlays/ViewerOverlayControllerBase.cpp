@@ -386,14 +386,6 @@ QPointF ViewerOverlayControllerBase::volumeToScene(VolumeViewerBase* viewer, con
     return viewer->volumeToScene(volumePoint);
 }
 
-cv::Vec3f ViewerOverlayControllerBase::sceneToVolume(VolumeViewerBase* viewer, const QPointF& scenePoint) const
-{
-    if (!viewer) {
-        return cv::Vec3f();
-    }
-    return viewer->sceneToVolume(scenePoint);
-}
-
 std::vector<QPointF> ViewerOverlayControllerBase::volumeToScene(VolumeViewerBase* viewer,
                                                                 const std::vector<cv::Vec3f>& volumePoints) const
 {
@@ -492,14 +484,6 @@ ViewerOverlayControllerBase::filterPoints(VolumeViewerBase* viewer,
     return result;
 }
 
-QGraphicsScene* ViewerOverlayControllerBase::viewerScene(VolumeViewerBase* viewer) const
-{
-    if (!viewer || !viewer->graphicsView()) {
-        return nullptr;
-    }
-    return viewer->graphicsView()->scene();
-}
-
 QRectF ViewerOverlayControllerBase::visibleSceneRect(VolumeViewerBase* viewer) const
 {
     if (!viewer || !viewer->graphicsView()) {
@@ -507,11 +491,6 @@ QRectF ViewerOverlayControllerBase::visibleSceneRect(VolumeViewerBase* viewer) c
     }
     auto* view = viewer->graphicsView();
     return view->mapToScene(view->viewport()->rect()).boundingRect();
-}
-
-bool ViewerOverlayControllerBase::isScenePointVisible(VolumeViewerBase* viewer, const QPointF& scenePoint) const
-{
-    return visibleSceneRect(viewer).contains(scenePoint);
 }
 
 Surface* ViewerOverlayControllerBase::viewerSurface(VolumeViewerBase* viewer) const

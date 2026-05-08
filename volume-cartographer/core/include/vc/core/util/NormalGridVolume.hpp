@@ -36,7 +36,6 @@ namespace vc::core::util {
             double weight;
         };
 
-        std::optional<GridQueryResult> query(const cv::Point3f& point, int plane_idx) const;
         std::shared_ptr<const GridStore> query_nearest(const cv::Point3f& point, int plane_idx) const;
         std::shared_ptr<const GridStore> get_grid(int plane_idx, int slice_idx) const;
         CacheStats cacheStats() const;

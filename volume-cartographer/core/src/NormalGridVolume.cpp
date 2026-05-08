@@ -228,10 +228,6 @@
     NormalGridVolume::NormalGridVolume(const std::string& path)
         : pimpl_(std::make_unique<pimpl>(path)) {}
  
-    std::optional<NormalGridVolume::GridQueryResult> NormalGridVolume::query(const cv::Point3f& point, int plane_idx) const {
-        return pimpl_->query(point, plane_idx);
-    }
-
     std::shared_ptr<const GridStore> NormalGridVolume::query_nearest(const cv::Point3f& point, int plane_idx) const {
         return pimpl_->query_nearest(point, plane_idx);
     }

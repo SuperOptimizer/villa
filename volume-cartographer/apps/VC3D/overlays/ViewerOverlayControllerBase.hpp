@@ -233,12 +233,9 @@ protected:
     virtual void collectPrimitives(VolumeViewerBase* viewer, OverlayBuilder& builder) = 0;
 
     QPointF volumeToScene(VolumeViewerBase* viewer, const cv::Vec3f& volumePoint) const;
-    cv::Vec3f sceneToVolume(VolumeViewerBase* viewer, const QPointF& scenePoint) const;
     std::vector<QPointF> volumeToScene(VolumeViewerBase* viewer,
                                        const std::vector<cv::Vec3f>& volumePoints) const;
-    QGraphicsScene* viewerScene(VolumeViewerBase* viewer) const;
     QRectF visibleSceneRect(VolumeViewerBase* viewer) const;
-    bool isScenePointVisible(VolumeViewerBase* viewer, const QPointF& scenePoint) const;
     Surface* viewerSurface(VolumeViewerBase* viewer) const;
 
     FilteredPoints filterPoints(VolumeViewerBase* viewer,
