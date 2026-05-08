@@ -51,7 +51,6 @@ public:
 
     void setSegmentationOverlay(SegmentationOverlayController* overlay);
     SegmentationOverlayController* segmentationOverlay() const { return _segmentationOverlay; }
-    void setSegmentationEditActive(bool active);
     void setSegmentationModule(SegmentationModule* module);
     void setPointsOverlay(PointsOverlayController* overlay);
     void setRawPointsOverlay(RawPointsOverlayController* overlay);
@@ -73,7 +72,6 @@ public:
 
     void setOverlayColormap(const std::string& colormapId);
     const std::string& overlayColormap() const { return _overlayColormapId; }
-    void setOverlayThreshold(float threshold);
     float overlayThreshold() const { return _overlayWindowLow; }
 
     void setOverlayWindow(float low, float high);
@@ -86,7 +84,6 @@ public:
 
     void setSurfacePatchSamplingStride(int stride, bool userInitiated = true);
     int surfacePatchSamplingStride() const { return _surfacePatchSamplingStride; }
-    void setIntersectionMaxSurfaces(int limit);
     int intersectionMaxSurfaces() const { return _intersectionMaxSurfaces; }
     void primeSurfacePatchIndicesAsync();
     void resetStrideUserOverride() {}

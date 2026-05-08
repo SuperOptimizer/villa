@@ -24,8 +24,6 @@ public:
                      SegmentationWidget* widget,
                      VCCollection* collection);
 
-    void setWidget(SegmentationWidget* widget);
-    void setCollection(VCCollection* collection);
 
     void setActiveCollection(uint64_t collectionId, bool userInitiated);
     uint64_t createCollection(bool announce);
@@ -44,7 +42,6 @@ public:
     [[nodiscard]] bool hasActiveCollection() const { return _activeCollectionId != 0; }
     [[nodiscard]] std::optional<std::pair<int, int>> zRange() const;
     [[nodiscard]] SegmentationCorrectionsPayload buildPayload(bool onlyActiveCollection = false) const;
-    [[nodiscard]] SegmentationCorrectionsPayload buildPayloadForCollection(uint64_t collectionId) const;
     [[nodiscard]] bool hasCorrections() const;
 
     void onCollectionRemoved(uint64_t id);

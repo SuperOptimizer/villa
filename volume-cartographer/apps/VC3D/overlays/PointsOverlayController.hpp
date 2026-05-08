@@ -16,7 +16,6 @@ public:
     PointsOverlayController(VCCollection* collection, QObject* parent = nullptr);
     ~PointsOverlayController() override;
 
-    void setCollection(VCCollection* collection);
 
 protected:
     bool isOverlayEnabledFor(VolumeViewerBase* viewer) const override;

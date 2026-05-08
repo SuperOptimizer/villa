@@ -135,9 +135,6 @@ public:
 
     void markNextEditsAsGrowth();
 
-    void bakePreviewToOriginal();
-    bool invalidateRegion(int centerRow, int centerCol, int radius);
-    bool markInvalidRegion(int centerRow, int centerCol, float radiusSteps);
     void clearInvalidatedEdits();
 
     void resetPointerSeed();

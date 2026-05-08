@@ -35,13 +35,6 @@ SegmentationLineTool::SegmentationLineTool(SegmentationModule& module,
 {
 }
 
-void SegmentationLineTool::setDependencies(SegmentationEditManager* editManager,
-                                           CState* state)
-{
-    _editManager = editManager;
-    _state = state;
-}
-
 void SegmentationLineTool::setSmoothing(float& smoothStrength, int& smoothIterations)
 {
     _smoothStrength = &smoothStrength;

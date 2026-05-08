@@ -12,9 +12,6 @@ public:
 
     void setRange(int minimum, int maximum);
     void setValues(int low, int high);
-    void setLowValue(int value);
-    void setHighValue(int value);
-    void setHandleBorderColor(const QColor& color);
 
     int minimum() const { return _minimum; }
     int maximum() const { return _maximum; }

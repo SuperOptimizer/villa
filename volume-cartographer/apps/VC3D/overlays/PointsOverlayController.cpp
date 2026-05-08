@@ -64,17 +64,6 @@ PointsOverlayController::~PointsOverlayController()
     disconnectCollectionSignals();
 }
 
-void PointsOverlayController::setCollection(VCCollection* collection)
-{
-    if (_collection == collection) {
-        return;
-    }
-    disconnectCollectionSignals();
-    _collection = collection;
-    connectCollectionSignals();
-    refreshAll();
-}
-
 bool PointsOverlayController::isOverlayEnabledFor(VolumeViewerBase* viewer) const
 {
     return _collection && viewer;

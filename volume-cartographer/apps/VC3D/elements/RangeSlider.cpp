@@ -59,29 +59,10 @@ void RangeSlider::setValues(int low, int high)
     updateValues(low, high, true);
 }
 
-void RangeSlider::setLowValue(int value)
-{
-    updateValues(value, _highValue, true);
-}
-
-void RangeSlider::setHighValue(int value)
-{
-    updateValues(_lowValue, value, true);
-}
-
 void RangeSlider::setMinimumSeparation(int separation)
 {
     _minimumSeparation = std::max(0, separation);
     updateValues(_lowValue, _highValue, true);
-}
-
-void RangeSlider::setHandleBorderColor(const QColor& color)
-{
-    if (_handleBorderColor == color) {
-        return;
-    }
-    _handleBorderColor = color;
-    update();
 }
 
 void RangeSlider::updateValues(int low, int high, bool emitSignals)

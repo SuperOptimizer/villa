@@ -210,12 +210,6 @@ void ViewerManager::setSegmentationOverlay(SegmentationOverlayController* overla
     registerOverlay(overlay);
 }
 
-void ViewerManager::setSegmentationEditActive(bool active)
-{
-    _segmentationEditActive = active;
-    forEachBaseViewer([active](VolumeViewerBase* v) { v->setSegmentationEditActive(active); });
-}
-
 void ViewerManager::setSegmentationModule(SegmentationModule* module)
 {
     _segmentationModule = module;
@@ -315,11 +309,6 @@ void ViewerManager::setOverlayColormap(const std::string& colormapId)
     forEachBaseViewer([this](VolumeViewerBase* v) { v->setOverlayColormap(_overlayColormapId); });
 }
 
-void ViewerManager::setOverlayThreshold(float threshold)
-{
-    setOverlayWindow(std::max(threshold, 0.0f), _overlayWindowHigh);
-}
-
 void ViewerManager::setOverlayWindow(float low, float high)
 {
     constexpr float kMaxOverlayValue = 255.0f;
@@ -399,18 +388,6 @@ void ViewerManager::setSurfacePatchSamplingStride(int stride, bool userInitiated
     forEachBaseViewer([this](VolumeViewerBase* v) { v->setSurfacePatchSamplingStride(_surfacePatchSamplingStride); });
 
     emit samplingStrideChanged(_surfacePatchSamplingStride);
-}
-
-void ViewerManager::setIntersectionMaxSurfaces(int limit)
-{
-    limit = std::max(0, limit);
-    if (_intersectionMaxSurfaces == limit) {
-        return;
-    }
-    _intersectionMaxSurfaces = limit;
-
-    QSettings settings(vc3d::settingsFilePath(), QSettings::IniFormat);
-    settings.setValue(vc3d::settings::viewer::INTERSECTION_MAX_SURFACES, limit);
 }
 
 SurfacePatchIndex* ViewerManager::surfacePatchIndex()
