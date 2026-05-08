@@ -21,23 +21,11 @@ public:
     explicit VcDataset(const std::filesystem::path& path);
     ~VcDataset();
 
-    VcDataset(VcDataset&&) noexcept;
-    VcDataset& operator=(VcDataset&&) noexcept;
-
     // --- Metadata (cached from .zarray on construction) ---
     const std::vector<size_t>& shape() const;
     const std::vector<size_t>& defaultChunkShape() const;
-    size_t defaultChunkSize() const;  // product of chunk dims
     VcDtype getDtype() const;
-    size_t dtypeSize() const;  // 1 for uint8, 2 for uint16
     const std::filesystem::path& path() const;
-    const std::string& delimiter() const;
-
-    // --- Decompression ---
-    // Decompress raw compressed bytes into output buffer.
-    // nElements = expected number of elements (NOT bytes).
-    void decompress(std::span<const uint8_t> compressed,
-                    void* output, size_t nElements) const;
 
     // --- Chunk I/O ---
     // Check if a chunk file exists on disk.
@@ -63,21 +51,12 @@ public:
                     const std::vector<size_t>& regionShape,
                     void* output) const;
 
-    bool writeRegion(const std::vector<size_t>& offset,
-                     const std::vector<size_t>& regionShape,
-                     const void* data);
-
     struct Impl;
 private:
     std::unique_ptr<Impl> impl_;
 };
 
 // --- Factory functions ---
-
-// Open zarr root and return one VcDataset per pyramid level.
-// Scans subdirectories for .zarray files, sorts numerically.
-std::vector<std::unique_ptr<VcDataset>> openZarrLevels(
-    const std::filesystem::path& zarrRoot);
 
 // Read .zattrs JSON from a zarr group directory.
 utils::Json readZarrAttributes(const std::filesystem::path& groupPath);

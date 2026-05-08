@@ -318,7 +318,6 @@ VolumePkg::~VolumePkg()
     segmentsChangedCb_ = nullptr;
 }
 
-void VolumePkg::setAutosaveRoot(const fs::path& dir) { autosaveRoot_ = dir; }
 fs::path VolumePkg::autosaveRoot() { return autosaveRoot_; }
 
 void VolumePkg::setLoadFirstSegmentationDirectory(const std::string& dirName)
@@ -353,26 +352,7 @@ std::shared_ptr<VolumePkg> VolumePkg::load(const fs::path& jsonFile,
     return p;
 }
 
-std::shared_ptr<VolumePkg> VolumePkg::loadAutosave(const vc::project::LoadOptions& opts)
-{
-    const auto file = autosaveFile();
-    if (file.empty() || !fs::exists(file)) return nullptr;
-    auto p = std::shared_ptr<VolumePkg>(new VolumePkg());
-    p->opts_ = opts;
-    p->path_ = file;
-    p->readJsonFrom(file);
-    p->resolveAll();
-    return p;
-}
-
-std::shared_ptr<VolumePkg> VolumePkg::New(const fs::path& jsonFile)
-{
-    return load(jsonFile);
-}
-
-fs::path VolumePkg::path() const { return path_; }
 std::string VolumePkg::name() const { return name_; }
-void VolumePkg::setName(const std::string& v) { name_ = v; persistProjectState(); }
 int VolumePkg::version() const { return version_; }
 
 const std::vector<vc::project::Entry>& VolumePkg::volumeEntries() const { return volumes_; }
@@ -437,12 +417,6 @@ void VolumePkg::setOutputSegments(const std::string& location)
 {
     outputSegments_ = location;
     refreshSegmentations();
-    persistProjectState();
-}
-
-void VolumePkg::clearOutputSegments()
-{
-    outputSegments_.reset();
     persistProjectState();
 }
 
@@ -541,23 +515,6 @@ bool VolumePkg::removeSingleVolume(const std::string& volumeIdOrDirName)
     return false;
 }
 
-bool VolumePkg::reloadSingleVolume(const std::string& volumeId)
-{
-    auto it = loadedVolumes_.find(volumeId);
-    if (it == loadedVolumes_.end() || !it->second) return false;
-    const auto vp = it->second->path();
-    loadedVolumes_.erase(it);
-    volumeTagsByID_.erase(volumeId);
-    try {
-        auto v = Volume::New(vp);
-        loadedVolumes_.emplace(v->id(), v);
-        return true;
-    } catch (const std::exception& ex) {
-        Logger()->warn("reloadSingleVolume('{}'): {}", volumeId, ex.what());
-        return false;
-    }
-}
-
 bool VolumePkg::hasSegmentations() const
 {
     std::lock_guard<std::mutex> lk(segmentsMutex_);
@@ -612,21 +569,6 @@ std::vector<fs::path> VolumePkg::normal3dZarrPaths() const
         out.push_back(it->second->path());
     }
     return out;
-}
-
-std::vector<std::string> VolumePkg::volumeTags(const std::string& volumeId) const
-{
-    auto it = volumeTagsByID_.find(volumeId);
-    if (it == volumeTagsByID_.end()) return {};
-    return it->second;
-}
-
-std::vector<std::string> VolumePkg::segmentationTags(const std::string& segmentId) const
-{
-    std::lock_guard<std::mutex> lk(segmentsMutex_);
-    auto it = segmentationTagsByID_.find(segmentId);
-    if (it == segmentationTagsByID_.end()) return {};
-    return it->second;
 }
 
 bool VolumePkg::isSurfaceLoaded(const std::string& id) const
@@ -734,15 +676,6 @@ void VolumePkg::loadSurfacesBatch(const std::vector<std::string>& ids)
             Logger()->error("Failed to load surface for {}: {}", seg->id(), e.what());
         }
     }
-}
-
-bool VolumePkg::isRemote() const
-{
-    auto anyRemote = [](const std::vector<vc::project::Entry>& v) {
-        return std::any_of(v.begin(), v.end(),
-                           [](const auto& e) { return vc::project::isLocationRemote(e.location); });
-    };
-    return anyRemote(volumes_) || anyRemote(normalGrids_);
 }
 
 bool VolumePkg::hasRemoteCacheRoot() const
@@ -910,16 +843,6 @@ void VolumePkg::setSegmentsChangedCallback(std::function<void()> cb)
     segmentsChangedCb_ = std::move(cb);
 }
 
-void VolumePkg::notifySegmentsChanged()
-{
-    std::function<void()> cb;
-    {
-        std::lock_guard<std::mutex> lk(segmentsMutex_);
-        cb = segmentsChangedCb_;
-    }
-    if (cb) cb();
-}
-
 void VolumePkg::resolveNormalGridEntry(const vc::project::Entry& e)
 {
     if (vc::project::isLocationRemote(e.location)) {
@@ -1015,15 +938,6 @@ std::vector<fs::path> VolumePkg::availableSegmentPaths() const
         out.push_back(vc::project::resolveLocalPath(e.location, path_.parent_path()));
     }
     return out;
-}
-
-fs::path VolumePkg::findSegmentPathByName(const std::string& dirName) const
-{
-    for (const auto& e : segments_) {
-        const auto p = vc::project::resolveLocalPath(e.location, path_.parent_path());
-        if (p.filename().string() == dirName) return p;
-    }
-    return {};
 }
 
 void VolumePkg::setSegmentationDirectory(const std::string& dirName)

@@ -43,12 +43,8 @@ public:
     static std::shared_ptr<VolumePkg> newEmpty();
     static std::shared_ptr<VolumePkg> load(const std::filesystem::path& jsonFile,
                                            const vc::project::LoadOptions& opts = {});
-    static std::shared_ptr<VolumePkg> loadAutosave(const vc::project::LoadOptions& opts = {});
-
-    static std::shared_ptr<VolumePkg> New(const std::filesystem::path& jsonFile);
 
     static void setLoadFirstSegmentationDirectory(const std::string& dirName);
-    static void setAutosaveRoot(const std::filesystem::path& dir);
     static std::filesystem::path autosaveRoot();
     static std::filesystem::path autosaveFile();
 
@@ -56,10 +52,8 @@ public:
 
     void save(const std::filesystem::path& target);
     void saveAutosave();
-    [[nodiscard]] std::filesystem::path path() const;
 
     [[nodiscard]] std::string name() const;
-    void setName(const std::string& v);
     [[nodiscard]] int version() const;
 
     [[nodiscard]] const std::vector<vc::project::Entry>& volumeEntries() const;
@@ -72,7 +66,6 @@ public:
     bool removeEntry(const std::string& location);
 
     void setOutputSegments(const std::string& location);
-    void clearOutputSegments();
     [[nodiscard]] bool hasOutputSegments() const;
     [[nodiscard]] std::filesystem::path outputSegmentsPath() const;
 
@@ -85,7 +78,6 @@ public:
     bool addVolume(const std::shared_ptr<Volume>& volume);
     bool addSingleVolume(const std::string& volumeDirName);
     bool removeSingleVolume(const std::string& volumeIdOrDirName);
-    bool reloadSingleVolume(const std::string& volumeId);
 
     [[nodiscard]] bool hasSegmentations() const;
     [[nodiscard]] std::vector<std::string> segmentationIDs() const;
@@ -95,9 +87,6 @@ public:
     [[nodiscard]] std::vector<std::filesystem::path> normalGridPaths() const;
     [[nodiscard]] std::vector<std::filesystem::path> normal3dZarrPaths() const;
 
-    [[nodiscard]] std::vector<std::string> volumeTags(const std::string& volumeId) const;
-    [[nodiscard]] std::vector<std::string> segmentationTags(const std::string& segmentId) const;
-
     [[nodiscard]] bool isSurfaceLoaded(const std::string& id) const;
     std::shared_ptr<QuadSurface> loadSurface(const std::string& id);
     std::shared_ptr<QuadSurface> getSurface(const std::string& id);
@@ -105,8 +94,6 @@ public:
     [[nodiscard]] std::vector<std::string> getLoadedSurfaceIDs() const;
     void unloadAllSurfaces();
     void loadSurfacesBatch(const std::vector<std::string>& ids);
-
-    [[nodiscard]] bool isRemote() const;
 
     void setSegmentsChangedCallback(std::function<void()> cb);
 
@@ -118,7 +105,6 @@ public:
     [[nodiscard]] std::string getSegmentationDirectory() const;
     [[nodiscard]] std::vector<std::string> getAvailableSegmentationDirectories() const;
     [[nodiscard]] std::vector<std::filesystem::path> availableSegmentPaths() const;
-    [[nodiscard]] std::filesystem::path findSegmentPathByName(const std::string& dirName) const;
     void setSegmentationDirectory(const std::string& dirName);
     void refreshSegmentations();
     bool addSingleSegmentation(const std::string& id);
@@ -149,7 +135,6 @@ private:
     void resolveVolumeEntry(const vc::project::Entry& e);
     void resolveSegmentsEntry(const vc::project::Entry& e);
     void resolveNormalGridEntry(const vc::project::Entry& e);
-    void notifySegmentsChanged();
 
     void persistProjectState();
     void writeJsonTo(const std::filesystem::path& target) const;
