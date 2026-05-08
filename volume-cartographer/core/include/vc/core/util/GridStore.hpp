@@ -50,7 +50,6 @@ public:
 
     void save(const std::string& path, const SaveOptions& options) const;
     void save(const std::string& path) const;
-    void load_mmap(const std::string& path);
 
 private:
     friend class LineSegList;

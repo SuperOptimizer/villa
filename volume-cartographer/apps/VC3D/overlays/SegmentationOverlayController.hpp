@@ -137,7 +137,6 @@ public:
 
     // Flush any pending approval mask saves immediately (uses the surface from scheduleDebouncedSave)
     // Call this before segment switching to ensure changes are saved to the correct surface
-    void flushPendingApprovalMaskSave();
 
     // Undo support for approval mask painting
     // Undo the last paint stroke (repaints with inverse value)
@@ -153,7 +152,6 @@ public:
 
     // Query approval status for a grid position (integer coords, nearest neighbor)
     // Returns: 0 = not approved, 1 = saved approved, 2 = pending approved, 3 = pending unapproved
-    int queryApprovalStatus(int row, int col) const;
 
     // Query approval value with bilinear interpolation (float coords)
     // Returns approval intensity 0.0-1.0 using bilinear interpolation for smooth edges

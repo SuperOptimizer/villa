@@ -306,14 +306,6 @@ bool collectLevelPointDependencies(IChunkedArray& array,
     return ok;
 }
 
-void requestDependencies(LocalChunkCache& cache,
-                         const std::unordered_set<ChunkKey, ChunkKeyHash>& keys,
-                         ChunkedPlaneSampler::Stats& stats)
-{
-    for (const ChunkKey& key : keys)
-        (void)cache.get(key, stats.requestedChunks, stats.errorChunks);
-}
-
 bool sampleNearest(IChunkedArray& array,
                    LocalChunkCache& cache,
                    const LevelAccess& access,
@@ -605,86 +597,6 @@ std::vector<ChunkKey> ChunkedPlaneSampler::collectCoordsDependencies(
     for (const ChunkKey& key : keys)
         result.push_back(key);
     return result;
-}
-
-ChunkedPlaneSampler::Stats ChunkedPlaneSampler::requestPlaneDependencies(
-    IChunkedArray& array,
-    int level,
-    const cv::Vec3f& origin,
-    const cv::Vec3f& vxStep,
-    const cv::Vec3f& vyStep,
-    const cv::Mat_<uint8_t>& coverage,
-    const Options& options)
-{
-    Stats stats;
-    if (level < 0 || level >= array.numLevels() || coverage.empty())
-        return stats;
-
-    const LevelAccess access = makeLevelAccess(array, level);
-    const LevelPlane levelPlane = toLevelPlane(access, origin, vxStep, vyStep);
-    LocalChunkCache chunkCache(array, 64);
-    const int tile = std::max(1, options.tileSize);
-    std::unordered_set<ChunkKey, ChunkKeyHash> tileKeys;
-    tileKeys.reserve(std::size_t(tile) * std::size_t(tile) * 2);
-    for (int ty = 0; ty < coverage.rows; ty += tile) {
-        const int yEnd = std::min(ty + tile, coverage.rows);
-        for (int tx = 0; tx < coverage.cols; tx += tile) {
-            const int xEnd = std::min(tx + tile, coverage.cols);
-            tileKeys.clear();
-            for (int y = ty; y < yEnd; ++y) {
-                const uint8_t* coverageRow = coverage.ptr<uint8_t>(y);
-                const cv::Vec3f rowBase = levelPlane.origin + levelPlane.vyStep * float(y);
-                for (int x = tx; x < xEnd; ++x) {
-                    if (coverageRow[x])
-                        continue;
-                    (void)collectLevelPointDependencies(
-                        array, access, level, rowBase + levelPlane.vxStep * float(x),
-                        options.sampling, tileKeys);
-                }
-            }
-            requestDependencies(chunkCache, tileKeys, stats);
-        }
-    }
-    return stats;
-}
-
-ChunkedPlaneSampler::Stats ChunkedPlaneSampler::requestCoordsDependencies(
-    IChunkedArray& array,
-    int level,
-    const cv::Mat_<cv::Vec3f>& coords,
-    const cv::Mat_<uint8_t>& coverage,
-    const Options& options)
-{
-    Stats stats;
-    if (level < 0 || level >= array.numLevels() || coords.empty() || coverage.empty())
-        return stats;
-
-    const LevelAccess access = makeLevelAccess(array, level);
-    LocalChunkCache chunkCache(array, 64);
-    const int tile = std::max(1, options.tileSize);
-    const int h = std::min(coords.rows, coverage.rows);
-    const int w = std::min(coords.cols, coverage.cols);
-    std::unordered_set<ChunkKey, ChunkKeyHash> tileKeys;
-    tileKeys.reserve(std::size_t(tile) * std::size_t(tile) * 2);
-    for (int ty = 0; ty < h; ty += tile) {
-        const int yEnd = std::min(ty + tile, h);
-        for (int tx = 0; tx < w; tx += tile) {
-            const int xEnd = std::min(tx + tile, w);
-            tileKeys.clear();
-            for (int y = ty; y < yEnd; ++y) {
-                const cv::Vec3f* coordRow = coords.ptr<cv::Vec3f>(y);
-                const uint8_t* coverageRow = coverage.ptr<uint8_t>(y);
-                for (int x = tx; x < xEnd; ++x) {
-                    if (coverageRow[x])
-                        continue;
-                    (void)collectPointDependencies(array, access, level, coordRow[x],
-                                                   options.sampling, true, tileKeys);
-                }
-            }
-            requestDependencies(chunkCache, tileKeys, stats);
-        }
-    }
-    return stats;
 }
 
 ChunkedPlaneSampler::Stats samplePlaneLevelImpl(

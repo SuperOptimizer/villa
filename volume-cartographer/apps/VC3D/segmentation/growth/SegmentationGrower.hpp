@@ -66,7 +66,6 @@ public:
                        QObject* parent = nullptr);
 
     void updateContext(Context context);
-    void updateUiCallbacks(UiCallbacks callbacks);
     void setSurfacePanel(SurfacePanelController* panel);
 
     bool start(const VolumeContext& volumeContext,
@@ -101,7 +100,6 @@ private:
     };
 
     void finalize(bool ok);
-    void handleFailure(const QString& message);
     void onFutureFinished();
 
     Context _context;

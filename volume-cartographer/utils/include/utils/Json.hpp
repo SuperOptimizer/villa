@@ -94,11 +94,9 @@ public:
     [[nodiscard]] std::string value(const std::string& key, const std::string& def) const;
     [[nodiscard]] std::string value(const std::string& key, const char* def) const;
     [[nodiscard]] int value(const std::string& key, int def) const;
-    [[nodiscard]] int64_t value(const std::string& key, int64_t def) const;
     [[nodiscard]] float value(const std::string& key, float def) const;
     [[nodiscard]] double value(const std::string& key, double def) const;
     [[nodiscard]] bool value(const std::string& key, bool def) const;
-    [[nodiscard]] uint64_t value(const std::string& key, uint64_t def) const;
 
     // Get vectors
     [[nodiscard]] std::vector<std::string> get_string_array() const;

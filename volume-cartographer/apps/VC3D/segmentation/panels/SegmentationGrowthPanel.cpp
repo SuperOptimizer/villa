@@ -627,11 +627,6 @@ void SegmentationGrowthPanel::applyGrowthSteps(int steps, bool persist, bool fro
     }
 }
 
-void SegmentationGrowthPanel::setGrowthSteps(int steps, bool persist)
-{
-    applyGrowthSteps(steps, persist, false);
-}
-
 void SegmentationGrowthPanel::setGrowthMethod(SegmentationGrowthMethod method)
 {
     if (_growthMethod == method) {

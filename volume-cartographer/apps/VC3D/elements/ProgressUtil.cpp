@@ -164,21 +164,6 @@ void ProgressUtil::updateProgress(int completedSteps)
     updateProgressFormat();
 }
 
-void ProgressUtil::advanceProgress(int stepDelta)
-{
-    if (!_progressActive) {
-        return;
-    }
-
-    int newValue = _progressValue + stepDelta;
-    if (_progressTotal > 0) {
-        newValue = std::clamp(newValue, 0, _progressTotal);
-    } else {
-        newValue = std::max(0, newValue);
-    }
-    updateProgress(newValue);
-}
-
 void ProgressUtil::stopProgress(bool resetValue)
 {
     _progressActive = false;

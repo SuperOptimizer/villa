@@ -33,22 +33,6 @@ public:
         int errorChunks = 0;
     };
 
-    // Queue chunk dependencies for pixels not already covered. The viewer can
-    // call these before sampling a frame so cache misses start resolving early.
-    static Stats requestPlaneDependencies(IChunkedArray& array,
-                                          int level,
-                                          const cv::Vec3f& origin,
-                                          const cv::Vec3f& vxStep,
-                                          const cv::Vec3f& vyStep,
-                                          const cv::Mat_<uint8_t>& coverage,
-                                          const Options& options = Options());
-
-    static Stats requestCoordsDependencies(IChunkedArray& array,
-                                           int level,
-                                           const cv::Mat_<cv::Vec3f>& coords,
-                                           const cv::Mat_<uint8_t>& coverage,
-                                           const Options& options = Options());
-
     static std::vector<ChunkKey> collectPlaneDependencies(IChunkedArray& array,
                                                           int level,
                                                           const cv::Vec3f& origin,

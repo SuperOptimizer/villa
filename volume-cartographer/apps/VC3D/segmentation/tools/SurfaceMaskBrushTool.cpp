@@ -241,17 +241,6 @@ void SurfaceMaskBrushTool::extendStroke(const QPointF& surfacePos, bool forceSam
     invalidateOverlay();
 }
 
-void SurfaceMaskBrushTool::pauseStroke()
-{
-    if (!_strokeActive) {
-        return;
-    }
-
-    _strokeActive = false;
-    _lastGridPosition.reset();
-    invalidateOverlay();
-}
-
 void SurfaceMaskBrushTool::finishStroke()
 {
     if (!_strokeActive && _pendingCells.empty()) {
@@ -272,22 +261,6 @@ void SurfaceMaskBrushTool::finishStroke()
     _strokeGridPoints.clear();
     _overlaySurfacePoints.clear();
     invalidateViewers(!changedRegion.empty());
-}
-
-void SurfaceMaskBrushTool::cancelStroke()
-{
-    _strokeActive = false;
-    _lastGridPosition.reset();
-    _paintedCells.clear();
-    _pendingCells.clear();
-    _strokeGridPoints.clear();
-    _overlaySurfacePoints.clear();
-    if (_surface) {
-        _mask = _surface->validMask();
-    } else {
-        _mask.release();
-    }
-    invalidateViewers(false);
 }
 
 std::optional<std::pair<float, float>> SurfaceMaskBrushTool::surfaceToGridPosition(const QPointF& surfacePos) const

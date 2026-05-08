@@ -76,7 +76,6 @@ public:
     /**
      * @brief Increment progress by a delta (default 1).
      */
-    void advanceProgress(int stepDelta = 1);
 
     /**
      * @brief Stop progress tracking and optionally reset progress bar state.

@@ -23,7 +23,6 @@ struct OpenedChunkedZarr {
 };
 
 OpenedChunkedZarr openLocalZarrPyramid(const std::filesystem::path& root);
-OpenedChunkedZarr openHttpZarrPyramid(const std::string& url);
 OpenedChunkedZarr openHttpZarrPyramid(
     const std::string& url,
     const vc::HttpAuth& auth,

@@ -15,7 +15,6 @@ public:
     explicit SegmentationCustomParamsPanel(const QString& settingsGroup,
                                            QWidget* parent = nullptr);
 
-    [[nodiscard]] QString customParamsText() const;
     [[nodiscard]] QString customParamsProfile() const { return _customParamsProfile; }
     [[nodiscard]] bool customParamsValid() const { return _customParamsError.isEmpty(); }
     [[nodiscard]] QString customParamsError() const { return _customParamsError; }

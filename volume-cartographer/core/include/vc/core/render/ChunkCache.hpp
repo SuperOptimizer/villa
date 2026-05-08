@@ -51,10 +51,6 @@ public:
     ChunkCache(std::vector<LevelInfo> levels,
                std::vector<std::shared_ptr<IChunkFetcher>> fetchers,
                double fillValue,
-               ChunkDtype dtype);
-    ChunkCache(std::vector<LevelInfo> levels,
-               std::vector<std::shared_ptr<IChunkFetcher>> fetchers,
-               double fillValue,
                ChunkDtype dtype,
                Options options);
     ~ChunkCache() override;

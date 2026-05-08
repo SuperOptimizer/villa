@@ -24,9 +24,7 @@ public:
 
     void startStroke(const QPointF& surfacePos);
     void extendStroke(const QPointF& surfacePos, bool forceSample);
-    void pauseStroke();
     void finishStroke();
-    void cancelStroke();
 
 private:
     [[nodiscard]] std::optional<std::pair<float, float>> surfaceToGridPosition(const QPointF& surfacePos) const;

@@ -650,17 +650,6 @@ void SegmentationOverlayController::scheduleDebouncedSave(QuadSurface* surface)
     scheduleApprovalMaskSave(surface);
 }
 
-void SegmentationOverlayController::flushPendingApprovalMaskSave()
-{
-    // If there's a pending debounced save, execute it immediately
-    // This ensures changes are saved to the correct surface before segment switching
-    if (_approvalSaveTimer && _approvalSaveTimer->isActive() && _approvalSaveSurface) {
-        _approvalSaveTimer->stop();
-        saveApprovalMaskToSurface(_approvalSaveSurface);
-        _approvalSaveSurface = nullptr;
-    }
-}
-
 void SegmentationOverlayController::scheduleApprovalMaskSave(QuadSurface* surface)
 {
     if (!surface) {
@@ -1215,35 +1204,6 @@ void SegmentationOverlayController::rebuildViewerCache(VolumeViewerBase* viewer,
     cache.surface = surface;
     cache.savedImageVersion = _savedImageVersion;
     cache.pendingImageVersion = _pendingImageVersion;
-}
-
-int SegmentationOverlayController::queryApprovalStatus(int row, int col) const
-{
-    // Check pending first (takes priority for display)
-    // Returns: 0 = not approved, 1 = saved approved, 2 = pending approved
-    // Note: Unapprovals are applied immediately (no pending unapproval state)
-    if (!_pendingApprovalMaskImage.isNull() &&
-        row >= 0 && row < _pendingApprovalMaskImage.height() &&
-        col >= 0 && col < _pendingApprovalMaskImage.width()) {
-        QRgb pixel = _pendingApprovalMaskImage.pixel(col, row);
-        // Any non-transparent pixel with any color is approved
-        if (qAlpha(pixel) > 0 && (qRed(pixel) > 0 || qGreen(pixel) > 0 || qBlue(pixel) > 0)) {
-            return 2;  // Pending approval
-        }
-    }
-
-    // Check saved
-    if (!_savedApprovalMaskImage.isNull() &&
-        row >= 0 && row < _savedApprovalMaskImage.height() &&
-        col >= 0 && col < _savedApprovalMaskImage.width()) {
-        QRgb pixel = _savedApprovalMaskImage.pixel(col, row);
-        // Any non-transparent pixel with any color is approved
-        if (qAlpha(pixel) > 0 && (qRed(pixel) > 0 || qGreen(pixel) > 0 || qBlue(pixel) > 0)) {
-            return 1;  // Saved
-        }
-    }
-
-    return 0;  // Not approved
 }
 
 QColor SegmentationOverlayController::queryApprovalColor(int row, int col) const

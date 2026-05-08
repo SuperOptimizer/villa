@@ -43,7 +43,6 @@ public:
 
     // Setters
     void setGrowthMethod(SegmentationGrowthMethod method);
-    void setGrowthSteps(int steps, bool persist = true);
     void setGrowthInProgress(bool running);
     void setManualAddUiActive(bool active);
     void setNormalGridAvailable(bool available);

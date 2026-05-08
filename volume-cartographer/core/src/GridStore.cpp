@@ -885,8 +885,4 @@ void GridStore::save(const std::string& path) const {
     save(path, SaveOptions{});
 }
 
-void GridStore::load_mmap(const std::string& path) {
-    pimpl_->load_mmap(path);
-}
-
 }

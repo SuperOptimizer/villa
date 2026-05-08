@@ -96,7 +96,6 @@ public:
     void resetTagUi();
 
     bool isCurrentOnlyFilterEnabled() const;
-    bool toggleTag(Tag tag);
     void reloadSurfacesFromDisk();
     void refreshFiltersOnly();
     void setSelectionLocked(bool locked);

@@ -50,13 +50,11 @@ public:
     }
 
     // Simple string overloads
-    void debug(const std::string& msg);
     void info(const std::string& msg);
     void warn(const std::string& msg);
     void error(const std::string& msg);
 
     void set_level(LogLevel level);
-    void add_file(const std::filesystem::path& path);
 
 private:
     template<typename... Args>

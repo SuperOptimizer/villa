@@ -1215,11 +1215,6 @@ void SegmentationGrower::updateContext(Context context)
     _context = std::move(context);
 }
 
-void SegmentationGrower::updateUiCallbacks(UiCallbacks callbacks)
-{
-    _callbacks = std::move(callbacks);
-}
-
 void SegmentationGrower::setSurfacePanel(SurfacePanelController* panel)
 {
     _surfacePanel = panel;
@@ -1833,19 +1828,6 @@ void SegmentationGrower::finalize(bool ok)
     }
     _running = false;
     _activeRequest.reset();
-}
-
-void SegmentationGrower::handleFailure(const QString& message)
-{
-    auto showStatus = [&](const QString& text, int timeout) {
-        if (_callbacks.showStatus) {
-            _callbacks.showStatus(text, timeout);
-        }
-    };
-    if (!message.isEmpty()) {
-        showStatus(message, kStatusLong);
-    }
-    finalize(false);
 }
 
 bool SegmentationGrower::startCopyWithNt(const VolumeContext& volumeContext)

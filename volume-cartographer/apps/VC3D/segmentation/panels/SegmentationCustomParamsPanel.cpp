@@ -58,11 +58,6 @@ void SegmentationCustomParamsPanel::writeSetting(const QString& key, const QVari
     settings.endGroup();
 }
 
-QString SegmentationCustomParamsPanel::customParamsText() const
-{
-    return paramsTextForProfile(_customParamsProfile);
-}
-
 QString SegmentationCustomParamsPanel::paramsTextForProfile(const QString& profile) const
 {
     if (profile == QStringLiteral("custom")) {

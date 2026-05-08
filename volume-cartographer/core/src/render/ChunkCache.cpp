@@ -69,14 +69,6 @@ std::string fetchErrorMessage(const ChunkFetchResult& fetch)
 ChunkCache::ChunkCache(std::vector<LevelInfo> levels,
                        std::vector<std::shared_ptr<IChunkFetcher>> fetchers,
                        double fillValue,
-                       ChunkDtype dtype)
-    : ChunkCache(std::move(levels), std::move(fetchers), fillValue, dtype, Options{})
-{
-}
-
-ChunkCache::ChunkCache(std::vector<LevelInfo> levels,
-                       std::vector<std::shared_ptr<IChunkFetcher>> fetchers,
-                       double fillValue,
                        ChunkDtype dtype,
                        Options options)
     : state_(std::make_shared<State>(std::move(levels), std::move(fetchers), fillValue, dtype, std::move(options)))

@@ -56,13 +56,3 @@ void DropdownChecklistButton::clearOptions()
     _options.clear();
 }
 
-int DropdownChecklistButton::checkedCount() const
-{
-    int count = 0;
-    for (auto* option : _options) {
-        if (option && option->isChecked()) {
-            ++count;
-        }
-    }
-    return count;
-}

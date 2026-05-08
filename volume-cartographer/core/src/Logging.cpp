@@ -78,10 +78,6 @@ void MinimalLogger::write_log(LogLevel level, const std::string& msg) {
     }
 }
 
-void MinimalLogger::debug(const std::string& msg) {
-    write_log(LogLevel::Debug, msg);
-}
-
 void MinimalLogger::info(const std::string& msg) {
     write_log(LogLevel::Info, msg);
 }
@@ -96,15 +92,6 @@ void MinimalLogger::error(const std::string& msg) {
 
 void MinimalLogger::set_level(LogLevel level) {
     current_level_ = level;
-}
-
-void MinimalLogger::add_file(const std::filesystem::path& path) {
-    std::lock_guard<std::mutex> lock(impl_->mutex);
-
-    auto file = std::make_shared<std::ofstream>(path, std::ios::app);
-    if (file->is_open()) {
-        impl_->file_sinks.push_back(file);
-    }
 }
 
 // Global functions

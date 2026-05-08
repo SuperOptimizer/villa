@@ -1082,24 +1082,6 @@ bool SurfacePanelController::isCurrentOnlyFilterEnabled() const
     return _filters.currentOnly && _filters.currentOnly->isChecked();
 }
 
-bool SurfacePanelController::toggleTag(Tag tag)
-{
-    QCheckBox* target = nullptr;
-    switch (tag) {
-        case Tag::Approved: target = _tags.approved; break;
-        case Tag::Defective: target = _tags.defective; break;
-        case Tag::Reviewed: target = _tags.reviewed; break;
-        case Tag::Inspect: target = _tags.inspect; break;
-    }
-
-    if (!target || !target->isEnabled()) {
-        return false;
-    }
-
-    target->setCheckState(target->checkState() == Qt::Checked ? Qt::Unchecked : Qt::Checked);
-    return true;
-}
-
 void SurfacePanelController::reloadSurfacesFromDisk()
 {
     loadSurfacesIncremental();

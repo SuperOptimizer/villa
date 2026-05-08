@@ -384,11 +384,6 @@ OpenedChunkedZarr openHttpZarrPyramid(
     return opened;
 }
 
-OpenedChunkedZarr openHttpZarrPyramid(const std::string& url)
-{
-    return openHttpZarrPyramid(url, vc::HttpAuth{}, 0);
-}
-
 std::unique_ptr<ChunkCache> createChunkCache(
     OpenedChunkedZarr opened,
     std::size_t decodedByteCapacity,

@@ -222,9 +222,6 @@ std::string Json::value(const std::string& key, const char* def) const {
 int Json::value(const std::string& key, int def) const {
     return impl_->j().value(key, def);
 }
-int64_t Json::value(const std::string& key, int64_t def) const {
-    return impl_->j().value(key, def);
-}
 float Json::value(const std::string& key, float def) const {
     return impl_->j().value(key, def);
 }
@@ -232,9 +229,6 @@ double Json::value(const std::string& key, double def) const {
     return impl_->j().value(key, def);
 }
 bool Json::value(const std::string& key, bool def) const {
-    return impl_->j().value(key, def);
-}
-uint64_t Json::value(const std::string& key, uint64_t def) const {
     return impl_->j().value(key, def);
 }
 
