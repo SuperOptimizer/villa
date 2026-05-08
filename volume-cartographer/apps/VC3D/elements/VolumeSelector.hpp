@@ -23,16 +23,9 @@ public:
 
     explicit VolumeSelector(QWidget* parent = nullptr);
 
-    void setLabelText(const QString& text);
     void setLabelVisible(bool visible);
-    void setAllowNone(bool allow, const QString& label = QString());
-    void setBrowseEnabled(bool enabled);
-    void setBrowseDialogTitle(const QString& title);
-    void setBrowseMode(BrowseMode mode);
     void setVolumes(const QVector<VolumeOption>& volumes, const QString& defaultVolumeId = QString());
-    QString selectedVolumeId() const;
     QString selectedVolumePath() const;
-    bool hasVolumes() const;
     QComboBox* comboBox() const { return _combo; }
 
 private:

@@ -85,46 +85,11 @@ VolumeSelector::VolumeSelector(QWidget* parent)
     });
 }
 
-void VolumeSelector::setLabelText(const QString& text)
-{
-    if (_label) {
-        _label->setText(text);
-    }
-}
-
 void VolumeSelector::setLabelVisible(bool visible)
 {
     if (_label) {
         _label->setVisible(visible);
     }
-}
-
-void VolumeSelector::setAllowNone(bool allow, const QString& label)
-{
-    _allowNone = allow;
-    if (!label.isEmpty()) {
-        _noneLabel = label;
-    } else if (!_allowNone) {
-        _noneLabel.clear();
-    }
-}
-
-void VolumeSelector::setBrowseEnabled(bool enabled)
-{
-    _browseEnabled = enabled;
-    if (_browseButton) {
-        _browseButton->setVisible(enabled);
-    }
-}
-
-void VolumeSelector::setBrowseDialogTitle(const QString& title)
-{
-    _browseDialogTitle = title;
-}
-
-void VolumeSelector::setBrowseMode(BrowseMode mode)
-{
-    _browseMode = mode;
 }
 
 void VolumeSelector::setVolumes(const QVector<VolumeOption>& volumes, const QString& defaultVolumeId)
@@ -169,35 +134,10 @@ void VolumeSelector::setVolumes(const QVector<VolumeOption>& volumes, const QStr
     }
 }
 
-QString VolumeSelector::selectedVolumeId() const
-{
-    if (!_combo) {
-        return QString();
-    }
-    return _combo->currentData(Qt::UserRole + 1).toString();
-}
-
 QString VolumeSelector::selectedVolumePath() const
 {
     if (!_combo) {
         return QString();
     }
     return _combo->currentData(Qt::UserRole).toString();
-}
-
-bool VolumeSelector::hasVolumes() const
-{
-    if (!_combo) {
-        return false;
-    }
-
-    for (int i = 0; i < _combo->count(); ++i) {
-        const QString id = _combo->itemData(i, Qt::UserRole + 1).toString();
-        const QString path = _combo->itemData(i, Qt::UserRole).toString();
-        if (!id.isEmpty() || !path.isEmpty()) {
-            return true;
-        }
-    }
-
-    return false;
 }

@@ -752,9 +752,6 @@ QString ConvertToObjDialog::tifxyzPath() const { return edtTifxyz_->text(); }
 QString ConvertToObjDialog::objPath() const { return edtObj_->text(); }
 bool ConvertToObjDialog::normalizeUV() const { return chkNormalize_->isChecked(); }
 bool ConvertToObjDialog::alignGrid() const { return chkAlign_->isChecked(); }
-int ConvertToObjDialog::decimateIterations() const { return spDecimate_->value(); }
-bool ConvertToObjDialog::cleanSurface() const { return chkClean_->isChecked(); }
-double ConvertToObjDialog::cleanK() const { return spCleanK_->value(); }
 int ConvertToObjDialog::ompThreads() const {
     const QString t = edtThreads_->text().trimmed();
     if (t.isEmpty()) return -1;
@@ -1218,19 +1215,6 @@ void NeighborCopyDialog::populateVolumeOptions(const QVector<NeighborCopyVolumeO
     }
 
     volumeSelector_->setVolumes(options, defaultVolumeId);
-}
-
-QString NeighborCopyDialog::surfacePath() const
-{
-    return edtSurface_ ? edtSurface_->text().trimmed() : QString();
-}
-
-QString NeighborCopyDialog::selectedVolumeId() const
-{
-    if (!volumeSelector_) {
-        return QString();
-    }
-    return volumeSelector_->selectedVolumeId();
 }
 
 QString NeighborCopyDialog::selectedVolumePath() const

@@ -187,9 +187,6 @@ public:
     QString objPath() const;
     bool normalizeUV() const;
     bool alignGrid() const;
-    int decimateIterations() const;
-    bool cleanSurface() const;
-    double cleanK() const;
     int ompThreads() const; // -1 if unset
 
 private:
@@ -291,8 +288,6 @@ public:
 
     void accept() override;
 
-    QString surfacePath() const;
-    QString selectedVolumeId() const;
     QString selectedVolumePath() const;
     QString outputPath() const;
     int resumeLocalOptStep() const;
