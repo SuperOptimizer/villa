@@ -1,37 +1,52 @@
 #!/usr/bin/env bash
-# Dead-code analysis using nm + ninja depfiles + linker --print-gc-sections.
-# Six reports:
+# Dead-code analysis using nm + DWARF + ninja depfiles. Reports:
 #
-#   1. dead-symbols.txt   — symbols defined in our .o files but absent
-#                           from every final binary (after a noise filter
-#                           for compiler-emitted boilerplate). Symbol-name
-#                           granularity only: TU-local statics with the
-#                           same mangled name across TUs collapse here, so
-#                           a dead-in-foo.o static masks itself if bar.o
-#                           has a live same-named static. See report 2 for
-#                           the per-TU view.
-#   2. dead-symbols-per-file.tsv — (object, demangled symbol) pairs the
-#                           linker actually GC'd, parsed from
-#                           `--print-gc-sections` output in build.log.
-#                           This is the authoritative per-TU view: it
-#                           handles cross-file dependencies correctly,
-#                           since each TU's section is tracked separately.
-#                           A symbol appears here iff every binary that
-#                           candidate-linked this .o discarded its section.
-#   3. dead-objects.txt   — .cpp files that compiled to .o but contributed
-#                           zero defined symbols to any final binary.
-#                           Whole TU is unreachable.
-#   4. uncompiled-cpps.txt— .cpp files in the source tree that the build
-#                           didn't compile. Any symbol referenced only
-#                           from such a file would show up as a false
-#                           positive in dead-symbols, so this is the
-#                           soundness check for that report.
-#   5. dead-headers.txt   — .h / .hpp files in the source tree that no
-#                           compiled .cpp transitively #include's,
-#                           determined from ninja .d depfiles.
-#   6. compile-warnings.txt — -Wunused-* / -Wunreachable-* compile hits.
+#   1. dead-symbols.txt — every symbol defined in our .o files but absent
+#                         from every final binary, demangled and
+#                         compiler-noise-filtered. Symbol-name granularity
+#                         only: TU-local statics with the same mangled
+#                         name across two TUs (one dead, one live)
+#                         collapse here. Use compile-warning-elided-
+#                         statics.tsv to cover that gap.
 #
-# Runs inside the builder image (binutils + c++filt available).
+#   1a. dead-symbols-per-file.tsv — (.o, demangled symbol, nm-type,
+#                         DWARF source-loc) for every dead symbol.
+#                         Cross-file-dependency-aware: extern symbols
+#                         called from another TU stay live in any
+#                         binary that links them, so they don't appear.
+#
+#   1b. dead-symbols-actionable.tsv — per-file view filtered to real
+#                         handwritten code: type IN {T, t, D, d, B, b}
+#                         AND DWARF source-loc inside our src_roots.
+#                         Lambda children whose parent is also dead
+#                         are collapsed into their parent.
+#
+#   1c. dead-inline-helpers.tsv — handwritten inline / template helpers
+#                         in our own headers that no TU calls. Type IN
+#                         {W, w, V, v} AND DWARF source-loc in our
+#                         src_roots. Closes the "dead inline in our
+#                         header" gap that the actionable filter
+#                         drops by symbol type.
+#
+#   2. dead-objects.txt — .cpp files that compiled to .o but contributed
+#                         zero defined symbols to any final binary.
+#
+#   3. uncompiled-cpps.txt — .cpp files in source tree that the build
+#                         didn't compile. Soundness check for #1.
+#
+#   4. dead-headers.txt — .h / .hpp not transitively included by any
+#                         compiled .cpp (from ninja deps).
+#
+#   5. compile-warnings.txt — -Wunused-* / -Wunreachable-* compile hits.
+#
+#   5a. compile-warning-elided-statics.tsv — TU-local static functions
+#                         the compiler ELIDED before linking, named in
+#                         -Wunused-function warnings. These never reach
+#                         the linker so don't appear in dead-symbols.
+#                         Authoritative for the TU-local-static-name
+#                         collision case.
+#
+# Runs inside the builder image (binutils + c++filt + clang -g3).
 
 set -euo pipefail
 
@@ -224,7 +239,8 @@ paste \
     | sort -u > "$out/dead-symbols-per-file.tsv"
 rm -f "$out/.demangled.tmp"
 
-# Actionable cleanup targets — two filters combined:
+# Actionable cleanup targets — strong-linkage symbols whose definition
+# lives in our source tree:
 #   1. type IN T/t/D/d/B/b: strong globals, file-local statics, and
 #      handwritten data globals. Excludes W/V/R weak template/RTTI
 #      instantiation noise (header templates emitted into many TUs).
@@ -234,16 +250,79 @@ rm -f "$out/.demangled.tmp"
 #      that the compiler emits as `t` symbols when a TU calls
 #      std::sort with a TU-local lambda. Those have type=t but their
 #      DWARF source-location points into /usr/include/c++/.../bits/.
-#
-# Known false-negative still: an `inline` function we wrote in our
-# own header that no TU calls is emitted as W and gets filtered by
-# rule 1. Use dead-symbols.txt (broad list) to audit unused inline
-# helpers.
 roots_alt="$(IFS='|'; echo "${src_roots_existing[*]}")"
 awk -F'\t' -v roots="$roots_alt" '
     BEGIN { srcre = "(^|/)(" roots ")/" }
     $3 ~ /^[TtDdBb]$/ && $4 ~ srcre
-' "$out/dead-symbols-per-file.tsv" > "$out/dead-symbols-actionable.tsv"
+' "$out/dead-symbols-per-file.tsv" > "$out/dead-symbols-actionable.tsv.unfiltered"
+
+# Lambda dedup — a clang-emitted lambda's demangled name has the form
+#   [<return-type> ]<parent demangled signature>::$_<N>::operator()(...)[ const]
+# When the parent function is also actionable-dead, the lambda will
+# be removed alongside it in any cleanup, so listing it separately
+# is just noise.
+#
+# Subtlety: clang's c++filt prepends a return-type prefix (e.g.
+# "auto ") to template-instantiation operator() demanglings, so the
+# part-of-symbol-before-::$_N:: doesn't always match the parent's
+# demangled name exactly. Try the literal prefix, then retry with a
+# leading return-type-like word stripped.
+awk -F'\t' '
+    NR == FNR {
+        # pass 1: build set of demangled names for non-lambda dead rows
+        if ($2 !~ /::\$_[0-9]+::/) parents[$2] = 1
+        next
+    }
+    {
+        # pass 2: keep non-lambda rows; for lambda rows, drop iff parent
+        # (with or without leading return-type prefix) is in parents.
+        if ($2 !~ /::\$_[0-9]+::/) { print; next }
+        match($2, /::\$_[0-9]+::/)
+        prefix = substr($2, 1, RSTART - 1)
+        if (prefix in parents) next
+        prefix2 = prefix
+        sub(/^[a-zA-Z_][a-zA-Z0-9_:]* /, "", prefix2)
+        if (prefix2 != prefix && prefix2 in parents) next
+        print
+    }
+' "$out/dead-symbols-actionable.tsv.unfiltered" \
+    "$out/dead-symbols-actionable.tsv.unfiltered" \
+    > "$out/dead-symbols-actionable.tsv"
+rm -f "$out/dead-symbols-actionable.tsv.unfiltered"
+
+# Dead inline / template helpers in OUR headers — closes the FN gap
+# the type filter above leaves: a function we wrote `inline` in one of
+# our headers, that no TU calls, is emitted as W in every including
+# TU and the linker GC's all copies. Type filter drops it; this report
+# catches those by pivoting to W (and V) types whose DWARF source is
+# under our src_roots.
+#
+# Each entry typically appears once per including-TU in the per-file
+# view (one W per TU); we collapse to unique (source-loc, symbol).
+awk -F'\t' -v roots="$roots_alt" '
+    BEGIN { srcre = "(^|/)(" roots ")/" }
+    $3 ~ /^[WwVv]$/ && $4 ~ srcre { print $4 "\t" $2 "\t" $3 }
+' "$out/dead-symbols-per-file.tsv" \
+    | sort -u > "$out/dead-inline-helpers.tsv"
+
+# Compile-warning audit — the compiler's -Wunused-function flags TU-local
+# statics that the compiler ELIDED before the linker saw them. Those
+# never make it into source-syms / binary-syms / dead-symbols. The
+# warnings are the authoritative signal for that case; we collect the
+# function names so users can cross-reference.
+# clang warning line shape:
+#   <file>:<line>:<col>: warning: unused function 'name' [-Wunused-function]
+# Splitting on ": " (colon-space): $1 holds the file:line:col triple
+# (the inner colons aren't followed by spaces); $3 holds the message.
+awk -F': ' '/-Wunused-function|-Wunused-member-function/ {
+    if (match($0, /unused [a-z ]+ '\''[^'\'']+'\''/)) {
+        s = substr($0, RSTART, RLENGTH)
+        sub(/^unused [a-z ]+ '\''/, "", s)
+        sub(/'\''$/, "", s)
+        print $1 "\t" s
+    }
+}' "$out/compile-warnings.txt" \
+    | sort -u > "$out/compile-warning-elided-statics.tsv"
 
 # Per-.o liveness: an object is "fully dead" iff none of its defined
 # symbols appear in any binary.
@@ -272,7 +351,9 @@ n_dead_sym_raw=$(wc -l < "$out/dead-symbols-raw.txt")
 n_dead_sym=$(wc -l < "$out/dead-symbols.txt")
 n_dead_sym_per_file=$(wc -l < "$out/dead-symbols-per-file.tsv")
 n_dead_sym_actionable=$(wc -l < "$out/dead-symbols-actionable.tsv")
+n_dead_inline=$(wc -l < "$out/dead-inline-helpers.tsv")
 n_warn=$(wc -l < "$out/compile-warnings.txt")
+n_elided_static=$(wc -l < "$out/compile-warning-elided-statics.tsv")
 
 {
     echo "Dead-code report (build=$build_dir)"
@@ -296,9 +377,16 @@ n_warn=$(wc -l < "$out/compile-warnings.txt")
     echo "  Dead per-TU, actionable (T/t/D/d/B/b symbol types AND DWARF source"
     echo "    location inside our src_roots — excludes both W/V/R weak"
     echo "    template/RTTI noise from headers AND TU-local instantiations of"
-    echo "    stdlib internals like std::__sort): $n_dead_sym_actionable"
+    echo "    stdlib internals like std::__sort, AND lambda children whose"
+    echo "    parent function is also actionable-dead): $n_dead_sym_actionable"
+    echo "  Dead inline / template helpers in our headers (W/V types whose"
+    echo "    DWARF source-loc is in our tree — handwritten inline functions"
+    echo "    no TU calls): $n_dead_inline"
     echo
     echo "Compile-time -Wunused* / -Wunreachable* warnings: $n_warn"
+    echo "  ...of which name compile-elided file-local statics (caught only"
+    echo "    by warning, never reach the linker; complements actionable list"
+    echo "    for the TU-local-static-collision case): $n_elided_static"
     echo
     if (( n_uncompiled > 0 )); then
         echo "Uncompiled .cpp files (sources of false positives below):"
@@ -315,14 +403,20 @@ n_warn=$(wc -l < "$out/compile-warnings.txt")
     head -30 "$out/dead-symbols.txt"
     echo
     echo "Top 30 dead symbols per-TU, ACTIONABLE (source-loc<TAB>symbol<TAB>type):"
-    echo "  Filtered to handwritten code (DWARF source-loc inside our src_roots)"
-    echo "  with strong-linkage symbol type (T/t/D/d/B/b)."
+    echo "  Strong-linkage handwritten code, lambdas-of-dead-parents collapsed."
     head -30 "$out/dead-symbols-actionable.tsv" | awk -F'\t' '{ print $4 "\t" $2 "\t" $3 }'
     echo
     echo "Top 10 source files by actionable-dead count (DWARF source path):"
     awk -F'\t' '{ sub(/:[0-9?]+$/, "", $4); print $4 }' "$out/dead-symbols-actionable.tsv" \
         | sort | uniq -c | sort -rn | head -10
     echo
-    echo "Top 20 compile warnings:"
+    echo "Top 20 dead inline / template helpers in our headers (source-loc<TAB>symbol<TAB>type):"
+    head -20 "$out/dead-inline-helpers.tsv"
+    echo
+    echo "Compile-warning-only static elisions (TU-local statics the compiler"
+    echo "removed before linking; not in source-syms / dead-symbols):"
+    head -20 "$out/compile-warning-elided-statics.tsv"
+    echo
+    echo "Top 20 compile warnings (all kinds):"
     head -20 "$out/compile-warnings.txt"
 } | tee "$out/summary.txt"
