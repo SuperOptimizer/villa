@@ -207,7 +207,6 @@ private:
     friend class SegmentationPushPullTool;
     friend class ApprovalMaskBrushTool;
     friend class SurfaceMaskBrushTool;
-    friend class SegmentationBrushTool;
     friend class segmentation::CorrectionsState;
 
     enum class FalloffTool
