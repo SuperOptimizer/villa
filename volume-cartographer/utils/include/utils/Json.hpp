@@ -37,7 +37,6 @@ public:
     Json(double v);
     Json(const char* v);
     Json(const std::string& v);
-    Json(std::string_view v);
 
     // Construct from initializer list (for objects: {{"key", val}, ...})
     Json(std::initializer_list<std::pair<const std::string, Json>> pairs);
@@ -80,7 +79,6 @@ public:
     const Json& at(size_t index) const;
     void push_back(const Json& val);
     void push_back(Json&& val);
-    void emplace_back(Json&& val);
 
     // -- Get typed values (non-template explicit overloads) --
     [[nodiscard]] std::string get_string() const;
@@ -104,13 +102,10 @@ public:
 
     // Get vectors
     [[nodiscard]] std::vector<std::string> get_string_array() const;
-    [[nodiscard]] std::vector<int> get_int_array() const;
     [[nodiscard]] std::vector<double> get_double_array() const;
-    [[nodiscard]] std::vector<size_t> get_size_t_array() const;
 
     // -- Mutation --
     void update(const Json& other);   // merge object keys
-    void merge_patch(const Json& patch);
     void erase(const std::string& key);  // remove key from object
 
     // -- Assignment from common types --
@@ -125,10 +120,6 @@ public:
     Json& operator=(double v);
     Json& operator=(const char* v);
     Json& operator=(const std::string& v);
-
-    // -- Comparison --
-    bool operator==(const Json& o) const;
-    bool operator!=(const Json& o) const;
 
     // -- Iterator (for range-for) --
     class Iterator {
@@ -170,15 +161,6 @@ public:
 
     ConstIterator begin() const;
     ConstIterator end() const;
-
-    // -- Low-level: access the underlying nlohmann::json (only for transition code) --
-    // These are intentionally ugly names to discourage casual use.
-    void* _raw_ptr();
-    const void* _raw_ptr() const;
-
-    // Construct wrapping an existing nlohmann::json (takes ownership via move)
-    struct from_raw_t {};
-    Json(from_raw_t, void* nlohmann_json_ptr);
 
 private:
     struct Impl;

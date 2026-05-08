@@ -70,7 +70,6 @@ Json::Json(size_t v) : impl_(std::make_unique<Impl>(njson(static_cast<uint64_t>(
 Json::Json(double v) : impl_(std::make_unique<Impl>(njson(v))) {}
 Json::Json(const char* v) : impl_(std::make_unique<Impl>(njson(std::string(v)))) {}
 Json::Json(const std::string& v) : impl_(std::make_unique<Impl>(njson(v))) {}
-Json::Json(std::string_view v) : impl_(std::make_unique<Impl>(njson(std::string(v)))) {}
 
 Json::Json(std::initializer_list<std::pair<const std::string, Json>> pairs)
     : impl_(std::make_unique<Impl>(njson::object()))
@@ -203,7 +202,6 @@ const Json& Json::at(size_t index) const {
 
 void Json::push_back(const Json& val) { impl_->j().push_back(val.impl_->j()); }
 void Json::push_back(Json&& val) { impl_->j().push_back(std::move(val.impl_->j())); }
-void Json::emplace_back(Json&& val) { impl_->j().emplace_back(std::move(val.impl_->j())); }
 
 // ---- Get typed values ----
 std::string Json::get_string() const { return impl_->j().get<std::string>(); }
@@ -243,19 +241,12 @@ uint64_t Json::value(const std::string& key, uint64_t def) const {
 std::vector<std::string> Json::get_string_array() const {
     return impl_->j().get<std::vector<std::string>>();
 }
-std::vector<int> Json::get_int_array() const {
-    return impl_->j().get<std::vector<int>>();
-}
 std::vector<double> Json::get_double_array() const {
     return impl_->j().get<std::vector<double>>();
-}
-std::vector<size_t> Json::get_size_t_array() const {
-    return impl_->j().get<std::vector<size_t>>();
 }
 
 // ---- Mutation ----
 void Json::update(const Json& other) { impl_->j().update(other.impl_->j()); }
-void Json::merge_patch(const Json& patch) { impl_->j().merge_patch(patch.impl_->j()); }
 void Json::erase(const std::string& key) { impl_->j().erase(key); }
 
 // ---- Assignment from types ----
@@ -270,10 +261,6 @@ Json& Json::operator=(size_t v) { impl_->j() = static_cast<uint64_t>(v); return 
 Json& Json::operator=(double v) { impl_->j() = v; return *this; }
 Json& Json::operator=(const char* v) { impl_->j() = std::string(v); return *this; }
 Json& Json::operator=(const std::string& v) { impl_->j() = v; return *this; }
-
-// ---- Comparison ----
-bool Json::operator==(const Json& o) const { return impl_->j() == o.impl_->j(); }
-bool Json::operator!=(const Json& o) const { return impl_->j() != o.impl_->j(); }
 
 // ---- Iterators ----
 struct Json::Iterator::IterImpl {
@@ -343,13 +330,6 @@ Json::ConstIterator Json::end() const {
     it.impl_->it = impl_->j().end();
     return it;
 }
-
-// ---- Raw access (escape hatch) ----
-void* Json::_raw_ptr() { return impl_->ptr; }
-const void* Json::_raw_ptr() const { return impl_->ptr; }
-
-Json::Json(from_raw_t, void* p) : impl_(std::make_unique<Impl>(
-    std::move(*static_cast<njson*>(p)))) { delete static_cast<njson*>(p); }
 
 // ---- Stream ----
 std::ostream& operator<<(std::ostream& os, const Json& j) {
