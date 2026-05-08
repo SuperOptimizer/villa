@@ -113,10 +113,6 @@ auto Logger() -> std::shared_ptr<MinimalLogger> {
     return logger;
 }
 
-void AddLogFile(const std::filesystem::path& path) {
-    Logger()->add_file(path);
-}
-
 void SetLogLevel(const std::string& s) {
     LogLevel level = LogLevel::Info;
 

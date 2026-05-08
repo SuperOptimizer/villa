@@ -11,9 +11,8 @@
 void readInterpolated3D(cv::Mat_<uint8_t> &out, vc::render::IChunkedArray* cache, int level, const cv::Mat_<cv::Vec3f> &coords, bool nearest_neighbor=false);
 void readInterpolated3D(cv::Mat_<uint16_t> &out, vc::render::IChunkedArray* cache, int level, const cv::Mat_<cv::Vec3f> &coords, bool nearest_neighbor=false);
 
-// Overloads accepting vc::Sampling enum (supports Nearest, Trilinear, Tricubic)
+// Overload accepting vc::Sampling enum (supports Nearest, Trilinear, Tricubic)
 void readInterpolated3D(cv::Mat_<uint8_t> &out, vc::render::IChunkedArray* cache, int level, const cv::Mat_<cv::Vec3f> &coords, vc::Sampling method);
-void readInterpolated3D(cv::Mat_<uint16_t> &out, vc::render::IChunkedArray* cache, int level, const cv::Mat_<cv::Vec3f> &coords, vc::Sampling method);
 
 // Composite rendering with configurable interpolation.
 void readCompositeFast(
@@ -66,9 +65,3 @@ void sampleTileSlices(
     const std::vector<float>& offsets
 );
 
-// Fused plane coordinate generation + sampling (eliminates intermediate coords Mat).
-// origin, vx_step, vy_step define the affine plane in level-scaled coordinates.
-// coord(i,j) = origin + vx_step * i + vy_step * j
-void samplePlane(cv::Mat_<uint8_t>& out, vc::render::IChunkedArray* cache, int level,
-                 const cv::Vec3f& origin, const cv::Vec3f& vx_step, const cv::Vec3f& vy_step,
-                 int width, int height, vc::Sampling method);

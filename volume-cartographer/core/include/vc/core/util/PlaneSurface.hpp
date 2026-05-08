@@ -48,5 +48,3 @@ protected:
     cv::Matx33d _M;
     cv::Vec3d _T;
 };
-
-float min_loc(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f &out, const std::vector<cv::Vec3f> &tgts, const std::vector<float> &tds, PlaneSurface *plane, float init_step = 16.0, float min_step = 0.125);

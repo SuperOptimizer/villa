@@ -154,11 +154,6 @@ public:
                 const cv::Mat_<cv::Vec3f>& coords,
                 const vc::SampleParams& params);
 
-    // Single-slice blocking sample (uint16)
-    void sample(cv::Mat_<uint16_t>& out,
-                const cv::Mat_<cv::Vec3f>& coords,
-                const vc::SampleParams& params);
-
     // Blocking integer reads through the chunked local/remote cache.
     // ZYX order matches zarr storage and numpy-style volume indexing:
     //   offset = [z, y, x], shape = [z, y, x].

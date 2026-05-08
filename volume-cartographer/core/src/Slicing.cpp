@@ -497,63 +497,9 @@ void readInterpolated3D(cv::Mat_<uint8_t>& out, IChunkedArray* cache, int level,
     }
 }
 
-void readInterpolated3D(cv::Mat_<uint16_t>& out, IChunkedArray* cache, int level,
-                        const cv::Mat_<cv::Vec3f>& coords, vc::Sampling method) {
-    switch (method) {
-        case vc::Sampling::Nearest:
-            readVolumeImpl<uint16_t, SampleMode::Nearest>(out, *cache, level, coords); break;
-        case vc::Sampling::Tricubic:
-            readVolumeImpl<uint16_t, SampleMode::Tricubic>(out, *cache, level, coords); break;
-        default:
-            readVolumeImpl<uint16_t, SampleMode::Trilinear>(out, *cache, level, coords); break;
-    }
-}
-
 namespace {
 
 } // namespace
-
-// ----------------------------------------------------------------------------
-// Plane sampling (uint8 + ARGB32 variants)
-// ----------------------------------------------------------------------------
-
-namespace {
-
-template<SampleMode Mode>
-void samplePlaneImpl(cv::Mat_<uint8_t>& out, IChunkedArray& cache, int level,
-                     const cv::Vec3f& origin, const cv::Vec3f& vx_step, const cv::Vec3f& vy_step,
-                     int w, int h) {
-    prefetchPlaneRegion(cache, level, origin, vx_step, vy_step, w, h);
-
-    #pragma omp parallel
-    {
-        ChunkSampler<uint8_t> s(cache, level);
-        #pragma omp for schedule(dynamic, 16)
-        for (int y = 0; y < h; y++) {
-            uint8_t* outRow = out.ptr<uint8_t>(y);
-            cv::Vec3f base = origin + vy_step * float(y);
-            for (int x = 0; x < w; x++) {
-                cv::Vec3f c = base + vx_step * float(x);
-                outRow[x] = sampleOne<uint8_t, Mode>(s, c[2], c[1], c[0]);
-            }
-        }
-    }
-}
-
-} // namespace
-
-void samplePlane(cv::Mat_<uint8_t>& out, IChunkedArray* cache, int level,
-                 const cv::Vec3f& origin, const cv::Vec3f& vx_step, const cv::Vec3f& vy_step,
-                 int w, int h, vc::Sampling method) {
-    switch (method) {
-        case vc::Sampling::Nearest:
-            samplePlaneImpl<SampleMode::Nearest>(out, *cache, level, origin, vx_step, vy_step, w, h); break;
-        case vc::Sampling::Tricubic:
-            samplePlaneImpl<SampleMode::Tricubic>(out, *cache, level, origin, vx_step, vy_step, w, h); break;
-        default:
-            samplePlaneImpl<SampleMode::Trilinear>(out, *cache, level, origin, vx_step, vy_step, w, h); break;
-    }
-}
 
 // ----------------------------------------------------------------------------
 // Composite rendering

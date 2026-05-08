@@ -3,7 +3,6 @@ configure_file(src/Version.cpp.in Version.cpp)
 add_library(vc_core
         src/GridStore.cpp
         src/NormalGridVolume.cpp
-        src/normalgridtools.cpp
         src/Segmentation.cpp
         src/Volume.cpp
         src/VolumePkg.cpp
@@ -86,7 +85,6 @@ add_library(vc_tracer
     src/NeuralTracerConnection.cpp
     src/ChunkedTensor.cpp
     src/growth_strategies/CandidateOrdering.cpp
-    src/growth_strategies/ComponentPruning.cpp
     src/growth_strategies/GrowthConfig.cpp
 )
 target_link_libraries(vc_tracer PUBLIC vc_core vc_ui vc_flattening Ceres::ceres Qt6::Core)

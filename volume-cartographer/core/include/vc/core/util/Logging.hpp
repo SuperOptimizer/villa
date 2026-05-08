@@ -8,7 +8,6 @@
 // Forward declaration
 class MinimalLogger;
 
-void AddLogFile(const std::filesystem::path& path);
 void SetLogLevel(const std::string& s);
 void SetDebugLoggingEnabled(bool enabled);
 bool DebugLoggingEnabled();

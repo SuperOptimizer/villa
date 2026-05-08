@@ -92,8 +92,6 @@ float line_off(const E &p, const cv::Vec3f &tgt_o, const cv::Vec3f &tgt_v)
 
 using IntersectVec = std::vector<std::pair<float,cv::Vec2f>>;
 
-float surf_th = 0.5;
-
 IntersectVec getIntersects(const cv::Vec2i &seed, QuadSurface* surface)
 {
     const cv::Mat_<cv::Vec3f>& points = surface->rawPoints();
@@ -193,72 +191,6 @@ IntersectVec getIntersects(const cv::Vec2i &seed, QuadSurface* surface)
         
     // std::cout << std::endl;
     return dist_locs;
-}
-
-//l is [y, x]!
-bool loc_valid_nan(const cv::Mat_<float> &m, const cv::Vec2d &l)
-{
-    if (std::isnan(l[0]))
-        return false;
-    
-    cv::Rect bounds = {0, 0, m.rows-2,m.cols-2};
-    cv::Vec2i li = {static_cast<int>(floor(l[0])),static_cast<int>(floor(l[1]))};
-    
-    if (!bounds.contains(cv::Point(li)))
-        return false;
-    
-    if (std::isnan(m(li[0],li[1])))
-        return false;
-    if (std::isnan(m(li[0]+1,li[1])))
-        return false;
-    if (std::isnan(m(li[0],li[1]+1)))
-        return false;
-    if (std::isnan(m(li[0]+1,li[1]+1)))
-        return false;
-    return true;
-}
-
-bool loc_valid_nan_xy(const cv::Mat_<float> &m, const cv::Vec2d &l)
-{
-    return loc_valid_nan(m, {l[1],l[0]});
-}
-
-float find_wind_x(cv::Mat_<float> &winding, cv::Vec2f &loc, float tgt_wind)
-{
-    if (!loc_valid_nan_xy(winding, loc))
-        return -1;
-    
-    float best_diff = std::abs(at_int(winding,loc)-tgt_wind);
-    
-    std::vector<cv::Vec2f> neighs = {{1,0},{-1,0}};
-    
-    float step = 16.0;
-    bool updated = true;
-    while (updated)
-    {
-        updated = false;
-        for (auto n : neighs) {
-            cv::Vec2f cand = loc + step*n;
-            if (!loc_valid_nan_xy(winding, cand))
-                continue;
-            float diff = std::abs(at_int(winding,cand)-tgt_wind);
-            if (diff < best_diff) {
-                best_diff = diff;
-                loc = cand;
-                updated = true;
-                break;
-            }
-        }
-        
-        if (!updated) {
-            if (step <= 0.001)
-                break;
-            step /= 2;
-            updated = true;
-        }
-    }
-
-    return best_diff;
 }
 
 std::string time_str()

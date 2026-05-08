@@ -146,37 +146,10 @@ static bool loc_valid_impl(const cv::Mat_<cv::Vec<T,C>> &m, const cv::Vec2d &l)
     return true;
 }
 
-static bool loc_valid_scalar(const cv::Mat_<float> &m, const cv::Vec2d &l)
-{
-    if (l[0] == -1)
-        return false;
-
-    cv::Rect bounds = {0, 0, m.rows-2,m.cols-2};
-    cv::Vec2i li = {static_cast<int>(floor(l[0])), static_cast<int>(floor(l[1]))};
-
-    if (!bounds.contains(cv::Point(li)))
-        return false;
-
-    if (m(li[0],li[1]) == -1)
-        return false;
-    if (m(li[0]+1,li[1]) == -1)
-        return false;
-    if (m(li[0],li[1]+1) == -1)
-        return false;
-    if (m(li[0]+1,li[1]+1) == -1)
-        return false;
-    return true;
-}
-
 template<typename T, int C>
 static bool loc_valid_xy_impl(const cv::Mat_<cv::Vec<T,C>> &m, const cv::Vec2d &l)
 {
     return loc_valid_impl(m, {l[1],l[0]});
-}
-
-static bool loc_valid_xy_scalar(const cv::Mat_<float> &m, const cv::Vec2d &l)
-{
-    return loc_valid_scalar(m, {l[1],l[0]});
 }
 
 cv::Vec3f at_int(const cv::Mat_<cv::Vec3f> &points, const cv::Vec2f &p) {
@@ -199,40 +172,8 @@ bool loc_valid(const cv::Mat_<cv::Vec3d> &m, const cv::Vec2d &l) {
     return loc_valid_impl(m, l);
 }
 
-bool loc_valid(const cv::Mat_<float> &m, const cv::Vec2d &l) {
-    return loc_valid_scalar(m, l);
-}
-
 bool loc_valid_xy(const cv::Mat_<cv::Vec3f> &m, const cv::Vec2d &l) {
     return loc_valid_xy_impl(m, l);
-}
-
-bool loc_valid_xy(const cv::Mat_<cv::Vec3d> &m, const cv::Vec2d &l) {
-    return loc_valid_xy_impl(m, l);
-}
-
-bool loc_valid_xy(const cv::Mat_<float> &m, const cv::Vec2d &l) {
-    return loc_valid_xy_scalar(m, l);
-}
-
-
-float tdist(const cv::Vec3f &a, const cv::Vec3f &b, float t_dist)
-{
-    cv::Vec3f d = a-b;
-    float l = sqrtf(d.dot(d));
-
-    return std::abs(l-t_dist);
-}
-
-float tdist_sum(const cv::Vec3f &v, const std::vector<cv::Vec3f> &tgts, const std::vector<float> &tds)
-{
-    float sum = 0;
-    for(int i=0;i<tgts.size();i++) {
-        float d = tdist(v, tgts[i], tds[i]);
-        sum += d*d;
-    }
-
-    return sum;
 }
 
 // Helper: remove spatial outliers based on robust neighbor-distance stats
