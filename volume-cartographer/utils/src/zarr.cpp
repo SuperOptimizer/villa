@@ -380,14 +380,14 @@ JsonValue serialize_transforms(
     for (const auto& t : transforms) {
         if (auto* st = std::get_if<ScaleTransform>(&t)) {
             JsonArray vals;
-            for (double v : st->scale) vals.emplace_back(v);
+            for (double v : st->scale) vals.push_back(v);
             arr.push_back(json_object({
                 {"type", "scale"},
                 {"scale", JsonValue{std::move(vals)}}
             }));
         } else if (auto* tt = std::get_if<TranslationTransform>(&t)) {
             JsonArray vals;
-            for (double v : tt->translation) vals.emplace_back(v);
+            for (double v : tt->translation) vals.push_back(v);
             arr.push_back(json_object({
                 {"type", "translation"},
                 {"translation", JsonValue{std::move(vals)}}
