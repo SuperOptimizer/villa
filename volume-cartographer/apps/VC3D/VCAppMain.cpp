@@ -7,6 +7,7 @@
 
 #include <qapplication.h>
 #include <QCommandLineParser>
+#include <QThreadPool>
 
 #include "CWindow.hpp"
 #include "VCSettings.hpp"
@@ -227,5 +228,17 @@ auto main(int argc, char* argv[]) -> int
 
     CWindow aWin(cacheSizeGB);
     aWin.show();
-    return QApplication::exec();
+    const int rc = QApplication::exec();
+
+    // Drain Qt's global thread pool before any static destructor runs.
+    // VC3D dispatches a lot of background work onto QThreadPool (chunk
+    // decode, render scratch, etc.), and Qt's normal shutdown leaves those
+    // workers running while .fini handlers of dlopen'd libs start
+    // unmapping. Observed under the from-scratch deps tree: a worker
+    // thread touches glog / OpenCV / blosc data after their libs are
+    // gone, segfaulting the dynamic linker mid-_dl_fini. Pool join is
+    // cheap (active work is already gone if exec() returned).
+    QThreadPool::globalInstance()->waitForDone();
+
+    return rc;
 }
