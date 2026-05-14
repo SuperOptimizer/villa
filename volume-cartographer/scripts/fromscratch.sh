@@ -44,8 +44,17 @@
 # Default PREFIX is ~/vc-deps. To build VC3D against it:
 #   cmake -S . -B build/from-scratch -G Ninja \
 #         -DCMAKE_PREFIX_PATH="$HOME/vc-deps" \
-#         -DCMAKE_BUILD_TYPE=RelWithDebInfo
+#         -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+#         -DVC_ENABLE_LTO=OFF
 #   cmake --build build/from-scratch
+#
+# VC_ENABLE_LTO=OFF is REQUIRED for from-scratch builds. With LTO on,
+# QApplication's constructor segfaults inside the platform integration's
+# screenAdded emit (QGuiApplicationPrivate::self ends up null because gcc's
+# -flto=auto reorders the Q_GLOBAL_STATIC initialization for the
+# QGuiApplication singleton across our Qt6 build's translation-unit
+# boundaries). The non-LTO build is functionally identical, just larger
+# and a bit slower.
 #
 # The script is idempotent: each library has a .done marker in $PREFIX/.done/.
 # Re-running skips finished libs. To force a rebuild, delete the marker
@@ -521,10 +530,10 @@ build_qt6() {
         -DQT_BUILD_TESTS=OFF \
         -DQT_BUILD_TOOLS_WHEN_CROSSCOMPILING=OFF \
         -DFEATURE_vulkan=OFF \
+        -DFEATURE_fontconfig=ON \
         -DINPUT_pcre=qt \
         -DINPUT_doubleconversion=qt \
         -DINPUT_harfbuzz=qt \
-        -DINPUT_freetype=qt \
         -DINPUT_libpng=qt \
         -DINPUT_libjpeg=qt
     mark qt6
@@ -590,9 +599,11 @@ main() {
 
     log ""
     log "=== Done. Configure VC3D with:"
+    log "  # VC_ENABLE_LTO=OFF is REQUIRED (see comments at the top of this script)"
     log "  cmake -S . -B build/from-scratch -G Ninja \\"
     log "    -DCMAKE_PREFIX_PATH='$PREFIX' \\"
-    log "    -DCMAKE_BUILD_TYPE=RelWithDebInfo"
+    log "    -DCMAKE_BUILD_TYPE=RelWithDebInfo \\"
+    log "    -DVC_ENABLE_LTO=OFF"
     log "  cmake --build build/from-scratch"
 }
 
