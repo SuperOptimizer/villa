@@ -230,15 +230,36 @@ auto main(int argc, char* argv[]) -> int
     aWin.show();
     const int rc = QApplication::exec();
 
-    // Drain Qt's global thread pool before any static destructor runs.
-    // VC3D dispatches a lot of background work onto QThreadPool (chunk
-    // decode, render scratch, etc.), and Qt's normal shutdown leaves those
-    // workers running while .fini handlers of dlopen'd libs start
-    // unmapping. Observed under the from-scratch deps tree: a worker
-    // thread touches glog / OpenCV / blosc data after their libs are
-    // gone, segfaulting the dynamic linker mid-_dl_fini. Pool join is
-    // cheap (active work is already gone if exec() returned).
+    // Cooperative shutdown of every library that owns background threads.
+    // Without this, Qt's exec() returns while OpenBLAS' blas_server,
+    // blosc's compressor pool, mimalloc's purge helper, etc. are still
+    // running. The dynamic linker then starts _dl_fini and unmaps those
+    // libs while their threads are mid-access, which corrupts the
+    // link_map dependency chain and segfaults inside _dl_call_fini.
+    //
+    // Order: highest-level (app workers) -> lowest-level (allocator).
     QThreadPool::globalInstance()->waitForDone();
+
+#ifndef _WIN32
+    // OpenBLAS pthread server pool. blas_thread_shutdown_ joins every
+    // worker thread; blas_shutdown additionally tears down the server's
+    // request queue. Both are async-safe with already-quiesced workers
+    // (we set NUM_THREADS=1 at preinit, so there's nothing in flight).
+    if (auto fn = reinterpret_cast<void(*)()>(dlsym(RTLD_DEFAULT, "blas_thread_shutdown_")))
+        fn();
+    if (auto fn = reinterpret_cast<void(*)()>(dlsym(RTLD_DEFAULT, "blas_shutdown")))
+        fn();
+#endif
+
+    // Blosc compressor pool + global resources.
+    blosc_destroy();
+
+#if defined(VC_HAVE_MIMALLOC)
+    // mimalloc keeps per-thread heaps and a purge/decommit helper thread.
+    // mi_collect(true) forces a full purge and joins the helper before
+    // returning. Lets static destructors run against a clean allocator.
+    mi_collect(true);
+#endif
 
     return rc;
 }
