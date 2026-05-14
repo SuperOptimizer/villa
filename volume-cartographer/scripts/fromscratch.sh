@@ -36,9 +36,7 @@
 #       libgl-dev libegl-dev libfontconfig1-dev libfreetype-dev \
 #       libharfbuzz-dev libdbus-1-dev libicu-dev libgtk-3-dev \
 #       libavahi-client-dev libcurl4-openssl-dev libssl-dev \
-#       libhwloc-dev libscotch-dev libmpfr-dev libgmp-dev \
-#       libavformat-dev libavcodec-dev libavutil-dev libswscale-dev \
-#       libswresample-dev
+#       libhwloc-dev libscotch-dev libmpfr-dev libgmp-dev
 #
 # Usage:
 #   ./scripts/fromscratch.sh [PREFIX]
@@ -87,9 +85,9 @@ GLOG_VERSION="0.7.1"
 CERES_VERSION="2.2.0"
 NLOHMANN_JSON_VERSION="3.11.3"
 BOOST_VERSION="1.86.0"
-OPENCV_VERSION="4.10.0"
-OPENCV_CONTRIB_VERSION="4.10.0"
-QT_VERSION="6.10.0"
+OPENCV_VERSION="4.11.0"
+OPENCV_CONTRIB_VERSION="4.11.0"
+QT_VERSION="6.8.3"
 MIMALLOC_VERSION="2.1.7"
 
 # --- common flags ------------------------------------------------------------
@@ -330,10 +328,12 @@ build_gklib() {
     is_done gklib && return 0
     fetch "https://github.com/KarypisLab/GKlib/archive/refs/heads/master.tar.gz" "gklib-master.tar.gz"
     local src; src=$(extract "gklib-master.tar.gz" "GKlib-master")
-    # GKlib's wrapper Makefile calls cmake. Just call cmake directly so we
-    # control flags / install dir.
+    # GKlib defaults to STATIC. METIS is built shared and references GKlib
+    # symbols (gk_jbufs / gk_sigcatch / ...) — linking METIS to a static
+    # GKlib leaves those unresolved at process load. Build GKlib shared.
     cmake_build gklib "$src" \
-        -DNO_X86=0
+        -DNO_X86=0 \
+        -DSHARED=ON
     mark gklib
 }
 
@@ -345,6 +345,25 @@ build_metis() {
     # rejects. Its wrapper Makefile calls cmake without forwarding our
     # CMAKE_POLICY_VERSION_MINIMUM, so patch the source instead.
     sed -i 's/cmake_minimum_required(VERSION 2\.8)/cmake_minimum_required(VERSION 3.10)/' "$src/CMakeLists.txt"
+    # METIS doesn't explicitly link GKlib — it expects the symbols to come
+    # from the static GKlib merged into your final binary. Since we build
+    # GKlib shared, libmetis.so ends up with unresolved gk_* symbols. Add
+    # an explicit target_link_libraries + install RPATH so libmetis.so
+    # finds GKlib via $ORIGIN at load time (METIS's wrapper Makefile
+    # doesn't forward CMAKE_INSTALL_RPATH so we do it inline).
+    if ! grep -q "target_link_libraries(metis" "$src/libmetis/CMakeLists.txt"; then
+        cat >>"$src/libmetis/CMakeLists.txt" <<EOF
+
+# Patched by fromscratch.sh: explicit link to shared GKlib + rpath so the
+# resulting libmetis.so isn't left with unresolved gk_jbufs / gk_sigcatch
+# at process load and can find GKlib in the same install dir.
+target_link_libraries(metis PUBLIC GKlib)
+set_target_properties(metis PROPERTIES
+    INSTALL_RPATH "\\\$ORIGIN"
+    BUILD_WITH_INSTALL_RPATH OFF
+    INSTALL_RPATH_USE_LINK_PATH ON)
+EOF
+    fi
     pushd "$src" >/dev/null
         # IDXTYPEWIDTH=32 is required by Eigen's MetisSupport, which Ceres
         # pulls in. METIS's wrapper Makefile defaults to 32-bit when neither
@@ -449,6 +468,11 @@ build_opencv() {
     fetch "https://github.com/opencv/opencv_contrib/archive/${OPENCV_CONTRIB_VERSION}.tar.gz" "opencv-contrib-${OPENCV_CONTRIB_VERSION}.tar.gz"
     local src; src=$(extract "opencv-${OPENCV_VERSION}.tar.gz" "opencv-${OPENCV_VERSION}")
     local contrib; contrib=$(extract "opencv-contrib-${OPENCV_CONTRIB_VERSION}.tar.gz" "opencv_contrib-${OPENCV_CONTRIB_VERSION}")
+    # videoio is built but WITHOUT ffmpeg — OpenCV 4.11 + ffmpeg 7 don't
+    # compile cleanly (deprecated avcodec_close / av_stream_get_side_data).
+    # vc_render_video links videoio but its HFYU encode path will fail at
+    # runtime without an ffmpeg backend. If you actually need video render,
+    # patch OpenCV's cap_ffmpeg_impl.hpp or stay on system ffmpeg 6.
     cmake_build opencv "$src" \
         -DOPENCV_EXTRA_MODULES_PATH="$contrib/modules" \
         -DBUILD_LIST="core,imgproc,imgcodecs,calib3d,flann,features2d,ximgproc,videoio" \
@@ -468,7 +492,7 @@ build_opencv() {
         -DWITH_OPENJPEG=OFF \
         -DWITH_GDAL=OFF \
         -DWITH_GDCM=OFF \
-        -DWITH_FFMPEG=ON \
+        -DWITH_FFMPEG=OFF \
         -DWITH_GSTREAMER=OFF \
         -DWITH_V4L=OFF \
         -DWITH_LIBV4L=OFF \
@@ -497,9 +521,12 @@ build_qt6() {
         -DQT_BUILD_TESTS=OFF \
         -DQT_BUILD_TOOLS_WHEN_CROSSCOMPILING=OFF \
         -DFEATURE_vulkan=OFF \
-        -DFEATURE_sql=OFF \
-        -DFEATURE_printsupport=OFF \
-        -DFEATURE_pdf=OFF
+        -DINPUT_pcre=qt \
+        -DINPUT_doubleconversion=qt \
+        -DINPUT_harfbuzz=qt \
+        -DINPUT_freetype=qt \
+        -DINPUT_libpng=qt \
+        -DINPUT_libjpeg=qt
     mark qt6
 }
 
