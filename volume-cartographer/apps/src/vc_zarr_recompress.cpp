@@ -1969,6 +1969,19 @@ int run_batch(const std::string& manifest_path,
     if (const char* p = std::getenv("VC_RECOMPRESS_FAIL_LOG"); p && *p)
         fail_log_path = p;
     std::ofstream fail_log(fail_log_path, std::ios::app);
+    if (!fail_log.is_open()) {
+        // CWD may be unwritable (e.g. service started without an explicit
+        // WorkingDirectory -> CWD is /). Fall back to /tmp and warn loudly
+        // rather than silently losing the only failure record.
+        fprintf(stderr,
+                "[batch] WARN: cannot open fail log '%s' — falling back to "
+                "/tmp/vc_recompress_failures.log (volatile across reboot). "
+                "Set VC_RECOMPRESS_FAIL_LOG or a writable WorkingDirectory.\n",
+                fail_log_path.c_str());
+        fail_log_path = "/tmp/vc_recompress_failures.log";
+        fail_log.clear();
+        fail_log.open(fail_log_path, std::ios::app);
+    }
     std::atomic<int> done_ok{0}, skipped{0}, failed{0};
 
     // Size-aware admission: a worker claims `claim` budget units = the
