@@ -854,6 +854,14 @@ int recompress_one(const RecompressOpts& o) {
         zarrays = std::move(new_zarrays);
     }
 
+    // Sum of per-chunk failures across all levels. A dropped chunk is written
+    // as a missing-sentinel (the pipeline never aborts), so the data is
+    // HOLED but structurally valid. We must surface this as a non-zero
+    // return: the batch coordinator then retries the zarr and, crucially,
+    // does NOT write the completion marker — so a holed volume is never
+    // recorded as done and skipped forever.
+    int total_errs = 0;
+
     for (size_t li = 0; li < levels.size(); li++) {
         int l = levels[li];
         auto& shape = shapes[li];
@@ -1240,6 +1248,16 @@ int recompress_one(const RecompressOpts& o) {
                     }
                 };
 
+                // Contain any exception to this one chunk: an escape from a
+                // std::thread callable is std::terminate() (whole-batch abort
+                // + systemd spin-restart). On failure, release the slot as a
+                // missing sentinel exactly once via finalize_slot so the
+                // shard still finalizes and the pipeline never hangs.
+                // (Every throwing op below is BEFORE this chunk's
+                // finalize_slot / encode-queue handoff, so the catch's single
+                // finalize_slot can't double-decrement `remaining`.)
+                try {
+
                 // Fast 1:1 passthrough when the source is already stored
                 // in our output codec and the output chunk size matches
                 // (ratio {1,1,1}). Matching input magic to the configured
@@ -1338,6 +1356,24 @@ int recompress_one(const RecompressOpts& o) {
                     enc_q.push_back({task.shard, task.job_idx, std::move(raw)});
                 }
                 enc_cv.notify_one();
+
+                } catch (const std::exception& e) {
+                    {
+                        std::lock_guard lk(print_mtx);
+                        fprintf(stderr, "  DOWNLOAD FAIL (chunk dropped): %s\n",
+                                e.what());
+                    }
+                    errs.fetch_add(1);
+                    finalize_slot(RESULT_NONE, {});
+                } catch (...) {
+                    {
+                        std::lock_guard lk(print_mtx);
+                        fprintf(stderr, "  DOWNLOAD FAIL (chunk dropped): "
+                                        "unknown exception\n");
+                    }
+                    errs.fetch_add(1);
+                    finalize_slot(RESULT_NONE, {});
+                }
             }
         };
 
@@ -1355,6 +1391,15 @@ int recompress_one(const RecompressOpts& o) {
                 }
                 // Wake any downloader blocked on queue-full.
                 enc_cv.notify_one();
+
+                // An exception escaping a std::thread callable calls
+                // std::terminate(), which would abort the whole batch
+                // process (and under systemd, spin-restart it). Contain any
+                // failure to this one chunk: count it, mark the slot empty,
+                // and still decrement `remaining` so the shard finalizes
+                // (the bad inner chunk becomes a missing-sentinel) instead of
+                // hanging the per-level pipeline.
+                try {
 
                 total_raw.fetch_add(CHUNK_VOXELS);
 
@@ -1425,6 +1470,30 @@ int recompress_one(const RecompressOpts& o) {
                 processed_chunks.fetch_add(1);
                 if (task.shard->remaining.fetch_sub(1) == 1) {
                     finalize_shard(task.shard);
+                }
+
+                } catch (const std::exception& e) {
+                    {
+                        std::lock_guard lk(print_mtx);
+                        fprintf(stderr, "  ENCODE FAIL (chunk dropped): %s\n",
+                                e.what());
+                    }
+                    errs.fetch_add(1);
+                    // Leave the slot RESULT_NONE (missing sentinel) but still
+                    // release the shard so the pipeline can finalize.
+                    if (task.shard->remaining.fetch_sub(1) == 1) {
+                        finalize_shard(task.shard);
+                    }
+                } catch (...) {
+                    {
+                        std::lock_guard lk(print_mtx);
+                        fprintf(stderr, "  ENCODE FAIL (chunk dropped): "
+                                        "unknown exception\n");
+                    }
+                    errs.fetch_add(1);
+                    if (task.shard->remaining.fetch_sub(1) == 1) {
+                        finalize_shard(task.shard);
+                    }
                 }
             }
         };
@@ -1623,6 +1692,7 @@ int recompress_one(const RecompressOpts& o) {
         double ratio = tc > 0 ? (double)tr / tc : 0;
         double mb_s = tc > 0 ? (double)tc / (1024 * 1024) / elapsed : 0;
 
+        total_errs += errs.load();
         printf("  Processed: %d shards, %d chunks (zero: %d, skipped: %d, errors: %d)\n",
                processed_shards.load(), processed_chunks.load(),
                zero_chunks.load(), skipped_chunks.load(), errs.load());
@@ -1676,6 +1746,14 @@ int recompress_one(const RecompressOpts& o) {
         }
     }
 
+    if (total_errs > 0) {
+        fprintf(stderr,
+                "recompress_one: %d chunk(s) dropped across all levels — "
+                "output is HOLED. Returning failure so the batch coordinator "
+                "retries this zarr and does NOT mark it complete.\n",
+                total_errs);
+        return 3;
+    }
     return 0;
 }
 
@@ -1709,44 +1787,64 @@ struct BatchEntry {
 // scheduling work. Reads the level-0 array metadata (one GET) and multiplies
 // the shape — robust across zarr v2 (.zarray) and v3 (zarr.json) layouts and
 // far cheaper than enumerating the (tens of thousands of) chunk objects.
-// Returns 0 only if metadata can't be read; the scheduler treats 0 as "tiny".
+//
+// On failure we return UINT64_MAX ("treat as huge"), NOT 0: a real but
+// momentarily unreadable large volume must not be mis-scheduled as tiny
+// (which would run a multi-TB zarr at minimal parallelism alongside many
+// siblings and blow the time budget). Over-provisioning a small volume is
+// cheap by comparison. One retry absorbs a transient S3 hiccup.
+constexpr uint64_t kSizeUnknownHuge = ~uint64_t(0);
+
 uint64_t measure_zarr_size(const std::string& path) {
-    try {
-        auto io = make_backend(path);
-        Json meta;
-        bool got = false;
-        for (const char* key : {"0/.zarray", "0/zarr.json"}) {
-            try {
-                if (io->exists(key)) {
-                    meta = Json::parse(io->read_string(key));
-                    got = true;
-                    break;
-                }
-            } catch (...) { /* try next */ }
+    for (int attempt = 0; attempt < 2; ++attempt) {
+        try {
+            auto io = make_backend(path);
+            Json meta;
+            bool got = false;
+            for (const char* key : {"0/.zarray", "0/zarr.json"}) {
+                try {
+                    if (io->exists(key)) {
+                        meta = Json::parse(io->read_string(key));
+                        got = true;
+                        break;
+                    }
+                } catch (...) { /* try next key */ }
+            }
+            if (!got || !meta.contains("shape")) {
+                if (attempt == 0) continue;          // retry once
+                return kSizeUnknownHuge;             // unknown -> schedule big
+            }
+            uint64_t voxels = 1;
+            for (auto& v : meta["shape"]) voxels *= v.get_size_t();
+            uint64_t bytesz = voxels;
+            if (meta.contains("dtype") && meta["dtype"].is_string()) {
+                std::string dt = meta["dtype"].get_string();
+                if (!dt.empty() && (dt.back() == '2')) bytesz = voxels * 2;
+            }
+            return bytesz;
+        } catch (...) {
+            if (attempt == 0) continue;              // retry once
+            return kSizeUnknownHuge;                 // unknown -> schedule big
         }
-        if (!got || !meta.contains("shape")) return 0;
-        uint64_t voxels = 1;
-        for (auto& v : meta["shape"]) voxels *= v.get_size_t();
-        // Bytes ≈ voxels * dtype size (u1=1, u2=2).
-        uint64_t bytesz = voxels;
-        if (meta.contains("dtype") && meta["dtype"].is_string()) {
-            std::string dt = meta["dtype"].get_string();
-            if (!dt.empty() && (dt.back() == '2')) bytesz = voxels * 2;
-        }
-        return bytesz;
-    } catch (...) {
-        return 0;
     }
+    return kSizeUnknownHuge;
 }
 
-// The dest is "done" if the marker exists, or (fallback) if every expected
-// shard object is present for every discovered level. Never treat a missing
-// shard as done — that forces a correct resume of an interrupted zarr.
+// A zarr is "complete" ONLY if it has a valid completion marker recording
+// the matching target_ratio. The marker is written exclusively after
+// recompress_one() returns 0 for the whole zarr (all levels, full shard
+// grid), so its presence is an authoritative "fully done" signal.
+//
+// We deliberately do NOT infer completeness from the shard listing: a zarr
+// interrupted mid-run has a non-empty (but partial) shard grid, and treating
+// that as done would skip it forever and ship truncated data. When the
+// marker is absent we return false and re-enter recompress_one(), whose
+// per-shard resume LIST is the real authority — it cheaply skips shards
+// already written and finishes the rest, then the marker is written.
 bool dest_is_complete(const std::string& dst, float target_ratio) {
     std::unique_ptr<IOBackend> io;
     try { io = make_backend(dst); } catch (...) { return false; }
 
-    // Fast path: completion marker.
     try {
         if (io->exists("_vc_recompress_done.json")) {
             auto j = Json::parse(io->read_string("_vc_recompress_done.json"));
@@ -1756,23 +1854,9 @@ bool dest_is_complete(const std::string& dst, float target_ratio) {
                 return true;
             }
         }
-    } catch (...) { /* fall through to grid inference */ }
+    } catch (...) { /* unreadable/old marker -> treat as not complete */ }
 
-    // Fallback: every discovered level must have its complete shard grid.
-    try {
-        if (!io->exists("zarr.json")) return false;
-        for (int l = 0; l < 6; l++) {
-            std::string zj = std::to_string(l) + "/zarr.json";
-            std::string za = std::to_string(l) + "/.zarray";
-            if (!io->exists(zj) && !io->exists(za)) continue;  // level absent
-            // Level present but no shards written -> incomplete.
-            auto shards = io->list_chunks(std::to_string(l) + "/c/");
-            if (shards.empty()) return false;
-        }
-        return true;
-    } catch (...) {
-        return false;
-    }
+    return false;
 }
 
 void write_done_marker(const std::string& dst, float target_ratio,
@@ -1877,6 +1961,7 @@ int run_batch(const std::string& manifest_path,
     std::mutex pool_mtx;
     std::condition_variable pool_cv;
     int budget_left = core_budget;
+    int active_workers = 0;   // zarrs currently inside recompress_one
     size_t next = 0;
 
     auto inner_jobs_for = [&](uint64_t bytes) -> int {
@@ -1907,14 +1992,23 @@ int run_batch(const std::string& manifest_path,
                 continue;
             }
 
-            int claim = inner_jobs_for(e.src_size);
+            // Clamp the claim to the whole budget BEFORE waiting, so the
+            // wait predicate is evaluated against an attainable value (a
+            // huge zarr claiming > core_budget could otherwise only ever be
+            // admitted via the "alone" branch and serialize fragilely).
+            int claim = std::min(inner_jobs_for(e.src_size), core_budget);
             {
                 std::unique_lock lk(pool_mtx);
-                pool_cv.wait(lk, [&]{ return budget_left >= claim ||
-                                             budget_left == core_budget; });
-                // If claim exceeds the whole budget, cap it.
-                claim = std::min(claim, core_budget);
+                // Admit when either enough budget is free, OR no other zarr
+                // is currently running (active_workers == 0). The second
+                // condition guarantees the largest claim — even one equal to
+                // the entire budget — always makes progress and can never be
+                // starved by a steady trickle of small zarrs.
+                pool_cv.wait(lk, [&]{
+                    return budget_left >= claim || active_workers == 0;
+                });
                 budget_left -= claim;
+                active_workers++;
             }
 
             RecompressOpts opts = tmpl;
@@ -1949,6 +2043,7 @@ int run_batch(const std::string& manifest_path,
             {
                 std::lock_guard lk(pool_mtx);
                 budget_left += claim;
+                active_workers--;
                 pool_cv.notify_all();
             }
 
@@ -1981,8 +2076,23 @@ int run_batch(const std::string& manifest_path,
             done_ok.load(), skipped.load(), failed.load(), entries.size());
     if (failed.load() > 0)
         fprintf(stderr,
-                "[batch] failures logged to /tmp/vc_recompress_failures.log\n");
-    return failed.load() == 0 ? 0 : 2;
+                "[batch] %d zarr(s) permanently failed after retries — "
+                "logged to /tmp/vc_recompress_failures.log. These are NOT "
+                "marked complete and will be retried on the NEXT manual run, "
+                "but the batch is considered finished so the service does not "
+                "restart-loop on an unfixable input.\n",
+                failed.load());
+
+    // Return 0 whenever the batch ran to completion, EVEN IF some zarrs
+    // permanently failed. Rationale: under systemd Restart=on-failure, a
+    // non-zero exit here would restart the whole batch, which skips the 62
+    // good zarrs via markers and then re-fails the 1 bad one forever — an
+    // infinite restart loop making no progress. A persistently bad source
+    // chunk is not fixed by retrying. Failures are durably recorded (log +
+    // no done-marker), so a future intentional re-run still reprocesses
+    // them. A genuine crash/OOM exits the process abnormally and systemd
+    // still restarts it correctly — that path does not reach this return.
+    return 0;
 }
 
 // ============================================================================
