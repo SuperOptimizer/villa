@@ -177,11 +177,21 @@ struct S3Backend : IOBackend {
         // Remove trailing slash
         while (!base_url.empty() && base_url.back() == '/') base_url.pop_back();
 
-        // Configure client with AWS auth
+        // Configure client with AWS auth. The provider re-resolves creds per
+        // request (cheap: AwsAuth::load() is backed by the IMDSv2 in-process
+        // cache that refreshes ~5 min before STS expiry). Without this, a
+        // backend constructed once and used for the whole multi-hour level
+        // would carry a frozen session token and 403 once it rotates.
+        std::string region = !parsed->region.empty() ? parsed->region
+                                                      : std::string("us-east-1");
         utils::HttpClient::Config cfg;
         cfg.aws_auth = utils::AwsAuth::load();
-        if (!parsed->region.empty()) cfg.aws_auth.region = parsed->region;
-        if (cfg.aws_auth.region.empty()) cfg.aws_auth.region = "us-east-1";
+        cfg.aws_auth.region = region;
+        cfg.aws_auth_provider = [region]() {
+            utils::AwsAuth a = utils::AwsAuth::load();
+            a.region = region;
+            return a;
+        };
         cfg.transfer_timeout = std::chrono::seconds(120);
         cfg.max_retries = 3;
         client = std::make_unique<utils::HttpClient>(std::move(cfg));
@@ -1949,9 +1959,16 @@ int run_batch(const std::string& manifest_path,
                   return a.src_size > b.src_size;
               });
 
-    // Failures + summary tracked across the pool.
+    // Failures + summary tracked across the pool. Written to the current
+    // working directory (NOT /tmp): under systemd the CWD is a persistent
+    // WorkingDirectory, whereas /tmp is tmpfs and would lose the only
+    // failure record across an instance reboot mid-run. Overridable via
+    // VC_RECOMPRESS_FAIL_LOG.
     std::mutex log_mtx;
-    std::ofstream fail_log("/tmp/vc_recompress_failures.log", std::ios::app);
+    std::string fail_log_path = "./vc_recompress_failures.log";
+    if (const char* p = std::getenv("VC_RECOMPRESS_FAIL_LOG"); p && *p)
+        fail_log_path = p;
+    std::ofstream fail_log(fail_log_path, std::ios::app);
     std::atomic<int> done_ok{0}, skipped{0}, failed{0};
 
     // Size-aware admission: a worker claims `claim` budget units = the
@@ -2077,11 +2094,11 @@ int run_batch(const std::string& manifest_path,
     if (failed.load() > 0)
         fprintf(stderr,
                 "[batch] %d zarr(s) permanently failed after retries — "
-                "logged to /tmp/vc_recompress_failures.log. These are NOT "
-                "marked complete and will be retried on the NEXT manual run, "
-                "but the batch is considered finished so the service does not "
-                "restart-loop on an unfixable input.\n",
-                failed.load());
+                "logged to %s. These are NOT marked complete and will be "
+                "retried on the NEXT manual run, but the batch is considered "
+                "finished so the service does not restart-loop on an "
+                "unfixable input.\n",
+                failed.load(), fail_log_path.c_str());
 
     // Return 0 whenever the batch ran to completion, EVEN IF some zarrs
     // permanently failed. Rationale: under systemd Restart=on-failure, a

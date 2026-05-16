@@ -215,6 +215,13 @@ public:
     struct Config {
         HttpAuth auth{};
         AwsAuth aws_auth{};  // AWS SigV4 authentication (takes precedence over auth if non-empty)
+        // Optional: resolve AWS creds per-request instead of using the static
+        // aws_auth above. Required for long-lived clients on EC2 instance-role
+        // (STS) credentials, which rotate every ~1-6h: a client constructed
+        // once and used for hours would otherwise carry a frozen, eventually
+        // expired session token and 403 mid-run. The provider should be cheap
+        // (e.g. backed by an in-process cache that refreshes before expiry).
+        std::function<AwsAuth()> aws_auth_provider{};
         std::chrono::seconds connect_timeout{10};
         std::chrono::seconds transfer_timeout{30};
         bool follow_redirects{true};
@@ -367,7 +374,12 @@ public:
 
             if (code == CURLE_OK) {
                 curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &resp.status_code);
-                if (resp.status_code >= 500 && attempt < config_.max_retries) {
+                // Retry 5xx, and 401/403: with a refresh-aware cred provider
+                // a 403 is most often an expired/rotated STS token, and the
+                // next attempt's apply_auth() re-resolves fresh creds.
+                if ((resp.status_code >= 500 ||
+                     resp.status_code == 401 || resp.status_code == 403)
+                    && attempt < config_.max_retries) {
                     thread_local std::mt19937 rng{std::random_device{}()};
                     std::uniform_int_distribution<unsigned> jitter(0, 100);
                     std::this_thread::sleep_for(
@@ -480,14 +492,21 @@ private:
 
     [[nodiscard]] AuthState apply_auth(CURL* curl) const {
         AuthState state;
-        if (!config_.aws_auth.empty()) {
+        // Resolve creds per-request when a provider is set (refresh-aware,
+        // cache-backed) so a long-lived client picks up rotated STS tokens
+        // instead of carrying a frozen one captured at construction.
+        AwsAuth live_aws = config_.aws_auth_provider
+                               ? config_.aws_auth_provider()
+                               : config_.aws_auth;
+        if (live_aws.region.empty()) live_aws.region = config_.aws_auth.region;
+        if (!live_aws.empty()) {
             // AWS SigV4 takes precedence
-            state.sigv4_str = "aws:amz:" + config_.aws_auth.region + ":s3";
+            state.sigv4_str = "aws:amz:" + live_aws.region + ":s3";
             curl_easy_setopt(curl, CURLOPT_AWS_SIGV4, state.sigv4_str.c_str());
-            state.userpwd = config_.aws_auth.access_key + ":" + config_.aws_auth.secret_key;
+            state.userpwd = live_aws.access_key + ":" + live_aws.secret_key;
             curl_easy_setopt(curl, CURLOPT_USERPWD, state.userpwd.c_str());
-            if (!config_.aws_auth.session_token.empty()) {
-                auto hdr = "x-amz-security-token: " + config_.aws_auth.session_token;
+            if (!live_aws.session_token.empty()) {
+                auto hdr = "x-amz-security-token: " + live_aws.session_token;
                 state.headers = curl_slist_append(state.headers, hdr.c_str());
                 curl_easy_setopt(curl, CURLOPT_HTTPHEADER, state.headers);
             }
@@ -637,8 +656,12 @@ private:
             if (code == CURLE_OK) {
                 curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &resp.status_code);
 
-                // Retry on 5xx server errors
-                if (resp.status_code >= 500 && attempt < config_.max_retries) {
+                // Retry on 5xx server errors, and on 401/403 (most often an
+                // expired/rotated STS token; the next attempt's apply_auth()
+                // re-resolves fresh creds via the cache-backed provider).
+                if ((resp.status_code >= 500 ||
+                     resp.status_code == 401 || resp.status_code == 403)
+                    && attempt < config_.max_retries) {
                     thread_local std::mt19937 rng{std::random_device{}()};
                     std::uniform_int_distribution<unsigned> jitter(0, 100);
                     std::this_thread::sleep_for(
