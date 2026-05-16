@@ -59,6 +59,8 @@
 #include <map>
 #include <unordered_set>
 #include <chrono>
+#include <algorithm>
+#include <ctime>
 
 #include "utils/Json.hpp"
 #include <blosc.h>
@@ -655,102 +657,48 @@ static std::vector<bool> build_occupancy_mask(
 }
 
 // ============================================================================
-// Main
+// Per-zarr recompression
 // ============================================================================
 
-int main(int argc, char** argv) {
-    setlinebuf(stdout);
-    if (argc < 3) {
-        std::cerr << "Usage: vc_zarr_recompress <input> <output> [options]\n"
-                  << "\n"
-                  << "Input/output: local path or s3://bucket/path\n"
-                  << "\n"
-                  << "Options:\n"
-                  << "  --target-ratio R  c3d target compression ratio (>1.0). [50]\n"
-                  << "  --verify         Verify roundtrip after encoding\n"
-                  << "  --jobs N         Outer workers (shards in flight) [8]\n"
-                  << "  --inner-jobs K   Inner workers per shard (chunks in flight)\n"
-                  << "                   [default: hardware_concurrency]\n"
-                  << "  --log FILE       Log completed shards to file\n"
-                  << "  --stats-pct N    Sample N%% of chunks for quality metrics\n"
-                  << "                   (MAE, RMSE, PSNR, percentiles).  [0 = off]\n"
-                  << "  --levels CSV     Process only listed levels (e.g. 4,5). [default: all]\n"
-                  << "  --rank N         VM index in fanout (0..world-1). [default: 0]\n"
-                  << "  --world N        Total VM count for horizontal scaling. [default: 1]\n"
-                  << "                   With --world 4, VM 0 handles sz%%4==0, VM 1 sz%%4==1, etc.\n"
-                  << "  --one-shard L/sz/sy/sx  Process exactly one shard + exit.\n"
-                  << "                          Skips occupancy and resume lists. Coordinator\n"
-                  << "                          handles both. Use for per-shard process fanout.\n"
-                  << "  --shard-file PATH       File of 'L/sz/sy/sx' lines — batch many shards\n"
-                  << "                          in one process (amortize encoder init + TCP reuse).\n"
-                  << "  --encode-jobs N  Encode pool threads per worker [default: 2*cores]\n"
-                  << "  --occupancy-file PATH  Binary bitmap of input chunk existence\n"
-                  << "                          (nz*ny*nx bits). Skips S3 LIST entirely.\n"
-                  << "                          {L} in path is replaced by level number.\n";
-        return 1;
-    }
-
-    blosc_init();
-
-    std::string input_path = argv[1];
-    std::string output_path = argv[2];
-    bool verify = false;
-    // Outer workers process shards in parallel. Since the per-shard work is
-    // now mostly parallel internally (see --inner-jobs), a modest outer count
-    // is enough to hide per-shard upload latency. Default 8.
-    int jobs = 8;
-    // Inner workers do concurrent chunk download + decode + encode within
-    // a single shard. Scale with hardware_concurrency to saturate network
-    // RTT (one chunk fetch ~30-80 ms over S3) and CPU on encode.
-    int inner_jobs = std::max(1, (int)std::thread::hardware_concurrency());
+// All parameters for recompressing a single zarr. The batch coordinator
+// builds one of these per manifest entry; single-zarr CLI mode builds one
+// from argv. recompress_one() unpacks it into the same local names the
+// pipeline has always used, so the pipeline body is unchanged.
+struct RecompressOpts {
+    std::string input_path;
+    std::string output_path;
+    bool        verify = false;
+    int         jobs = 8;
+    int         inner_jobs = std::max(1, (int)std::thread::hardware_concurrency());
     std::string log_path;
-    int stats_pct = 0;
-    std::string levels_arg;    // empty = all discovered; else CSV of levels
-    int rank = 0;              // this VM's index in the fanout (0..world-1)
-    int world = 1;             // total VM count for horizontal scaling
-    std::string one_shard_arg; // "L/sz/sy/sx" — process exactly one shard + exit
-    std::string shard_file;    // file of "L/sz/sy/sx" lines — batch in one process
-    int encode_jobs = 0;       // 0 = 2*hw_concurrency (default)
-    std::string occupancy_file; // external occupancy bitmap (coordinator-built)
-    float target_ratio = 50.0f; // c3d target compression ratio (>1.0)
+    int         stats_pct = 0;
+    std::string levels_arg;
+    int         rank = 0;
+    int         world = 1;
+    std::string one_shard_arg;
+    std::string shard_file;
+    int         encode_jobs = 0;
+    std::string occupancy_file;
+    float       target_ratio = 50.0f;
+};
 
-    for (int i = 3; i < argc; i++) {
-        std::string arg = argv[i];
-        if (arg == "--verify") verify = true;
-        else if (arg == "--jobs" && i + 1 < argc) jobs = std::atoi(argv[++i]);
-        else if (arg == "--inner-jobs" && i + 1 < argc) inner_jobs = std::atoi(argv[++i]);
-        else if (arg == "--log" && i + 1 < argc) log_path = argv[++i];
-        else if (arg == "--stats-pct" && i + 1 < argc) stats_pct = std::atoi(argv[++i]);
-        else if (arg == "--levels" && i + 1 < argc) levels_arg = argv[++i];
-        else if (arg == "--rank" && i + 1 < argc) rank = std::atoi(argv[++i]);
-        else if (arg == "--world" && i + 1 < argc) world = std::atoi(argv[++i]);
-        else if (arg == "--one-shard" && i + 1 < argc) one_shard_arg = argv[++i];
-        else if (arg == "--shard-file" && i + 1 < argc) shard_file = argv[++i];
-        else if (arg == "--encode-jobs" && i + 1 < argc) encode_jobs = std::atoi(argv[++i]);
-        else if (arg == "--occupancy-file" && i + 1 < argc) occupancy_file = argv[++i];
-        else if (arg == "--target-ratio" && i + 1 < argc) target_ratio = (float)std::atof(argv[++i]);
-        else if (arg == "--codec" || arg == "--qp" || arg == "--air-clamp" || arg == "--bit-shift") {
-            // Legacy h265 flags: removed in the c3d-only switch. Fail fast
-            // so orchestration scripts that still pass them don't silently
-            // inherit --target-ratio defaults and produce mis-encoded data.
-            fprintf(stderr,
-                "Error: flag %s was removed along with the H.265 codec path.\n"
-                "       The recompress tool is c3d-only now; use --target-ratio "
-                "instead of --qp, and drop --codec / --air-clamp / --bit-shift.\n",
-                arg.c_str());
-            return 1;
-        }
-        else {
-            fprintf(stderr, "Error: unknown argument %s\n", arg.c_str());
-            return 1;
-        }
-    }
-    if (!(target_ratio > 1.0f)) {
-        fprintf(stderr, "--target-ratio must be > 1.0, got %g\n", (double)target_ratio);
-        return 1;
-    }
-    if (stats_pct < 0) stats_pct = 0;
-    if (stats_pct > 100) stats_pct = 100;
+int recompress_one(const RecompressOpts& o) {
+    // Unpack into the local names the pipeline below has always used.
+    const std::string& input_path  = o.input_path;
+    const std::string& output_path = o.output_path;
+    bool        verify         = o.verify;
+    int         jobs           = o.jobs;
+    int         inner_jobs     = o.inner_jobs;
+    const std::string& log_path = o.log_path;
+    int         stats_pct      = o.stats_pct;
+    std::string levels_arg     = o.levels_arg;   // mutated below (one-shard/shard-file)
+    int         rank           = o.rank;
+    int         world          = o.world;
+    const std::string& one_shard_arg  = o.one_shard_arg;
+    const std::string& shard_file     = o.shard_file;
+    int         encode_jobs    = o.encode_jobs;
+    const std::string& occupancy_file = o.occupancy_file;
+    float       target_ratio   = o.target_ratio;
     // In --one-shard mode, force the level filter to the shard's level.
     if (!one_shard_arg.empty()) {
         int ol = -1;
@@ -1728,6 +1676,428 @@ int main(int argc, char** argv) {
         }
     }
 
-    blosc_destroy();
     return 0;
+}
+
+// ============================================================================
+// Batch coordinator
+// ============================================================================
+//
+// --batch <manifest> processes many zarrs in one process. Each manifest line
+// is a source s3:// (or local) zarr path; the dest is derived by replacing
+// --batch-src-prefix with --batch-dst-prefix. A size-aware pool runs small
+// zarrs concurrently and large zarrs with high intra-volume parallelism,
+// keeping the sum of active inner-jobs under --batch-core-budget.
+//
+// Resume is seamless at two levels: a completed zarr gets a
+// _vc_recompress_done.json marker at its dest root (fast-path skip); if the
+// marker is absent the coordinator falls back to verifying the full shard
+// grid exists before skipping. A partially written zarr (no marker, grid
+// incomplete) is reprocessed — the per-shard resume LIST inside
+// recompress_one() then skips the shards already written, and every grid
+// slot (including all-zero regions) is always written as a real object.
+
+namespace {
+
+struct BatchEntry {
+    std::string src;     // source zarr path/URL
+    std::string dst;     // destination zarr path/URL
+    uint64_t    src_size = 0;
+};
+
+// Approximate uncompressed voxel volume of a zarr, used only to size-bucket
+// scheduling work. Reads the level-0 array metadata (one GET) and multiplies
+// the shape — robust across zarr v2 (.zarray) and v3 (zarr.json) layouts and
+// far cheaper than enumerating the (tens of thousands of) chunk objects.
+// Returns 0 only if metadata can't be read; the scheduler treats 0 as "tiny".
+uint64_t measure_zarr_size(const std::string& path) {
+    try {
+        auto io = make_backend(path);
+        Json meta;
+        bool got = false;
+        for (const char* key : {"0/.zarray", "0/zarr.json"}) {
+            try {
+                if (io->exists(key)) {
+                    meta = Json::parse(io->read_string(key));
+                    got = true;
+                    break;
+                }
+            } catch (...) { /* try next */ }
+        }
+        if (!got || !meta.contains("shape")) return 0;
+        uint64_t voxels = 1;
+        for (auto& v : meta["shape"]) voxels *= v.get_size_t();
+        // Bytes ≈ voxels * dtype size (u1=1, u2=2).
+        uint64_t bytesz = voxels;
+        if (meta.contains("dtype") && meta["dtype"].is_string()) {
+            std::string dt = meta["dtype"].get_string();
+            if (!dt.empty() && (dt.back() == '2')) bytesz = voxels * 2;
+        }
+        return bytesz;
+    } catch (...) {
+        return 0;
+    }
+}
+
+// The dest is "done" if the marker exists, or (fallback) if every expected
+// shard object is present for every discovered level. Never treat a missing
+// shard as done — that forces a correct resume of an interrupted zarr.
+bool dest_is_complete(const std::string& dst, float target_ratio) {
+    std::unique_ptr<IOBackend> io;
+    try { io = make_backend(dst); } catch (...) { return false; }
+
+    // Fast path: completion marker.
+    try {
+        if (io->exists("_vc_recompress_done.json")) {
+            auto j = Json::parse(io->read_string("_vc_recompress_done.json"));
+            if (j.contains("target_ratio") &&
+                std::abs(j["target_ratio"].get_double()
+                         - (double)target_ratio) < 1e-6) {
+                return true;
+            }
+        }
+    } catch (...) { /* fall through to grid inference */ }
+
+    // Fallback: every discovered level must have its complete shard grid.
+    try {
+        if (!io->exists("zarr.json")) return false;
+        for (int l = 0; l < 6; l++) {
+            std::string zj = std::to_string(l) + "/zarr.json";
+            std::string za = std::to_string(l) + "/.zarray";
+            if (!io->exists(zj) && !io->exists(za)) continue;  // level absent
+            // Level present but no shards written -> incomplete.
+            auto shards = io->list_chunks(std::to_string(l) + "/c/");
+            if (shards.empty()) return false;
+        }
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+void write_done_marker(const std::string& dst, float target_ratio,
+                       const BatchEntry& e) {
+    try {
+        auto io = make_backend(dst);
+        Json j;
+        j["src"]          = e.src;
+        j["target_ratio"] = (double)target_ratio;
+        j["completed_at"] = (int64_t)std::time(nullptr);
+        io->write_string("_vc_recompress_done.json", j.dump());
+    } catch (const std::exception& ex) {
+        fprintf(stderr, "[batch] WARN: could not write done marker for %s: %s\n",
+                dst.c_str(), ex.what());
+    }
+}
+
+std::string derive_dst(const std::string& src,
+                       const std::string& src_prefix,
+                       const std::string& dst_prefix) {
+    if (!src_prefix.empty() && src.rfind(src_prefix, 0) == 0)
+        return dst_prefix + src.substr(src_prefix.size());
+    // No prefix match: append the zarr's basename under dst_prefix.
+    auto slash = src.find_last_of('/');
+    std::string base = (slash == std::string::npos) ? src : src.substr(slash + 1);
+    std::string dp = dst_prefix;
+    if (!dp.empty() && dp.back() != '/') dp += '/';
+    return dp + base;
+}
+
+} // namespace
+
+int run_batch(const std::string& manifest_path,
+              const std::string& src_prefix,
+              const std::string& dst_prefix,
+              int core_budget,
+              int retries,
+              const RecompressOpts& tmpl) {
+    std::ifstream mf(manifest_path);
+    if (!mf) {
+        fprintf(stderr, "[batch] cannot open manifest: %s\n",
+                manifest_path.c_str());
+        return 1;
+    }
+
+    std::vector<BatchEntry> entries;
+    std::string line;
+    while (std::getline(mf, line)) {
+        // trim
+        auto a = line.find_first_not_of(" \t\r\n");
+        if (a == std::string::npos) continue;
+        auto b = line.find_last_not_of(" \t\r\n");
+        line = line.substr(a, b - a + 1);
+        if (line.empty() || line[0] == '#') continue;
+        BatchEntry e;
+        e.src = line;
+        e.dst = derive_dst(line, src_prefix, dst_prefix);
+        entries.push_back(std::move(e));
+    }
+    if (entries.empty()) {
+        fprintf(stderr, "[batch] manifest is empty: %s\n",
+                manifest_path.c_str());
+        return 1;
+    }
+
+    fprintf(stderr, "[batch] %zu zarrs in manifest, core budget %d\n",
+            entries.size(), core_budget);
+
+    // Probe sizes (parallel, cheap LISTs) then sort largest-first so big
+    // volumes start early and small ones backfill the pool.
+    {
+        std::vector<std::thread> probes;
+        std::mutex mtx;
+        size_t idx = 0;
+        int probe_par = std::min<int>(16, (int)entries.size());
+        for (int t = 0; t < probe_par; t++) {
+            probes.emplace_back([&] {
+                for (;;) {
+                    size_t i;
+                    { std::lock_guard lk(mtx); if (idx >= entries.size()) return;
+                      i = idx++; }
+                    entries[i].src_size = measure_zarr_size(entries[i].src);
+                }
+            });
+        }
+        for (auto& p : probes) p.join();
+    }
+    std::sort(entries.begin(), entries.end(),
+              [](const BatchEntry& a, const BatchEntry& b) {
+                  return a.src_size > b.src_size;
+              });
+
+    // Failures + summary tracked across the pool.
+    std::mutex log_mtx;
+    std::ofstream fail_log("/tmp/vc_recompress_failures.log", std::ios::app);
+    std::atomic<int> done_ok{0}, skipped{0}, failed{0};
+
+    // Size-aware admission: a worker claims `claim` budget units = the
+    // inner-jobs it will use. Large zarrs claim a big slice (run mostly
+    // alone, high parallelism); small zarrs claim a little (many run at
+    // once). The sum of active claims never exceeds core_budget.
+    std::mutex pool_mtx;
+    std::condition_variable pool_cv;
+    int budget_left = core_budget;
+    size_t next = 0;
+
+    auto inner_jobs_for = [&](uint64_t bytes) -> int {
+        // Buckets on approx uncompressed level-0 volume. Big volumes claim a
+        // large slice (run mostly alone, high intra-parallelism); small ones
+        // claim a slim slice so many pack into the budget concurrently.
+        constexpr uint64_t GB = 1024ull * 1024 * 1024;
+        if (bytes >= 50 * GB) return std::max(8, core_budget);       // huge: alone
+        if (bytes >= 10 * GB) return std::max(8, core_budget / 2);
+        if (bytes >=  1 * GB) return std::max(8, core_budget / 4);
+        return std::max(4, core_budget / 8);                         // small/tiny
+    };
+
+    auto worker = [&]() {
+        for (;;) {
+            size_t i;
+            {
+                std::lock_guard lk(pool_mtx);
+                if (next >= entries.size()) return;
+                i = next++;
+            }
+            BatchEntry& e = entries[i];
+
+            if (dest_is_complete(e.dst, tmpl.target_ratio)) {
+                std::lock_guard lk(log_mtx);
+                fprintf(stderr, "[batch] SKIP (done): %s\n", e.src.c_str());
+                skipped.fetch_add(1);
+                continue;
+            }
+
+            int claim = inner_jobs_for(e.src_size);
+            {
+                std::unique_lock lk(pool_mtx);
+                pool_cv.wait(lk, [&]{ return budget_left >= claim ||
+                                             budget_left == core_budget; });
+                // If claim exceeds the whole budget, cap it.
+                claim = std::min(claim, core_budget);
+                budget_left -= claim;
+            }
+
+            RecompressOpts opts = tmpl;
+            opts.input_path  = e.src;
+            opts.output_path = e.dst;
+            opts.inner_jobs  = claim;
+
+            int rc = -1;
+            for (int attempt = 0; attempt <= retries; attempt++) {
+                {
+                    std::lock_guard lk(log_mtx);
+                    fprintf(stderr,
+                            "[batch] START %s -> %s (size~%llu, inner=%d, try %d/%d)\n",
+                            e.src.c_str(), e.dst.c_str(),
+                            (unsigned long long)e.src_size, claim,
+                            attempt + 1, retries + 1);
+                }
+                try {
+                    rc = recompress_one(opts);
+                } catch (const std::exception& ex) {
+                    std::lock_guard lk(log_mtx);
+                    fprintf(stderr, "[batch] EXCEPTION on %s: %s\n",
+                            e.src.c_str(), ex.what());
+                    rc = -1;
+                }
+                if (rc == 0) break;
+                std::lock_guard lk(log_mtx);
+                fprintf(stderr, "[batch] retry %s (rc=%d)\n",
+                        e.src.c_str(), rc);
+            }
+
+            {
+                std::lock_guard lk(pool_mtx);
+                budget_left += claim;
+                pool_cv.notify_all();
+            }
+
+            if (rc == 0) {
+                write_done_marker(e.dst, tmpl.target_ratio, e);
+                std::lock_guard lk(log_mtx);
+                fprintf(stderr, "[batch] OK   %s\n", e.src.c_str());
+                done_ok.fetch_add(1);
+            } else {
+                std::lock_guard lk(log_mtx);
+                fprintf(stderr, "[batch] FAIL %s after %d tries\n",
+                        e.src.c_str(), retries + 1);
+                fail_log << e.src << "\t" << e.dst << "\trc=" << rc << "\n";
+                fail_log.flush();
+                failed.fetch_add(1);
+            }
+        }
+    };
+
+    // Pool width: enough threads that many small zarrs can run at once,
+    // but each blocks on the budget so we never oversubscribe CPU.
+    int pool_threads = std::max(1, (int)entries.size());
+    pool_threads = std::min(pool_threads, 64);
+    std::vector<std::thread> pool;
+    for (int t = 0; t < pool_threads; t++) pool.emplace_back(worker);
+    for (auto& t : pool) t.join();
+
+    fprintf(stderr,
+            "[batch] DONE: %d ok, %d skipped, %d failed (of %zu)\n",
+            done_ok.load(), skipped.load(), failed.load(), entries.size());
+    if (failed.load() > 0)
+        fprintf(stderr,
+                "[batch] failures logged to /tmp/vc_recompress_failures.log\n");
+    return failed.load() == 0 ? 0 : 2;
+}
+
+// ============================================================================
+// Main
+// ============================================================================
+
+static void print_usage() {
+    std::cerr <<
+        "Usage:\n"
+        "  vc_zarr_recompress <input> <output> [options]      (single zarr)\n"
+        "  vc_zarr_recompress --batch <manifest> [options]    (many zarrs)\n"
+        "\n"
+        "Input/output: local path or s3://bucket/path\n"
+        "\n"
+        "Single-zarr options:\n"
+        "  --target-ratio R  c3d target compression ratio (>1.0). [50]\n"
+        "  --verify         Verify roundtrip after encoding\n"
+        "  --jobs N         Outer workers (shards in flight) [8]\n"
+        "  --inner-jobs K   Inner workers per shard (chunks in flight)\n"
+        "                   [default: hardware_concurrency]\n"
+        "  --log FILE       Log completed shards to file\n"
+        "  --stats-pct N    Sample N%% of chunks for quality metrics [0=off]\n"
+        "  --levels CSV     Process only listed levels (e.g. 4,5). [all]\n"
+        "  --rank N         VM index in fanout (0..world-1). [0]\n"
+        "  --world N        Total VM count for horizontal scaling. [1]\n"
+        "  --one-shard L/sz/sy/sx  Process exactly one shard + exit.\n"
+        "  --shard-file PATH       File of 'L/sz/sy/sx' lines.\n"
+        "  --encode-jobs N  Encode pool threads per worker [2*cores]\n"
+        "  --occupancy-file PATH  Binary input-occupancy bitmap.\n"
+        "\n"
+        "Batch options (with --batch <manifest>, one src zarr per line):\n"
+        "  --batch-src-prefix S   Strip S from each src to derive the dest.\n"
+        "  --batch-dst-prefix D   Prepend D to form the dest zarr path.\n"
+        "  --batch-core-budget N  Max sum of active inner-jobs.\n"
+        "                         [default: 2*hardware_concurrency]\n"
+        "  --batch-retries N      Per-zarr retry attempts on failure. [2]\n"
+        "  Resume is automatic: completed zarrs (done marker or full shard\n"
+        "  grid) are skipped; interrupted ones resume per-shard.\n";
+}
+
+int main(int argc, char** argv) {
+    setlinebuf(stdout);
+    if (argc < 2) { print_usage(); return 1; }
+
+    // Detect batch mode.
+    std::string batch_manifest;
+    std::string batch_src_prefix;
+    std::string batch_dst_prefix;
+    int batch_core_budget = std::max(1,
+        2 * (int)std::thread::hardware_concurrency());
+    int batch_retries = 2;
+
+    RecompressOpts o;
+    bool have_io_positional = false;
+
+    // First pass: is --batch present, and collect positionals.
+    std::vector<std::string> positionals;
+    for (int i = 1; i < argc; i++) {
+        std::string a = argv[i];
+        if (a == "--batch" && i + 1 < argc) { batch_manifest = argv[++i]; }
+        else if (a == "--batch-src-prefix" && i + 1 < argc) { batch_src_prefix = argv[++i]; }
+        else if (a == "--batch-dst-prefix" && i + 1 < argc) { batch_dst_prefix = argv[++i]; }
+        else if (a == "--batch-core-budget" && i + 1 < argc) { batch_core_budget = std::atoi(argv[++i]); }
+        else if (a == "--batch-retries" && i + 1 < argc) { batch_retries = std::atoi(argv[++i]); }
+        else if (a == "--verify") o.verify = true;
+        else if (a == "--jobs" && i + 1 < argc) o.jobs = std::atoi(argv[++i]);
+        else if (a == "--inner-jobs" && i + 1 < argc) o.inner_jobs = std::atoi(argv[++i]);
+        else if (a == "--log" && i + 1 < argc) o.log_path = argv[++i];
+        else if (a == "--stats-pct" && i + 1 < argc) o.stats_pct = std::atoi(argv[++i]);
+        else if (a == "--levels" && i + 1 < argc) o.levels_arg = argv[++i];
+        else if (a == "--rank" && i + 1 < argc) o.rank = std::atoi(argv[++i]);
+        else if (a == "--world" && i + 1 < argc) o.world = std::atoi(argv[++i]);
+        else if (a == "--one-shard" && i + 1 < argc) o.one_shard_arg = argv[++i];
+        else if (a == "--shard-file" && i + 1 < argc) o.shard_file = argv[++i];
+        else if (a == "--encode-jobs" && i + 1 < argc) o.encode_jobs = std::atoi(argv[++i]);
+        else if (a == "--occupancy-file" && i + 1 < argc) o.occupancy_file = argv[++i];
+        else if (a == "--target-ratio" && i + 1 < argc) o.target_ratio = (float)std::atof(argv[++i]);
+        else if (a == "--codec" || a == "--qp" || a == "--air-clamp" || a == "--bit-shift") {
+            fprintf(stderr,
+                "Error: flag %s was removed along with the H.265 codec path.\n"
+                "       Use --target-ratio instead of --qp; drop "
+                "--codec / --air-clamp / --bit-shift.\n", a.c_str());
+            return 1;
+        }
+        else if (!a.empty() && a[0] == '-') {
+            fprintf(stderr, "Error: unknown argument %s\n", a.c_str());
+            return 1;
+        }
+        else {
+            positionals.push_back(a);
+        }
+    }
+
+    if (o.target_ratio <= 1.0f) {
+        fprintf(stderr, "--target-ratio must be > 1.0, got %g\n",
+                (double)o.target_ratio);
+        return 1;
+    }
+    if (o.stats_pct < 0) o.stats_pct = 0;
+    if (o.stats_pct > 100) o.stats_pct = 100;
+
+    blosc_init();
+    int rc;
+
+    if (!batch_manifest.empty()) {
+        rc = run_batch(batch_manifest, batch_src_prefix, batch_dst_prefix,
+                       batch_core_budget, batch_retries, o);
+    } else {
+        if (positionals.size() < 2) { print_usage(); blosc_destroy(); return 1; }
+        o.input_path  = positionals[0];
+        o.output_path = positionals[1];
+        (void)have_io_positional;
+        rc = recompress_one(o);
+    }
+
+    blosc_destroy();
+    return rc;
 }
