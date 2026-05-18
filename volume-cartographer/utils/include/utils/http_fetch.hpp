@@ -1,17 +1,9 @@
 #pragma once
 
-// S3/HTTP client for volume-cartographer.
-//
-// This is a thin C++ RAII shim over the vendored single-file C library
-// `libs3` (libs/libs3). It keeps the exact public API the rest of VC was
-// written against (utils::HttpClient / HttpResponse / AwsAuth /
-// is_s3_url / parse_s3_url / s3_to_https) so call sites are unchanged,
-// but all S3 transport, SigV4 signing, retry/backoff, and AWS
-// credential resolution (env / AWS CLI / EC2 IMDSv2-cached / SSO / INI)
-// now live in libs3 -- volume-cartographer no longer owns that code.
-//
-// libs3's only hard dependency is libcurl; curl does not leak into this
-// header (it is a C API behind libs3.h).
+// Thin C++ RAII shim over the vendored libs3 C library (libs/libs3).
+// Keeps the public API VC was written against (HttpClient / HttpResponse
+// / AwsAuth / parse_s3_url / s3_to_https); libs3 owns S3 transport,
+// SigV4, retry, and AWS credential resolution.
 
 #include <libs3.h>
 
@@ -31,9 +23,7 @@
 #include <utility>
 #include <vector>
 
-// libs3 is always available (vendored), so the historical UTILS_HAS_CURL
-// guard is now always true. Kept defined for the (few) translation units
-// and CMake targets that test it.
+// libs3 is always vendored; kept for call sites that test this.
 #ifndef UTILS_HAS_CURL
 #define UTILS_HAS_CURL 1
 #endif
@@ -175,6 +165,27 @@ struct AwsAuth {
 };
 
 // ---------------------------------------------------------------------------
+// S3 listing (one page)
+// ---------------------------------------------------------------------------
+struct S3Object {
+    std::string key;
+    std::uint64_t size = 0;
+    std::string etag; // may be empty
+};
+
+/// One page of a ListObjectsV2 response. `prefixes` are the CommonPrefixes
+/// (sub-"directories") when a delimiter was used; `objects` are the keys.
+/// When `is_truncated`, pass `next_continuation_token` back into list() for
+/// the next page.
+struct S3ListPage {
+    std::vector<std::string> prefixes;
+    std::vector<S3Object> objects;
+    std::string next_continuation_token; // empty when not truncated
+    bool is_truncated = false;
+    ::s3_status status = S3_OK;
+};
+
+// ---------------------------------------------------------------------------
 // HttpClient
 // ---------------------------------------------------------------------------
 class HttpClient final {
@@ -182,9 +193,8 @@ public:
     struct Config {
         HttpAuth auth{};
         AwsAuth aws_auth{};  // AWS SigV4 (takes precedence over auth if non-empty)
-        // Optional: resolve AWS creds per-request instead of using the
-        // static aws_auth above. Required for long-lived clients on EC2
-        // instance-role (STS) credentials, which rotate every ~1-6h.
+        // Per-request cred resolution; required for long-lived clients on
+        // rotating EC2 instance-role (STS) credentials.
         std::function<AwsAuth()> aws_auth_provider{};
         std::chrono::seconds connect_timeout{10};
         std::chrono::seconds transfer_timeout{30};
@@ -231,9 +241,8 @@ public:
         state_->client.reset(::s3_client_new(&scfg));
     }
 
-    // Flip the process-global abort flag: every in-flight libs3 transfer
-    // returns promptly and pending retries bail. Use for fast shutdown so
-    // a worker pool isn't stuck inside an S3 timeout.
+    // Process-global abort: in-flight transfers return promptly and
+    // pending retries bail. For fast shutdown.
     static void abortAll() noexcept { ::s3_global_abort(); }
     static void resetAbort() noexcept { ::s3_global_reset_abort(); }
     [[nodiscard]] static bool isAborted() noexcept { return ::s3_global_is_aborted(); }
@@ -285,16 +294,44 @@ public:
         return convert(r);
     }
 
-    // ListObjectsV2 with auto-pagination. `s3_url_prefix` is an s3:// URL
-    // whose key part is the listing prefix; `delimiter` is "/" for one
-    // level or nullptr for a fully recursive listing. `cb` is invoked once
-    // per page (return true to continue paginating). Returns S3_OK on
-    // success. libs3 owns SigV4 query signing, pagination, and XML parsing.
+    // ListObjectsV2, auto-paginated. delimiter "/" = one level, nullptr =
+    // recursive. cb is called per page; return true to keep paginating.
     [[nodiscard]] ::s3_status list_all(std::string_view s3_url_prefix,
                                        const char* delimiter,
                                        ::s3_list_page_fn cb,
                                        void* userdata) const {
         return ::s3_list_all(client(), c_str(s3_url_prefix), delimiter, cb, userdata);
+    }
+
+    // Single-page ListObjectsV2, for incremental UI browsing. delimiter
+    // "/" returns CommonPrefixes; pass a prior next_continuation_token to
+    // page forward.
+    [[nodiscard]] S3ListPage list(std::string_view s3_url_prefix,
+                                  const char* delimiter,
+                                  std::string_view continuation_token = {}) const {
+        S3ListPage out;
+        ::s3_list_params params{};
+        params.delimiter = delimiter;
+        std::string tok{continuation_token};
+        params.continuation_token = tok.empty() ? nullptr : tok.c_str();
+        ::s3_list_result r{};
+        out.status = ::s3_list_ex(client(), c_str(s3_url_prefix), &params, &r);
+        if (out.status == S3_OK) {
+            out.prefixes.reserve(r.prefix_count);
+            for (size_t i = 0; i < r.prefix_count; ++i)
+                out.prefixes.emplace_back(r.prefixes[i] ? r.prefixes[i] : "");
+            out.objects.reserve(r.object_count);
+            for (size_t i = 0; i < r.object_count; ++i)
+                out.objects.push_back(S3Object{
+                    r.objects[i].key ? r.objects[i].key : "",
+                    r.objects[i].size,
+                    r.objects[i].etag ? r.objects[i].etag : ""});
+            if (r.next_continuation_token)
+                out.next_continuation_token = r.next_continuation_token;
+            out.is_truncated = r.is_truncated;
+        }
+        ::s3_list_result_free(&r);
+        return out;
     }
 
 private:

@@ -160,6 +160,12 @@ add_executable(test_http_fetch_errors test_http_fetch_errors.cpp)
 target_link_libraries(test_http_fetch_errors PRIVATE doctest::doctest vc_core)
 add_test(NAME test_http_fetch_errors COMMAND test_http_fetch_errors)
 
+# E2E stress of the libs3-backed S3 stack via the utils:: / vc:: APIs.
+# Soft-skips on network; VC_TEST_REQUIRE_NETWORK=1 makes it hard-fail.
+add_executable(test_libs3_e2e test_libs3_e2e.cpp)
+target_link_libraries(test_libs3_e2e PRIVATE doctest::doctest vc_core)
+add_test(NAME test_libs3_e2e COMMAND test_libs3_e2e)
+
 # Live S3: stages PHerc 0172 level 5 to a local zarr dir, then exercises
 # the NormalGridGenerate library API against it. Soft-skips on network.
 add_executable(test_normal_grid_live test_normal_grid_live.cpp)

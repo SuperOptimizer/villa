@@ -1,7 +1,5 @@
 # libs3 — minimal C23 S3 client (single TU, libcurl-only).
-# Upstream: ~/libs3 (vendored as a copy of libs3.c + libs3.h +
-# libs3_internal.h). Replaces volume-cartographer's hand-rolled
-# aws_auth.cpp / http_fetch.hpp / RemoteUrl.* S3 + credential code.
+# Upstream: github.com/SuperOptimizer/libs3 (vendored copy).
 add_library(libs3 STATIC libs3.c)
 
 target_include_directories(libs3 PUBLIC

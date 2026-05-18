@@ -233,16 +233,10 @@ struct S3Backend : IOBackend {
     }
 
     std::vector<std::string> list_chunks(const std::string& prefix) override {
-        // ListObjectsV2 via libs3, which signs the query-string SigV4
-        // request, paginates, and parses the XML internally. This replaces
-        // ~100 lines of hand-rolled percent-encoding + XML scraping + the
-        // brittle start-after pagination workaround that previously
-        // truncated large listings to their first page.
         std::vector<std::string> result;
 
-        // Reconstruct the bucket and root prefix from the resolved
-        // virtual-hosted base URL (https://<bucket>.s3[.region].amazonaws
-        // .com/<root_prefix>) so we can hand libs3 an s3:// URL.
+        // Reconstruct bucket + root prefix from the virtual-hosted base
+        // URL so we can hand libs3 an s3:// URL.
         auto after_scheme = base_url.substr(base_url.find("//") + 2);
         auto dot = after_scheme.find('.');
         auto bucket = after_scheme.substr(0, dot);
@@ -283,8 +277,7 @@ struct S3Backend : IOBackend {
             return true; // keep paginating
         };
 
-        // delimiter = nullptr -> fully recursive listing (matches the old
-        // ListObjectsV2 behaviour with no delimiter).
+        // nullptr delimiter = recursive listing.
         auto rc = client->list_all(s3_prefix_url, nullptr, page_cb, &ctx);
         if (rc != S3_OK) {
             throw std::runtime_error("S3 list failed (" + std::to_string(rc) +
