@@ -233,79 +233,42 @@ struct S3Backend : IOBackend {
     }
 
     std::vector<std::string> list_chunks(const std::string& prefix) override {
-        // S3 ListObjectsV2 via REST API
+        // ListObjectsV2 via libs3, which signs the query-string SigV4
+        // request, paginates, and parses the XML internally. This replaces
+        // ~100 lines of hand-rolled percent-encoding + XML scraping + the
+        // brittle start-after pagination workaround that previously
+        // truncated large listings to their first page.
         std::vector<std::string> result;
-        std::string continuation_token;
 
+        // Reconstruct the bucket and root prefix from the resolved
+        // virtual-hosted base URL (https://<bucket>.s3[.region].amazonaws
+        // .com/<root_prefix>) so we can hand libs3 an s3:// URL.
         auto after_scheme = base_url.substr(base_url.find("//") + 2);
         auto dot = after_scheme.find('.');
         auto bucket = after_scheme.substr(0, dot);
         auto host_end = after_scheme.find('/');
-        auto host = after_scheme.substr(0, host_end);
         std::string root_prefix;
-        if (host_end != std::string::npos) {
+        if (host_end != std::string::npos)
             root_prefix = after_scheme.substr(host_end + 1);
-        }
 
-        // Percent-encode a string for use as an S3 query parameter value.
-        // S3's continuation-token contains raw '+', '/', '=' bytes that
-        // collide with URL syntax; SigV4 canonicalization expects them
-        // percent-encoded so the canonical query string matches the wire form.
-        auto pct_encode = [](const std::string& s) {
-            std::string out;
-            out.reserve(s.size() * 3);
-            for (unsigned char c : s) {
-                bool unreserved = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
-                                  || (c >= '0' && c <= '9') || c == '-' || c == '_'
-                                  || c == '.' || c == '~';
-                if (unreserved) {
-                    out.push_back(static_cast<char>(c));
-                } else {
-                    static const char hex[] = "0123456789ABCDEF";
-                    out.push_back('%');
-                    out.push_back(hex[c >> 4]);
-                    out.push_back(hex[c & 0xF]);
-                }
-            }
-            return out;
-        };
+        std::string full_prefix =
+            root_prefix.empty() ? prefix : root_prefix + "/" + prefix;
+        std::string s3_prefix_url = "s3://" + bucket + "/" + full_prefix;
 
-        std::string full_prefix = root_prefix.empty() ? prefix : root_prefix + "/" + prefix;
-        std::string list_url_base =
-            "https://" + host + "/?list-type=2&prefix=" + pct_encode(full_prefix);
+        struct Ctx {
+            std::vector<std::string>* result;
+            const std::string* root_prefix;
+        } ctx{&result, &root_prefix};
 
-        do {
-            std::string list_url = list_url_base;
-            if (!continuation_token.empty()) {
-                list_url += "&continuation-token=" + pct_encode(continuation_token);
-            }
-            list_url += "&max-keys=10000";
-
-            auto resp = client->get(list_url);
-            if (!resp.ok()) {
-                std::string body{reinterpret_cast<const char*>(resp.body.data()),
-                                 std::min<size_t>(resp.body.size(), 1024)};
-                throw std::runtime_error("S3 list failed: " + std::to_string(resp.status_code)
-                                         + " url=" + list_url + " body=" + body);
-            }
-
-            auto body = std::string(resp.body_string());
-
-            // Simple XML parsing for <Key>...</Key> and <NextContinuationToken>
-            continuation_token.clear();
-            size_t pos = 0;
-            while (true) {
-                auto key_start = body.find("<Key>", pos);
-                if (key_start == std::string::npos) break;
-                key_start += 5;
-                auto key_end = body.find("</Key>", key_start);
-                if (key_end == std::string::npos) break;
-                auto full_key = body.substr(key_start, key_end - key_start);
+        auto page_cb = [](void* ud, const ::s3_list_result* page) -> bool {
+            auto* c = static_cast<Ctx*>(ud);
+            for (size_t i = 0; i < page->object_count; ++i) {
+                std::string full_key = page->objects[i].key ? page->objects[i].key : "";
 
                 // Make relative to our root
-                if (!root_prefix.empty() && full_key.starts_with(root_prefix + "/")) {
-                    full_key = full_key.substr(root_prefix.size() + 1);
-                }
+                if (!c->root_prefix->empty() &&
+                    full_key.starts_with(*c->root_prefix + "/"))
+                    full_key = full_key.substr(c->root_prefix->size() + 1);
 
                 // Skip metadata files
                 auto fname = full_key.substr(full_key.rfind('/') + 1);
@@ -314,20 +277,19 @@ struct S3Backend : IOBackend {
                     fname.find(".zarray") == std::string::npos &&
                     fname.find(".zattrs") == std::string::npos &&
                     fname.find(".zgroup") == std::string::npos) {
-                    result.push_back(full_key);
+                    c->result->push_back(std::move(full_key));
                 }
-                pos = key_end + 6;
             }
+            return true; // keep paginating
+        };
 
-            auto nct_start = body.find("<NextContinuationToken>");
-            if (nct_start != std::string::npos) {
-                nct_start += 23;
-                auto nct_end = body.find("</NextContinuationToken>", nct_start);
-                if (nct_end != std::string::npos) {
-                    continuation_token = body.substr(nct_start, nct_end - nct_start);
-                }
-            }
-        } while (!continuation_token.empty());
+        // delimiter = nullptr -> fully recursive listing (matches the old
+        // ListObjectsV2 behaviour with no delimiter).
+        auto rc = client->list_all(s3_prefix_url, nullptr, page_cb, &ctx);
+        if (rc != S3_OK) {
+            throw std::runtime_error("S3 list failed (" + std::to_string(rc) +
+                                     ") for " + s3_prefix_url);
+        }
 
         return result;
     }

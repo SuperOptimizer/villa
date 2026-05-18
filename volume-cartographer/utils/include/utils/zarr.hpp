@@ -15,6 +15,7 @@
 #include <mutex>
 #include <stdexcept>
 #include <algorithm>
+#include <cmath>
 #include <numeric>
 #include <memory>
 #include <unordered_map>

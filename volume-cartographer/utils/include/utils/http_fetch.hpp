@@ -1,67 +1,44 @@
 #pragma once
 
-// Only compile if curl is available
-#if __has_include(<curl/curl.h>)
-#define UTILS_HAS_CURL 1
+// S3/HTTP client for volume-cartographer.
+//
+// This is a thin C++ RAII shim over the vendored single-file C library
+// `libs3` (libs/libs3). It keeps the exact public API the rest of VC was
+// written against (utils::HttpClient / HttpResponse / AwsAuth /
+// is_s3_url / parse_s3_url / s3_to_https) so call sites are unchanged,
+// but all S3 transport, SigV4 signing, retry/backoff, and AWS
+// credential resolution (env / AWS CLI / EC2 IMDSv2-cached / SSO / INI)
+// now live in libs3 -- volume-cartographer no longer owns that code.
+//
+// libs3's only hard dependency is libcurl; curl does not leak into this
+// header (it is a C API behind libs3.h).
 
-#include <curl/curl.h>
-#include <string>
-#include <string_view>
-#include <vector>
+#include <libs3.h>
+
+#include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
-#include <optional>
-#include <functional>
-#include <utility>
-#include <span>
-#include <chrono>
-#include <stdexcept>
-#include <memory>
-#include <filesystem>
-#include <fstream>
-#include <atomic>
-#include <mutex>
-#include <thread>
-#include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <random>
+#include <filesystem>
+#include <functional>
+#include <memory>
+#include <optional>
+#include <span>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
+
+// libs3 is always available (vendored), so the historical UTILS_HAS_CURL
+// guard is now always true. Kept defined for the (few) translation units
+// and CMake targets that test it.
+#ifndef UTILS_HAS_CURL
+#define UTILS_HAS_CURL 1
+#endif
 
 namespace utils {
-
-// ---------------------------------------------------------------------------
-// RAII curl handle wrapper (detail)
-// ---------------------------------------------------------------------------
-namespace detail {
-
-struct CurlDeleter {
-    void operator()(CURL* c) const noexcept { curl_easy_cleanup(c); }
-};
-using CurlHandle = std::unique_ptr<CURL, CurlDeleter>;
-
-// Global init/cleanup (reference counted)
-struct CurlGlobal {
-    CurlGlobal() {
-        if (ref_count_.fetch_add(1, std::memory_order_relaxed) == 0)
-            curl_global_init(CURL_GLOBAL_DEFAULT);
-    }
-    ~CurlGlobal() {
-        if (ref_count_.fetch_sub(1, std::memory_order_acq_rel) == 1)
-            curl_global_cleanup();
-    }
-    CurlGlobal(const CurlGlobal&) = delete;
-    CurlGlobal& operator=(const CurlGlobal&) = delete;
-
-private:
-    static inline std::atomic<int> ref_count_{0};
-};
-
-inline CurlHandle make_curl() {
-    static CurlGlobal global;
-    return CurlHandle{curl_easy_init()};
-}
-
-} // namespace detail
 
 // ---------------------------------------------------------------------------
 // HttpResponse
@@ -81,7 +58,7 @@ struct HttpResponse {
 };
 
 // ---------------------------------------------------------------------------
-// HttpAuth
+// HttpAuth -- non-S3 bearer/basic auth (kept for API compatibility)
 // ---------------------------------------------------------------------------
 struct HttpAuth {
     std::string bearer_token;
@@ -94,7 +71,7 @@ struct HttpAuth {
 };
 
 // ---------------------------------------------------------------------------
-// S3 URL utilities
+// S3 URL utilities (delegate to libs3)
 // ---------------------------------------------------------------------------
 struct S3Url {
     std::string bucket;
@@ -102,64 +79,44 @@ struct S3Url {
     std::string region; // empty if not specified
 };
 
-/// Recognises "s3://", "S3://", and "s3+REGION://" (e.g. "s3+us-west-2://").
+/// Recognises "s3://", "S3://", and "s3+REGION://".
 [[nodiscard]] inline bool is_s3_url(std::string_view url) noexcept {
-    if (url.starts_with("s3://") || url.starts_with("S3://"))
-        return true;
-    // s3+REGION:// form
-    if ((url.starts_with("s3+") || url.starts_with("S3+")) && url.find("://") != std::string_view::npos)
-        return true;
-    return false;
+    return ::s3_url_is_s3(std::string{url}.c_str());
 }
 
 /// Parse an S3 URL. Supports "s3://bucket/key" and "s3+REGION://bucket/key".
 [[nodiscard]] inline std::optional<S3Url> parse_s3_url(std::string_view url) {
-    if (!is_s3_url(url))
+    ::s3_url parsed{};
+    if (::s3_url_parse(std::string{url}.c_str(), &parsed) != S3_OK)
         return std::nullopt;
-
-    std::string region;
-
-    // Check for s3+REGION:// form
-    auto scheme_end = url.find("://");
-    if (scheme_end == std::string_view::npos)
-        return std::nullopt;
-
-    auto scheme = url.substr(0, scheme_end);
-    auto plus = scheme.find('+');
-    if (plus != std::string_view::npos) {
-        region = std::string{scheme.substr(plus + 1)};
-    }
-
-    auto rest = url.substr(scheme_end + 3); // skip "SCHEME://"
-    auto slash = rest.find('/');
-    if (slash == std::string_view::npos)
-        return S3Url{std::string{rest}, {}, std::move(region)};
-
-    auto bucket = rest.substr(0, slash);
-    auto key = rest.substr(slash + 1);
-    return S3Url{std::string{bucket}, std::string{key}, std::move(region)};
+    S3Url out{
+        parsed.bucket ? parsed.bucket : "",
+        parsed.key ? parsed.key : "",
+        parsed.region ? parsed.region : "",
+    };
+    ::s3_url_free(&parsed);
+    return out;
 }
 
-/// Convert an S3 URL to HTTPS. Uses the region from the URL if present,
-/// otherwise falls back to path-style without a region subdomain.
+/// Convert a parsed S3 URL to its virtual-hosted HTTPS form.
 [[nodiscard]] inline std::string s3_to_https(const S3Url& parsed) {
-    std::string result = "https://";
-    result += parsed.bucket;
-    if (!parsed.region.empty()) {
-        result += ".s3.";
-        result += parsed.region;
-        result += ".amazonaws.com";
-    } else {
-        result += ".s3.amazonaws.com";
+    ::s3_url u{};
+    // s3_url_to_https only reads the fields; libs3 does not take ownership.
+    u.bucket = const_cast<char*>(parsed.bucket.c_str());
+    u.key = parsed.key.empty() ? nullptr : const_cast<char*>(parsed.key.c_str());
+    u.region = parsed.region.empty() ? nullptr : const_cast<char*>(parsed.region.c_str());
+    char buf[2048];
+    if (::s3_url_to_https(&u, buf, sizeof(buf)) != S3_OK) {
+        std::string r = "https://" + parsed.bucket;
+        r += parsed.region.empty() ? ".s3.amazonaws.com"
+                                   : ".s3." + parsed.region + ".amazonaws.com";
+        if (!parsed.key.empty()) r += "/" + parsed.key;
+        return r;
     }
-    if (!parsed.key.empty()) {
-        result += '/';
-        result += parsed.key;
-    }
-    return result;
+    return std::string{buf};
 }
 
-/// Convert an S3 URL string to HTTPS.
+/// Convert an S3 URL string to HTTPS (pass-through if not S3).
 [[nodiscard]] inline std::string s3_to_https(std::string_view s3_url) {
     auto parsed = parse_s3_url(s3_url);
     if (!parsed)
@@ -180,24 +137,41 @@ struct AwsAuth {
         return access_key.empty() && secret_key.empty();
     }
 
-    /// Read credentials from environment variables:
+    /// Read credentials from environment variables only:
     ///   AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY,
     ///   AWS_SESSION_TOKEN, AWS_DEFAULT_REGION
     [[nodiscard]] static AwsAuth from_env() {
-        AwsAuth auth;
-        if (auto* v = std::getenv("AWS_ACCESS_KEY_ID"))      auth.access_key = v;
-        if (auto* v = std::getenv("AWS_SECRET_ACCESS_KEY"))   auth.secret_key = v;
-        if (auto* v = std::getenv("AWS_SESSION_TOKEN"))       auth.session_token = v;
-        if (auto* v = std::getenv("AWS_DEFAULT_REGION"))      auth.region = v;
-        return auth;
+        AwsAuth a;
+        ::s3_credentials c{};
+        ::s3_credentials_from_env(&c); // empty fields if unset; copy regardless
+        if (c.access_key)    a.access_key = c.access_key;
+        if (c.secret_key)    a.secret_key = c.secret_key;
+        if (c.session_token) a.session_token = c.session_token;
+        if (c.region)        a.region = c.region;
+        ::s3_credentials_free(&c);
+        return a;
     }
 
-    /// Full credential resolution. Tries in order:
-    ///   1. `aws configure export-credentials` (resolves SSO, assume-role, etc.)
-    ///   2. ~/.aws/credentials + ~/.aws/config INI files
-    ///   3. Environment variables
-    /// Respects AWS_PROFILE for methods 1 & 2.
-    [[nodiscard]] static AwsAuth load(const std::string& profile = "default");
+    /// Full credential resolution via libs3. Tries, in order: explicit
+    /// profile / $AWS_PROFILE -> EC2 IMDSv2 (queried directly, cached
+    /// in-process, refreshed before STS expiry) -> SSO profiles in
+    /// ~/.aws/config -> default `aws configure export-credentials` ->
+    /// ~/.aws/credentials + config INI -> environment variables.
+    /// Thread-safe and cache-served, so cheap to call per request.
+    [[nodiscard]] static AwsAuth load(const std::string& profile = "default") {
+        AwsAuth a;
+        ::s3_credentials c{};
+        const char* prof = (profile.empty() || profile == "default")
+                               ? nullptr : profile.c_str();
+        if (::s3_credentials_load(prof, &c) == S3_OK) {
+            if (c.access_key)    a.access_key = c.access_key;
+            if (c.secret_key)    a.secret_key = c.secret_key;
+            if (c.session_token) a.session_token = c.session_token;
+            if (c.region)        a.region = c.region;
+        }
+        ::s3_credentials_free(&c);
+        return a;
+    }
 };
 
 // ---------------------------------------------------------------------------
@@ -207,7 +181,11 @@ class HttpClient final {
 public:
     struct Config {
         HttpAuth auth{};
-        AwsAuth aws_auth{};  // AWS SigV4 authentication (takes precedence over auth if non-empty)
+        AwsAuth aws_auth{};  // AWS SigV4 (takes precedence over auth if non-empty)
+        // Optional: resolve AWS creds per-request instead of using the
+        // static aws_auth above. Required for long-lived clients on EC2
+        // instance-role (STS) credentials, which rotate every ~1-6h.
+        std::function<AwsAuth()> aws_auth_provider{};
         std::chrono::seconds connect_timeout{10};
         std::chrono::seconds transfer_timeout{30};
         bool follow_redirects{true};
@@ -215,449 +193,174 @@ public:
         std::string user_agent{"utils-http/1.0"};
     };
 
-    HttpClient() = default;
+    HttpClient() : HttpClient(Config{}) {}
 
     explicit HttpClient(Config config)
-        : config_(std::move(config))
     {
+        state_ = std::make_shared<State>();
+        state_->cfg = std::make_shared<Config>(std::move(config));
+        const Config& c = *state_->cfg;
+
+        ::s3_config scfg{};
+        if (c.aws_auth_provider) {
+            scfg.cred_provider = &State::cred_provider_thunk;
+            scfg.cred_userdata = state_.get();
+        } else if (!c.aws_auth.empty()) {
+            state_->static_creds = c.aws_auth;
+            fill_s3_creds(scfg.creds, state_->static_creds);
+        } else if (!c.auth.bearer_token.empty()) {
+            state_->bearer = c.auth.bearer_token;
+            scfg.bearer_token = state_->bearer.c_str();
+        } else if (!c.auth.username.empty()) {
+            state_->basic_user = c.auth.username;
+            state_->basic_pass = c.auth.password;
+            scfg.basic_user = state_->basic_user.c_str();
+            scfg.basic_pass = state_->basic_pass.c_str();
+        }
+        if (!c.aws_auth.region.empty()) {
+            state_->region = c.aws_auth.region;
+            scfg.region = state_->region.c_str();
+        }
+        scfg.connect_timeout_s = static_cast<long>(c.connect_timeout.count());
+        scfg.transfer_timeout_s = static_cast<long>(c.transfer_timeout.count());
+        scfg.max_retries = static_cast<int>(c.max_retries);
+        scfg.follow_redirects = c.follow_redirects;
+        state_->ua = c.user_agent;
+        scfg.user_agent = state_->ua.c_str();
+
+        state_->client.reset(::s3_client_new(&scfg));
     }
 
-    // Flip the process-global abort flag. Any in-flight curl_easy_perform
-    // returns CURLE_ABORTED_BY_CALLBACK on the next progress tick (sub-
-    // millisecond on an active socket) and pending retries bail. Use to
-    // make app shutdown effectively instantaneous regardless of S3 timeout.
-    static void abortAll() noexcept
-    {
-        abort_flag().store(true, std::memory_order_release);
-    }
+    // Flip the process-global abort flag: every in-flight libs3 transfer
+    // returns promptly and pending retries bail. Use for fast shutdown so
+    // a worker pool isn't stuck inside an S3 timeout.
+    static void abortAll() noexcept { ::s3_global_abort(); }
+    static void resetAbort() noexcept { ::s3_global_reset_abort(); }
+    [[nodiscard]] static bool isAborted() noexcept { return ::s3_global_is_aborted(); }
 
-    // Reset the abort flag (e.g. for tests that re-use the process).
-    static void resetAbort() noexcept
-    {
-        abort_flag().store(false, std::memory_order_release);
-    }
-
-    [[nodiscard]] static bool isAborted() noexcept
-    {
-        return abort_flag().load(std::memory_order_acquire);
-    }
-
-private:
-    static std::atomic<bool>& abort_flag() noexcept
-    {
-        static std::atomic<bool> flag{false};
-        return flag;
-    }
-
-    static int xferinfo_callback(void* /*clientp*/,
-                                 curl_off_t, curl_off_t,
-                                 curl_off_t, curl_off_t) noexcept
-    {
-        // Acquire ordering pairs with the release store in abortAll() so
-        // termination is guaranteed to be observed promptly. On x86 this
-        // is free (plain load); relaxed would have worked there but is
-        // not formally guaranteed to see the abort bit in bounded time
-        // on weakly-ordered archs.
-        return abort_flag().load(std::memory_order_acquire) ? 1 : 0;
-    }
-
-public:
-
-    // GET request
     [[nodiscard]] HttpResponse get(std::string_view url) const {
-        return perform(url, Method::GET, {}, {});
+        ::s3_response r{};
+        ::s3_get(client(), c_str(url), &r);
+        return convert(r);
     }
 
-    // GET with byte range
     [[nodiscard]] HttpResponse get_range(std::string_view url,
                                           std::size_t offset, std::size_t length) const {
-        if (length == 0) {
+        if (length == 0)
             return HttpResponse{};
-        }
-        auto range = std::to_string(offset) + "-" + std::to_string(offset + length - 1);
-        return perform(url, Method::GET_RANGE, {}, {}, range);
+        ::s3_response r{};
+        ::s3_get_range(client(), c_str(url), offset, length, &r);
+        return convert(r);
     }
 
-    // HEAD request (metadata only)
     [[nodiscard]] HttpResponse head(std::string_view url) const {
-        return perform(url, Method::HEAD, {}, {});
+        ::s3_response r{};
+        ::s3_head(client(), c_str(url), &r);
+        return convert(r);
     }
 
-    // PUT request
     [[nodiscard]] HttpResponse put(std::string_view url,
                                     std::span<const std::byte> data,
                                     std::string_view content_type = "application/octet-stream") const {
-        return perform(url, Method::PUT, data, content_type);
+        ::s3_response r{};
+        std::string ct{content_type};
+        ::s3_put(client(), c_str(url), data.data(), data.size(),
+                 ct.empty() ? nullptr : ct.c_str(), &r);
+        return convert(r);
     }
 
-    // PUT from file (streams from disk, constant memory)
     [[nodiscard]] HttpResponse put_file(std::string_view url,
                                          const std::filesystem::path& file_path,
                                          std::string_view content_type = "application/octet-stream") const {
-        auto resolved = resolve_url(url);
+        ::s3_response r{};
+        std::string ct{content_type};
+        ::s3_put_file(client(), c_str(url), file_path.c_str(),
+                      ct.empty() ? nullptr : ct.c_str(), &r);
+        return convert(r);
+    }
 
-        FILE* f = std::fopen(file_path.c_str(), "rb");
-        if (!f) throw std::runtime_error("put_file: cannot open " + file_path.string());
-        std::fseek(f, 0, SEEK_END);
-        auto file_size = std::ftell(f);
-        std::fseek(f, 0, SEEK_SET);
+    [[nodiscard]] HttpResponse del(std::string_view url) const {
+        ::s3_response r{};
+        ::s3_delete(client(), c_str(url), &r);
+        return convert(r);
+    }
 
-        HttpResponse resp;
-        for (std::size_t attempt = 0; attempt <= config_.max_retries; ++attempt) {
-            if (isAborted()) { std::fclose(f); return resp; }
-            resp = HttpResponse{};
-            std::fseek(f, 0, SEEK_SET);
-            auto* curl = thread_handle();
-            curl_easy_reset(curl);
-
-            curl_easy_setopt(curl, CURLOPT_URL, resolved.c_str());
-            curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT,
-                             static_cast<long>(config_.connect_timeout.count()));
-            curl_easy_setopt(curl, CURLOPT_TIMEOUT,
-                             static_cast<long>(config_.transfer_timeout.count()));
-            curl_easy_setopt(curl, CURLOPT_USERAGENT, config_.user_agent.c_str());
-            // Keep TCP connections alive so back-to-back fetches against
-            // S3 don't pay the TLS handshake cost each time. curl_easy_reset
-            // preserves the connection cache and SSL session IDs, so we just
-            // need to ensure keepalive is on. Ping every 30s after 30s idle.
-            curl_easy_setopt(curl, CURLOPT_TCP_KEEPALIVE, 1L);
-            curl_easy_setopt(curl, CURLOPT_TCP_KEEPIDLE, 30L);
-            curl_easy_setopt(curl, CURLOPT_TCP_KEEPINTVL, 30L);
-            if (config_.follow_redirects) {
-                curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-                curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 10L);
-            }
-            curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
-            curl_easy_setopt(curl, CURLOPT_WRITEDATA, &resp.body);
-            curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, header_callback);
-            curl_easy_setopt(curl, CURLOPT_HEADERDATA, &resp);
-            curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
-            curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, xferinfo_callback);
-
-            auto auth_state = apply_auth(curl);
-
-            curl_easy_setopt(curl, CURLOPT_UPLOAD, 1L);
-            curl_easy_setopt(curl, CURLOPT_INFILESIZE_LARGE, static_cast<curl_off_t>(file_size));
-            curl_easy_setopt(curl, CURLOPT_READDATA, f);
-            // Default read function is fread — no CURLOPT_READFUNCTION needed
-
-            struct curl_slist* extra_headers = nullptr;
-            std::string ct_header;
-            if (!content_type.empty()) {
-                ct_header = "Content-Type: " + std::string{content_type};
-                extra_headers = curl_slist_append(extra_headers, ct_header.c_str());
-                if (auth_state.headers) {
-                    for (auto* node = auth_state.headers; node; node = node->next)
-                        extra_headers = curl_slist_append(extra_headers, node->data);
-                    curl_slist_free_all(auth_state.headers);
-                    auth_state.headers = nullptr;
-                }
-                curl_easy_setopt(curl, CURLOPT_HTTPHEADER, extra_headers);
-            }
-
-            auto code = curl_easy_perform(curl);
-            if (extra_headers) curl_slist_free_all(extra_headers);
-
-            if (code == CURLE_OK) {
-                curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &resp.status_code);
-                if (resp.status_code >= 500 && attempt < config_.max_retries) {
-                    thread_local std::mt19937 rng{std::random_device{}()};
-                    std::uniform_int_distribution<unsigned> jitter(0, 100);
-                    std::this_thread::sleep_for(
-                        std::chrono::milliseconds(200 * (1u << attempt) + jitter(rng)));
-                    continue;
-                }
-                std::fclose(f);
-                return resp;
-            }
-            if (attempt < config_.max_retries) {
-                thread_local std::mt19937 rng{std::random_device{}()};
-                std::uniform_int_distribution<unsigned> jitter(0, 100);
-                std::this_thread::sleep_for(
-                    std::chrono::milliseconds(200 * (1u << attempt) + jitter(rng)));
-                continue;
-            }
-        }
-        std::fclose(f);
-        return resp;
+    // ListObjectsV2 with auto-pagination. `s3_url_prefix` is an s3:// URL
+    // whose key part is the listing prefix; `delimiter` is "/" for one
+    // level or nullptr for a fully recursive listing. `cb` is invoked once
+    // per page (return true to continue paginating). Returns S3_OK on
+    // success. libs3 owns SigV4 query signing, pagination, and XML parsing.
+    [[nodiscard]] ::s3_status list_all(std::string_view s3_url_prefix,
+                                       const char* delimiter,
+                                       ::s3_list_page_fn cb,
+                                       void* userdata) const {
+        return ::s3_list_all(client(), c_str(s3_url_prefix), delimiter, cb, userdata);
     }
 
 private:
-    enum class Method { GET, GET_RANGE, HEAD, PUT };
+    struct ClientDeleter {
+        void operator()(::s3_client* c) const noexcept { ::s3_client_free(c); }
+    };
 
-    // Write callback: append to std::vector<std::byte>
-    static std::size_t write_callback(char* ptr, std::size_t size,
-                                       std::size_t nmemb, void* userdata) noexcept {
-        auto& buf = *static_cast<std::vector<std::byte>*>(userdata);
-        auto total = size * nmemb;
-        auto* src = reinterpret_cast<const std::byte*>(ptr);
-        buf.insert(buf.end(), src, src + total);
-        return total;
-    }
+    // Owned backing storage for everything s3_config / cred_provider points
+    // at; shared so HttpClient stays copyable like the old value type was.
+    struct State {
+        std::shared_ptr<Config> cfg;
+        std::unique_ptr<::s3_client, ClientDeleter> client;
+        AwsAuth static_creds;
+        std::string region, bearer, basic_user, basic_pass, ua;
 
-    // Header callback: capture content-type and content-length
-    static std::size_t header_callback(char* ptr, std::size_t size,
-                                        std::size_t nmemb, void* userdata) noexcept {
-        auto& resp = *static_cast<HttpResponse*>(userdata);
-        auto total = size * nmemb;
-        std::string_view line(ptr, total);
-
-        // Strip trailing \r\n
-        while (!line.empty() && (line.back() == '\r' || line.back() == '\n'))
-            line.remove_suffix(1);
-
-        constexpr std::string_view ct_prefix = "content-type:";
-        constexpr std::string_view cl_prefix = "content-length:";
-
-        auto lower_match = [&](std::string_view prefix) -> bool {
-            if (line.size() < prefix.size()) return false;
-            for (std::size_t i = 0; i < prefix.size(); ++i) {
-                char c = line[i];
-                if (c >= 'A' && c <= 'Z') c += 32;
-                if (c != prefix[i]) return false;
-            }
-            return true;
-        };
-
-        if (lower_match(ct_prefix)) {
-            auto val = line.substr(ct_prefix.size());
-            while (!val.empty() && val.front() == ' ') val.remove_prefix(1);
-            resp.content_type = std::string{val};
-        } else if (lower_match(cl_prefix)) {
-            auto val = line.substr(cl_prefix.size());
-            while (!val.empty() && val.front() == ' ') val.remove_prefix(1);
-            std::size_t len = 0;
-            for (char c : val) {
-                if (c < '0' || c > '9') break;
-                len = len * 10 + static_cast<std::size_t>(c - '0');
-            }
-            resp.content_length = len;
+        static ::s3_status cred_provider_thunk(void* ud, ::s3_credentials* out) {
+            auto* self = static_cast<State*>(ud);
+            AwsAuth a = self->cfg->aws_auth_provider
+                            ? self->cfg->aws_auth_provider()
+                            : self->cfg->aws_auth;
+            if (a.region.empty()) a.region = self->cfg->aws_auth.region;
+            if (a.empty()) return S3_ERR_NO_CREDS;
+            out->access_key    = dup(a.access_key);
+            out->secret_key    = dup(a.secret_key);
+            out->session_token = a.session_token.empty() ? nullptr : dup(a.session_token);
+            out->region        = a.region.empty() ? nullptr : dup(a.region);
+            return S3_OK;
         }
 
-        return total;
-    }
-
-    [[nodiscard]] std::string resolve_url(std::string_view url) const {
-        if (is_s3_url(url))
-            return s3_to_https(url);
-        return std::string{url};
-    }
-
-    // Per-request auth state returned by apply_auth.
-    // Must outlive the curl_easy_perform() call.
-    struct AuthState {
-        struct curl_slist* headers = nullptr;
-        std::string sigv4_str;
-        std::string userpwd;
-
-        ~AuthState() {
-            if (headers)
-                curl_slist_free_all(headers);
-        }
-        AuthState() = default;
-        AuthState(const AuthState&) = delete;
-        AuthState& operator=(const AuthState&) = delete;
-        AuthState(AuthState&& o) noexcept
-            : headers(o.headers), sigv4_str(std::move(o.sigv4_str)), userpwd(std::move(o.userpwd))
-        { o.headers = nullptr; }
-        AuthState& operator=(AuthState&& o) noexcept {
-            if (this != &o) {
-                if (headers) curl_slist_free_all(headers);
-                headers = o.headers; o.headers = nullptr;
-                sigv4_str = std::move(o.sigv4_str);
-                userpwd = std::move(o.userpwd);
-            }
-            return *this;
+        static char* dup(const std::string& s) {
+            char* p = static_cast<char*>(std::malloc(s.size() + 1));
+            if (p) std::memcpy(p, s.c_str(), s.size() + 1);
+            return p;
         }
     };
 
-    [[nodiscard]] AuthState apply_auth(CURL* curl) const {
-        AuthState state;
-        if (!config_.aws_auth.empty()) {
-            // AWS SigV4 takes precedence
-            state.sigv4_str = "aws:amz:" + config_.aws_auth.region + ":s3";
-            curl_easy_setopt(curl, CURLOPT_AWS_SIGV4, state.sigv4_str.c_str());
-            state.userpwd = config_.aws_auth.access_key + ":" + config_.aws_auth.secret_key;
-            curl_easy_setopt(curl, CURLOPT_USERPWD, state.userpwd.c_str());
-            if (!config_.aws_auth.session_token.empty()) {
-                auto hdr = "x-amz-security-token: " + config_.aws_auth.session_token;
-                state.headers = curl_slist_append(state.headers, hdr.c_str());
-                curl_easy_setopt(curl, CURLOPT_HTTPHEADER, state.headers);
-            }
-        } else if (!config_.auth.bearer_token.empty()) {
-            auto header = "Authorization: Bearer " + config_.auth.bearer_token;
-            state.headers = curl_slist_append(state.headers, header.c_str());
-            curl_easy_setopt(curl, CURLOPT_HTTPHEADER, state.headers);
-        } else if (!config_.auth.username.empty()) {
-            state.userpwd = config_.auth.username + ":" + config_.auth.password;
-            curl_easy_setopt(curl, CURLOPT_HTTPAUTH, CURLAUTH_BASIC);
-            curl_easy_setopt(curl, CURLOPT_USERPWD, state.userpwd.c_str());
+    static void fill_s3_creds(::s3_credentials& c, AwsAuth& a) {
+        c.access_key    = a.access_key.empty() ? nullptr : a.access_key.data();
+        c.secret_key    = a.secret_key.empty() ? nullptr : a.secret_key.data();
+        c.session_token = a.session_token.empty() ? nullptr : a.session_token.data();
+        c.region        = a.region.empty() ? nullptr : a.region.data();
+    }
+
+    [[nodiscard]] ::s3_client* client() const { return state_->client.get(); }
+
+    // libs3 wants NUL-terminated; cache the conversion per thread.
+    static const char* c_str(std::string_view sv) {
+        thread_local std::string buf;
+        buf.assign(sv);
+        return buf.c_str();
+    }
+
+    static HttpResponse convert(::s3_response& r) {
+        HttpResponse out;
+        out.status_code = r.status;
+        if (r.body && r.body_len) {
+            const auto* p = reinterpret_cast<const std::byte*>(r.body);
+            out.body.assign(p, p + r.body_len);
         }
-        return state;
+        if (r.content_type) out.content_type = r.content_type;
+        out.content_length = static_cast<std::size_t>(r.content_length);
+        ::s3_response_free(&r);
+        return out;
     }
 
-    // Read callback for PUT uploads
-    struct PutState {
-        std::span<const std::byte> data;
-        std::size_t offset = 0;
-    };
-
-    static std::size_t read_callback(char* buffer, std::size_t size,
-                                      std::size_t nmemb, void* userdata) noexcept {
-        auto& state = *static_cast<PutState*>(userdata);
-        auto remaining = state.data.size() - state.offset;
-        auto to_copy = std::min(size * nmemb, remaining);
-        std::memcpy(buffer, state.data.data() + state.offset, to_copy);
-        state.offset += to_copy;
-        return to_copy;
-    }
-
-    [[nodiscard]] CURL* thread_handle() const {
-        thread_local detail::CurlHandle tl_handle{nullptr};
-        if (!tl_handle) {
-            tl_handle = detail::make_curl();
-        }
-        return tl_handle.get();
-    }
-
-    [[nodiscard]] HttpResponse perform(std::string_view url,
-                                        Method method,
-                                        std::span<const std::byte> put_data,
-                                        std::string_view content_type,
-                                        std::string range = {}) const {
-        auto resolved = resolve_url(url);
-        HttpResponse resp;
-
-        for (std::size_t attempt = 0; attempt <= config_.max_retries; ++attempt) {
-            if (isAborted()) return resp;
-            resp = HttpResponse{};
-            auto* curl = thread_handle();
-            curl_easy_reset(curl);
-
-            // URL
-            curl_easy_setopt(curl, CURLOPT_URL, resolved.c_str());
-
-            // Timeouts
-            curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT,
-                             static_cast<long>(config_.connect_timeout.count()));
-            curl_easy_setopt(curl, CURLOPT_TIMEOUT,
-                             static_cast<long>(config_.transfer_timeout.count()));
-
-            // TCP keepalive: keeps idle-pooled connections from being torn
-            // down between bursts of S3 fetches so we reuse the TLS session.
-            curl_easy_setopt(curl, CURLOPT_TCP_KEEPALIVE, 1L);
-            curl_easy_setopt(curl, CURLOPT_TCP_KEEPIDLE, 30L);
-            curl_easy_setopt(curl, CURLOPT_TCP_KEEPINTVL, 30L);
-
-            // Redirects
-            if (config_.follow_redirects) {
-                curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-                curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 10L);
-            }
-
-            // User agent
-            curl_easy_setopt(curl, CURLOPT_USERAGENT, config_.user_agent.c_str());
-
-            // Process-wide abort hook — returning non-zero from the xfer
-            // callback aborts the transfer immediately. Used for fast
-            // shutdown so the worker pool isn't stuck inside curl.
-            curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
-            curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, xferinfo_callback);
-
-            // Write callback (body)
-            curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
-            curl_easy_setopt(curl, CURLOPT_WRITEDATA, &resp.body);
-
-            // Header callback
-            curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, header_callback);
-            curl_easy_setopt(curl, CURLOPT_HEADERDATA, &resp);
-
-            // Auth (local per-request state)
-            auto auth_state = apply_auth(curl);
-
-            // Method-specific setup
-            struct curl_slist* extra_headers = nullptr;
-            PutState put_state;
-            std::string ct_header;  // Must outlive curl_easy_perform
-
-            switch (method) {
-                case Method::GET:
-                    curl_easy_setopt(curl, CURLOPT_HTTPGET, 1L);
-                    break;
-                case Method::GET_RANGE:
-                    curl_easy_setopt(curl, CURLOPT_HTTPGET, 1L);
-                    curl_easy_setopt(curl, CURLOPT_RANGE, range.c_str());
-                    break;
-                case Method::HEAD:
-                    curl_easy_setopt(curl, CURLOPT_NOBODY, 1L);
-                    break;
-                case Method::PUT: {
-                    curl_easy_setopt(curl, CURLOPT_UPLOAD, 1L);
-                    curl_easy_setopt(curl, CURLOPT_INFILESIZE_LARGE,
-                                     static_cast<curl_off_t>(put_data.size()));
-
-                    // Set up read data for PUT
-                    put_state = PutState{put_data, 0};
-                    curl_easy_setopt(curl, CURLOPT_READFUNCTION, read_callback);
-                    curl_easy_setopt(curl, CURLOPT_READDATA, &put_state);
-
-                    if (!content_type.empty()) {
-                        ct_header = "Content-Type: " + std::string{content_type};
-                        extra_headers = curl_slist_append(extra_headers, ct_header.c_str());
-                        // Merge with auth headers if present
-                        if (auth_state.headers) {
-                            for (auto* node = auth_state.headers; node; node = node->next)
-                                extra_headers = curl_slist_append(extra_headers, node->data);
-                            curl_easy_setopt(curl, CURLOPT_HTTPHEADER, extra_headers);
-                            // Auth headers are copied into extra_headers; free originals
-                            curl_slist_free_all(auth_state.headers);
-                            auth_state.headers = nullptr;
-                        } else {
-                            curl_easy_setopt(curl, CURLOPT_HTTPHEADER, extra_headers);
-                        }
-                    }
-                    break;
-                }
-            }
-
-            auto code = curl_easy_perform(curl);
-
-            // Clean up request-scoped slist
-            if (extra_headers)
-                curl_slist_free_all(extra_headers);
-            // auth_state cleans up its own headers in destructor
-
-            if (code == CURLE_OK) {
-                curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &resp.status_code);
-
-                // Retry on 5xx server errors
-                if (resp.status_code >= 500 && attempt < config_.max_retries) {
-                    thread_local std::mt19937 rng{std::random_device{}()};
-                    std::uniform_int_distribution<unsigned> jitter(0, 100);
-                    std::this_thread::sleep_for(
-                        std::chrono::milliseconds(200 * (1u << attempt) + jitter(rng)));
-                    continue;
-                }
-                return resp;
-            }
-
-            // Retry on network / transient curl errors
-            if (attempt < config_.max_retries && !isAborted()) {
-                thread_local std::mt19937 rng{std::random_device{}()};
-                std::uniform_int_distribution<unsigned> jitter(0, 100);
-                std::this_thread::sleep_for(
-                    std::chrono::milliseconds(200 * (1u << attempt) + jitter(rng)));
-                continue;
-            }
-            break;
-        }
-
-        return resp; // return last response even on failure
-    }
-
-    Config config_;
+    std::shared_ptr<State> state_;
 };
 
 } // namespace utils
-
-#endif // __has_include(<curl/curl.h>)

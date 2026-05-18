@@ -363,6 +363,7 @@ include_directories(core/include)
 
 add_subdirectory(libs/OpenABF)
 add_subdirectory(libs/c3d)
+add_subdirectory(libs/libs3)
 if(VC_BUILD_FLATBOI)
     add_subdirectory(libs/flatboi)
 endif()
