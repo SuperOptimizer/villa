@@ -202,20 +202,54 @@ struct S3Backend : IOBackend {
     }
 
     std::vector<std::byte> read(const std::string& key) override {
-        auto resp = client->get(url(key));
-        if (!resp.ok()) {
-            throw std::runtime_error("S3 GET failed (" + std::to_string(resp.status_code) +
-                                     "): " + url(key));
+        // Retry on HTTP error AND on a truncated body (curl can return OK
+        // with a short body if the connection drops mid-transfer). A silent
+        // short read would decode as a corrupt/holed chunk, so verify the
+        // received size matches the advertised Content-Length.
+        std::string last;
+        for (int attempt = 0; attempt < 4; ++attempt) {
+            auto resp = client->get(url(key));
+            if (!resp.ok()) {
+                last = "HTTP " + std::to_string(resp.status_code);
+            } else if (resp.content_length != 0 &&
+                       resp.body.size() != resp.content_length) {
+                last = "truncated body (" + std::to_string(resp.body.size())
+                       + " of " + std::to_string(resp.content_length) + ")";
+            } else {
+                return std::move(resp.body);
+            }
+            std::this_thread::sleep_for(
+                std::chrono::milliseconds(250 * (1 << attempt)));
         }
-        return std::move(resp.body);
+        throw std::runtime_error("S3 GET failed (" + last + "): " + url(key));
     }
 
     void write(const std::string& key, const std::vector<std::byte>& data) override {
-        auto resp = client->put(url(key), std::span<const std::byte>(data));
-        if (!resp.ok()) {
-            throw std::runtime_error("S3 PUT failed (" + std::to_string(resp.status_code) +
-                                     "): " + url(key));
+        // PUT with retry, then verify the stored object's size matches what
+        // we sent (S3 PUT is atomic — no partial objects — so a HEAD size
+        // match is strong evidence the upload landed intact; a network
+        // corruption or silently-failed PUT is caught and retried rather
+        // than leaving a bad shard that decodes wrong downstream).
+        std::string last;
+        for (int attempt = 0; attempt < 4; ++attempt) {
+            auto resp = client->put(url(key), std::span<const std::byte>(data));
+            if (!resp.ok()) {
+                last = "PUT HTTP " + std::to_string(resp.status_code);
+            } else {
+                auto h = client->head(url(key));
+                if (h.ok() && (h.content_length == 0 ||
+                               h.content_length == data.size())) {
+                    return;  // stored, size verified
+                }
+                last = h.ok()
+                    ? ("size mismatch (stored " + std::to_string(h.content_length)
+                       + " vs " + std::to_string(data.size()) + ")")
+                    : ("post-PUT HEAD HTTP " + std::to_string(h.status_code));
+            }
+            std::this_thread::sleep_for(
+                std::chrono::milliseconds(300 * (1 << attempt)));
         }
+        throw std::runtime_error("S3 PUT failed (" + last + "): " + url(key));
     }
 
     void write_string(const std::string& key, const std::string& data) override {
@@ -240,14 +274,25 @@ struct S3Backend : IOBackend {
     }
 
     bool exists(const std::string& key) override {
-        auto resp = client->head(url(key));
-        return resp.ok();
+        // Distinguish "definitely absent" (404) from "transiently unknown"
+        // (403/5xx/timeout). Returning false on a transient error would make
+        // resume logic mis-decide (re-do work, or worse skip as done). Retry
+        // unknowns; if still unknown, throw so the caller fails loudly
+        // instead of silently acting on a wrong answer.
+        for (int attempt = 0; attempt < 4; ++attempt) {
+            auto resp = client->head(url(key));
+            if (resp.ok()) return true;
+            if (resp.status_code == 404) return false;
+            std::this_thread::sleep_for(
+                std::chrono::milliseconds(250 * (1 << attempt)));
+        }
+        throw std::runtime_error("S3 HEAD indeterminate (non-404 error) for "
+                                 + url(key));
     }
 
     std::vector<std::string> list_chunks(const std::string& prefix) override {
         // S3 ListObjectsV2 via REST API
         std::vector<std::string> result;
-        std::string continuation_token;
 
         auto after_scheme = base_url.substr(base_url.find("//") + 2);
         auto dot = after_scheme.find('.');
@@ -286,26 +331,42 @@ struct S3Backend : IOBackend {
         std::string list_url_base =
             "https://" + host + "/?list-type=2&prefix=" + pct_encode(full_prefix);
 
-        do {
-            std::string list_url = list_url_base;
-            if (!continuation_token.empty()) {
-                list_url += "&continuation-token=" + pct_encode(continuation_token);
-            }
-            list_url += "&max-keys=10000";
+        // Paginate with `start-after=<last key>` rather than
+        // `continuation-token`. The continuation token is an opaque,
+        // server-chosen blob containing '+', '/', '=' bytes; appending it to
+        // the URL produces a query string that curl's CURLOPT_AWS_SIGV4
+        // canonicalizes differently from our hand percent-encoding, so every
+        // page-2+ request failed with SignatureDoesNotMatch (403). This
+        // silently truncated every multi-page listing to its first page —
+        // the root cause of large volumes being recorded as ~empty. A plain
+        // object key path percent-encodes deterministically and matches
+        // curl's SigV4 canonicalization, so start-after paginates reliably.
+        std::string start_after;   // raw last full key seen (S3-absolute)
+        bool truncated = true;
+        int dbg_page = 0;
+        while (truncated) {
+            std::string list_url = list_url_base + "&max-keys=1000";
+            if (!start_after.empty())
+                list_url += "&start-after=" + pct_encode(start_after);
 
             auto resp = client->get(list_url);
+            ++dbg_page;
             if (!resp.ok()) {
                 std::string body{reinterpret_cast<const char*>(resp.body.data()),
-                                 std::min<size_t>(resp.body.size(), 1024)};
+                                 std::min<size_t>(resp.body.size(), 512)};
+                if (std::getenv("VC_LIST_DEBUG"))
+                    fprintf(stderr, "[listdbg] FAIL prefix=%s page=%d status=%ld "
+                            "body=%s\n", full_prefix.c_str(), dbg_page,
+                            resp.status_code, body.c_str());
                 throw std::runtime_error("S3 list failed: " + std::to_string(resp.status_code)
                                          + " url=" + list_url + " body=" + body);
             }
 
             auto body = std::string(resp.body_string());
 
-            // Simple XML parsing for <Key>...</Key> and <NextContinuationToken>
-            continuation_token.clear();
+            std::string last_full_key;   // raw, for next start-after
             size_t pos = 0;
+            size_t page_keys = 0;
             while (true) {
                 auto key_start = body.find("<Key>", pos);
                 if (key_start == std::string::npos) break;
@@ -313,6 +374,8 @@ struct S3Backend : IOBackend {
                 auto key_end = body.find("</Key>", key_start);
                 if (key_end == std::string::npos) break;
                 auto full_key = body.substr(key_start, key_end - key_start);
+                last_full_key = full_key;          // S3-absolute, ordered
+                ++page_keys;
 
                 // Make relative to our root
                 if (!root_prefix.empty() && full_key.starts_with(root_prefix + "/")) {
@@ -331,15 +394,22 @@ struct S3Backend : IOBackend {
                 pos = key_end + 6;
             }
 
-            auto nct_start = body.find("<NextContinuationToken>");
-            if (nct_start != std::string::npos) {
-                nct_start += 23;
-                auto nct_end = body.find("</NextContinuationToken>", nct_start);
-                if (nct_end != std::string::npos) {
-                    continuation_token = body.substr(nct_start, nct_end - nct_start);
+            // Loop control: S3 sets <IsTruncated>true</IsTruncated> when more
+            // keys remain. Advance the cursor to the last key on this page.
+            truncated = body.find("<IsTruncated>true</IsTruncated>")
+                        != std::string::npos;
+            if (std::getenv("VC_LIST_DEBUG"))
+                fprintf(stderr, "[listdbg] prefix=%s page=%d page_keys=%zu "
+                        "total=%zu trunc=%d\n", full_prefix.c_str(), dbg_page,
+                        page_keys, result.size(), (int)truncated);
+            if (truncated) {
+                if (last_full_key.empty() || last_full_key == start_after) {
+                    // No progress (shouldn't happen) — stop to avoid a loop.
+                    break;
                 }
+                start_after = last_full_key;
             }
-        } while (!continuation_token.empty());
+        }
 
         return result;
     }
@@ -540,18 +610,44 @@ static std::vector<bool> build_occupancy_from_listing(
     // → ~7 pages).  With `parallelism` workers in flight we hide RTT.
     std::atomic<size_t> next_cz{0};
     std::atomic<size_t> parsed{0};
+    std::atomic<bool> hard_fail{false};
+    std::string fail_msg;
     std::mutex mask_mtx;
 
     auto worker = [&]() {
         for (;;) {
+            if (hard_fail.load()) return;
             size_t cz = next_cz.fetch_add(1);
             if (cz >= nz) break;
             std::string prefix = std::to_string(level) + "/" + std::to_string(cz) + "/";
             std::vector<std::string> keys;
-            try {
-                keys = io.list_chunks(prefix);
-            } catch (...) {
-                continue;
+            // Retry transient list failures. NEVER silently skip a cz plane:
+            // a dropped plane = silent partial export (the run-1 failure
+            // mode). After retries are exhausted, abort the whole occupancy
+            // build so the volume fails loudly and gets retried/logged.
+            bool got = false;
+            std::string last_err;
+            for (int attempt = 0; attempt < 5 && !hard_fail.load(); ++attempt) {
+                try {
+                    keys = io.list_chunks(prefix);
+                    got = true;
+                    break;
+                } catch (const std::exception& e) {
+                    last_err = e.what();
+                    std::this_thread::sleep_for(
+                        std::chrono::milliseconds(300 * (1 << attempt)));
+                } catch (...) {
+                    last_err = "unknown exception";
+                    std::this_thread::sleep_for(
+                        std::chrono::milliseconds(300 * (1 << attempt)));
+                }
+            }
+            if (!got) {
+                std::lock_guard lk(mask_mtx);
+                if (!hard_fail.exchange(true))
+                    fail_msg = "occupancy LIST permanently failed for prefix '"
+                               + prefix + "': " + last_err;
+                return;
             }
             std::vector<std::pair<size_t,size_t>> local;  // (cy, cx)
             local.reserve(keys.size());
@@ -580,6 +676,9 @@ static std::vector<bool> build_occupancy_from_listing(
     workers.reserve(parallelism);
     for (int i = 0; i < parallelism; ++i) workers.emplace_back(worker);
     for (auto& t : workers) t.join();
+
+    if (hard_fail.load())
+        throw std::runtime_error(fail_msg);
 
     auto dt = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
     size_t p = parsed.load();
@@ -871,6 +970,13 @@ int recompress_one(const RecompressOpts& o) {
     // does NOT write the completion marker — so a holed volume is never
     // recorded as done and skipped forever.
     int total_errs = 0;
+    // Whole-volume accumulators for the post-run sanity gate. The run-1
+    // pagination bug silently produced near-empty outputs that still
+    // reported success; an absurd overall compression ratio (almost
+    // everything skipped as "air") is the fingerprint. We refuse to report
+    // success on that so it can never again pass as "done".
+    uint64_t vol_raw = 0, vol_comp = 0;
+    size_t vol_levels_done = 0;
 
     for (size_t li = 0; li < levels.size(); li++) {
         int l = levels[li];
@@ -1703,6 +1809,9 @@ int recompress_one(const RecompressOpts& o) {
         double mb_s = tc > 0 ? (double)tc / (1024 * 1024) / elapsed : 0;
 
         total_errs += errs.load();
+        vol_raw += tr;
+        vol_comp += tc;
+        ++vol_levels_done;
         printf("  Processed: %d shards, %d chunks (zero: %d, skipped: %d, errors: %d)\n",
                processed_shards.load(), processed_chunks.load(),
                zero_chunks.load(), skipped_chunks.load(), errs.load());
@@ -1763,6 +1872,32 @@ int recompress_one(const RecompressOpts& o) {
                 "retries this zarr and does NOT mark it complete.\n",
                 total_errs);
         return 3;
+    }
+
+    // Post-run sanity gate. A correct c3d export of scroll CT lands roughly
+    // in the 10:1–60:1 band at r=25. The run-1 pagination bug produced
+    // outputs at thousands:1 (almost all data wrongly skipped as air) yet
+    // still reported success. Refuse to report success on an out-of-band
+    // ratio or a level that produced zero bytes, so a silent under-export
+    // can never be marked "done" again.
+    if (vol_levels_done == 0 || vol_comp == 0) {
+        fprintf(stderr,
+                "recompress_one: SANITY FAIL — no compressed output produced "
+                "(levels_done=%zu, raw=%llu, comp=%llu). Treating as failure.\n",
+                vol_levels_done, (unsigned long long)vol_raw,
+                (unsigned long long)vol_comp);
+        return 4;
+    }
+    double vol_ratio = (double)vol_raw / (double)vol_comp;
+    if (vol_ratio > 200.0) {
+        fprintf(stderr,
+                "recompress_one: SANITY FAIL — overall ratio %.1f:1 is "
+                "implausibly high (raw=%llu MB, comp=%llu MB). This is the "
+                "signature of mass chunk-skip (the run-1 occupancy bug). "
+                "Treating as failure so it is NOT marked complete.\n",
+                vol_ratio, (unsigned long long)(vol_raw >> 20),
+                (unsigned long long)(vol_comp >> 20));
+        return 5;
     }
     return 0;
 }
@@ -1922,8 +2057,27 @@ int run_batch(const std::string& manifest_path,
         line = line.substr(a, b - a + 1);
         if (line.empty() || line[0] == '#') continue;
         BatchEntry e;
-        e.src = line;
-        e.dst = derive_dst(line, src_prefix, dst_prefix);
+        // Two manifest forms:
+        //  (a) "<src>"                  -> dest via prefix-swap (derive_dst)
+        //  (b) "<src>\t<dest_rel>"      -> dest = dst_prefix + dest_rel
+        // Form (b) supports arbitrary per-volume renames (e.g. ESRF source
+        // names normalized to the canonical <scroll>/volumes/<ts>-... path)
+        // that a uniform prefix swap cannot express.
+        auto tab = line.find('\t');
+        if (tab != std::string::npos) {
+            e.src = line.substr(0, tab);
+            std::string rel = line.substr(tab + 1);
+            auto ra = rel.find_first_not_of(" \t\r\n");
+            auto rb = rel.find_last_not_of(" \t\r\n");
+            rel = (ra == std::string::npos) ? std::string()
+                                            : rel.substr(ra, rb - ra + 1);
+            std::string dp = dst_prefix;
+            if (!dp.empty() && dp.back() != '/') dp += '/';
+            e.dst = dp + rel;
+        } else {
+            e.src = line;
+            e.dst = derive_dst(line, src_prefix, dst_prefix);
+        }
         entries.push_back(std::move(e));
     }
     if (entries.empty()) {
