@@ -24,6 +24,10 @@ add_executable(test_chunked_plane_sampler_fallback test_chunked_plane_sampler_fa
 target_link_libraries(test_chunked_plane_sampler_fallback PRIVATE doctest::doctest vc_core)
 add_test(NAME test_chunked_plane_sampler_fallback COMMAND test_chunked_plane_sampler_fallback)
 
+add_executable(test_volume_chunk_errors test_volume_chunk_errors.cpp)
+target_link_libraries(test_volume_chunk_errors PRIVATE doctest::doctest vc_core)
+add_test(NAME test_volume_chunk_errors COMMAND test_volume_chunk_errors)
+
 add_executable(test_segmentation_autosave_state test_segmentation_autosave_state.cpp)
 target_include_directories(test_segmentation_autosave_state PRIVATE ${PROJECT_SOURCE_DIR}/apps/VC3D)
 target_link_libraries(test_segmentation_autosave_state PRIVATE doctest::doctest)
