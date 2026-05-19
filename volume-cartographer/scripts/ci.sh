@@ -22,8 +22,8 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
-IMAGES=(ubuntu-24.04 ubuntu-26.04)
-DOCKERFILES=(ubuntu-24.04-noble.Dockerfile ubuntu-26.04.Dockerfile)
+IMAGES=(ubuntu-26.04)
+DOCKERFILES=(Dockerfile)
 COMPILERS=(gcc clang)
 # Sanitizer presets are clang-only; ci-tests runs both gcc and clang. This
 # mirrors the cells in .github/workflows/vc3d-ci.yml so `ci.sh all` is the
@@ -41,6 +41,19 @@ dockerfile_for() {
     done
     echo "Unknown image: $image (valid: ${IMAGES[*]})" >&2
     return 1
+}
+
+# A dropped image (e.g. ubuntu-24.04 after consolidation) is a clean no-op,
+# not an error. GitHub runs the base-branch workflow for PR CI, so a PR that
+# removes an image from IMAGES still gets matrix cells for it until it merges
+# — those cells call us with the old name and must pass harmlessly.
+skip_if_image_dropped() {
+    local image=$1
+    for known in "${IMAGES[@]}"; do
+        [[ "$known" == "$image" ]] && return 1   # known: don't skip
+    done
+    echo "ci.sh: image '$image' no longer built (valid: ${IMAGES[*]}); no-op." >&2
+    return 0   # dropped: caller should `return 0`
 }
 
 run_in_builder() {
@@ -86,6 +99,7 @@ total_coverage_pct() {
 
 cmd_builder() {
     local image=$1
+    skip_if_image_dropped "$image" && return 0
     local local_tag="vc-builder:$image"
 
     # Try pulling the published image from ghcr first. Skip the pull if
@@ -142,6 +156,7 @@ cmd_publish() {
 
 cmd_test() {
     local image=$1 compiler=$2 preset=$3
+    skip_if_image_dropped "$image" && return 0
     run_in_builder "$image" "$REPO_ROOT" "
         cmake --preset $preset-$compiler &&
         cmake --build --preset $preset-$compiler &&
@@ -150,6 +165,7 @@ cmd_test() {
 
 cmd_compile() {
     local image=$1 compiler=$2 preset=$3
+    skip_if_image_dropped "$image" && return 0
     run_in_builder "$image" "$REPO_ROOT" "
         cmake --preset $preset-$compiler &&
         cmake --build --preset $preset-$compiler"
@@ -276,12 +292,7 @@ cmd_all() {
         echo "=== Builder: $image ==="
         cmd_builder "$image"
     done
-    # 24.04: compile-only Release smoke (matches the blocking cells).
-    for compiler in "${COMPILERS[@]}"; do
-        echo "=== ubuntu-24.04: ci-release-$compiler (compile) ==="
-        cmd_compile ubuntu-24.04 "$compiler" ci-release
-    done
-    # 26.04: same Release compile + full test matrix + sanitizers.
+    # 26.04: Release compile + full test matrix + sanitizers.
     for compiler in "${COMPILERS[@]}"; do
         echo "=== ubuntu-26.04: ci-release-$compiler (compile) ==="
         cmd_compile ubuntu-26.04 "$compiler" ci-release

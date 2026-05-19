@@ -3,6 +3,11 @@
 # Run once as root. After this completes, build VC3D with:
 #   cmake --preset ci-release-gcc
 #   cmake --build --preset ci-release-gcc
+#
+# The core build toolchain is installed by scripts/install_build_deps.sh
+# (shared with the CI Dockerfile). This script runs that, then layers the
+# EC2-specific extras on top: timezone, ephemeral NVMe RAID, GUI/sync
+# tooling, and the xpra remote display server.
 
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
@@ -12,29 +17,23 @@ if [[ $(id -u) -ne 0 ]]; then
   exit 1
 fi
 TARGET_USER="${SUDO_USER:-root}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 log() { printf "\n\033[1;36m==> %s\033[0m\n" "$*"; }
 
-log "apt: toolchain + libraries"
+log "tzdata: set UTC"
 apt-get update
 ln -fs /usr/share/zoneinfo/Etc/UTC /etc/localtime
 apt-get install -y --no-install-recommends tzdata
 dpkg-reconfigure -f noninteractive tzdata
 
-apt-get install -y \
-    build-essential git clang llvm ninja-build lld cmake pkg-config \
-    qt6-base-dev libboost-system-dev libboost-program-options-dev \
-    libceres-dev libsuitesparse-dev \
-    libcgal-dev libmpfr-dev libgmp-dev \
-    libopencv-dev libopencv-contrib-dev \
-    libblosc-dev libcurl4-openssl-dev \
-    libavahi-client-dev nlohmann-json3-dev \
-    liblz4-dev libtiff-dev \
-    zlib1g-dev gfortran libopenblas-dev liblapack-dev liblapacke-dev libomp-dev \
-    libscotch-dev libscotchmetis-dev libhwloc-dev \
-    file curl unzip ca-certificates bzip2 wget jq rclone fuse gimp \
-    desktop-file-utils \
-    mdadm nvme-cli
+log "Core build toolchain (scripts/install_build_deps.sh)"
+bash "$SCRIPT_DIR/install_build_deps.sh"
+
+log "EC2 extras: sync + GUI + hardware tooling"
+apt-get install -y --no-install-recommends \
+    rclone fuse gimp desktop-file-utils \
+    mdadm nvme-cli lsb-release
 
 # ---- Ephemeral NVMe: RAID0 + mount at /ephemeral ----------------------------
 # EC2 instance-store NVMes show up with model "Amazon EC2 NVMe Instance Storage".
@@ -68,7 +67,7 @@ fi
 
 # ---- xpra (from xpra.org apt repo — matches distro Python) ------------------
 # We don't build from source because xpra master uses Python APIs newer than
-# what noble's Python 3.12 ships. xpra.org publishes prebuilt packages per
+# what the distro Python ships. xpra.org publishes prebuilt packages per
 # distro/codename, so derive the codename from the running system instead of
 # hardcoding one.
 log "xpra: add xpra.org apt repo and install"
