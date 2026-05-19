@@ -54,6 +54,14 @@ const char* __nsan_default_options(void)
            "print_stacktrace=1";
 }
 
+const char* __tsan_default_suppressions(void)
+{
+    // QtTest's internal watchdog thread is never joined before exit; the
+    // leak is entirely inside libQt6Core. Match by lib since CI has no symbols.
+    return
+        "called_from_lib:libQt6Core.so.6\n";
+}
+
 const char* __lsan_default_suppressions(void)
 {
     return
