@@ -1,5 +1,6 @@
 // vc_tifxyz2obj.cpp
 #include "vc/core/util/Geometry.hpp"
+#include "vc/core/util/InpaintSurface.hpp"
 #include "vc/core/util/Slicing.hpp"
 #include "vc/core/util/Surface.hpp"
 #include "vc/core/util/QuadSurface.hpp"
@@ -46,15 +47,15 @@ static inline cv::Vec3f fd_fallback_normal(const cv::Mat_<cv::Vec3f>& P, int y, 
 // Decimates a grid of points by keeping every nth point in both dimensions
 // This reduces the total point count by approximately (1 - 1/stride²)
 // For stride=3, this keeps ~11% of points (close to the 10% target)
-static cv::Mat_<cv::Vec3f> decimate_grid(const cv::Mat_<cv::Vec3f>& points, int iterations = 1)
+// For stride=2, keeps ~25% (every other point in each axis).
+static cv::Mat_<cv::Vec3f> decimate_grid(const cv::Mat_<cv::Vec3f>& points, int iterations = 1, int stride = 3)
 {
     if (iterations <= 0) return points.clone();
+    if (stride < 2) stride = 2;
 
     cv::Mat_<cv::Vec3f> result = points.clone();
 
     for (int iter = 0; iter < iterations; ++iter) {
-        // Use stride of 3 to achieve ~89% reduction (keeping ~11%)
-        const int stride = 3;
 
         // Calculate new dimensions
         int new_rows = (result.rows + stride - 1) / stride;
@@ -219,7 +220,7 @@ static cv::Mat_<cv::Vec3f> build_vertex_normals_from_faces(
     return nsum;
 }
 
-static void surf_write_obj(QuadSurface *surf, const std::filesystem::path &out_fn, bool normalize_uv, bool align_grid, int decimate_iterations, bool clean_surface, float clean_sigma_k)
+static void surf_write_obj(QuadSurface *surf, const std::filesystem::path &out_fn, bool normalize_uv, bool align_grid, int decimate_iterations, int decimate_stride, bool clean_surface, float clean_sigma_k, bool inpaint_holes)
 {
     cv::Mat_<cv::Vec3f> points = surf->rawPoints();
     
@@ -260,11 +261,22 @@ static void surf_write_obj(QuadSurface *surf, const std::filesystem::path &out_f
     
     // Apply decimation if requested
     if (decimate_iterations > 0) {
-        std::cout << "Original grid: " << points.rows << " x " << points.cols 
+        std::cout << "Original grid: " << points.rows << " x " << points.cols
                   << " (" << (points.rows * points.cols) << " points)" << std::endl;
-        points = decimate_grid(points, decimate_iterations);
+        points = decimate_grid(points, decimate_iterations, decimate_stride);
     }
-    
+
+    // Fill isolated interior holes that would otherwise create extra boundary
+    // loops in the OBJ and break downstream flattening (SLIM goes NaN).
+    if (inpaint_holes) {
+        const int filled = vc::core::util::inpaintSurfaceHoles(points);
+        if (filled > 0) {
+            std::cerr << "warning: inpainted " << filled
+                      << " invalid surface cell(s) from local neighbors "
+                      << "(holes can break flattening; pass --no-inpaint to disable)\n";
+        }
+    }
+
     cv::Mat_<int> idxs(points.size(), -1);
 
     std::ofstream out(out_fn);
@@ -320,17 +332,19 @@ static void surf_write_obj(QuadSurface *surf, const std::filesystem::path &out_f
 int main(int argc, char *argv[])
 {
     if (argc == 2 && (std::string(argv[1]) == "-h" || std::string(argv[1]) == "--help")) {
-        std::cout << "usage: " << argv[0] << " <tiffxyz> <obj> [--normalize-uv] [--align-grid] [--decimate [iterations]] [--clean [K]]\n"
+        std::cout << "usage: " << argv[0] << " <tiffxyz> <obj> [--normalize-uv] [--align-grid] [--decimate [iterations]] [--clean [K]] [--no-inpaint]\n"
                   << "  --normalize-uv : Normalize UVs to [0,1] range\n"
                   << "  --align-grid   : Align grid Z only (flatten Z per row)\n"
                   << "  --decimate [n] : Reduce points by ~90% per iteration (default n=1)\n"
-                  << "  --clean [K]    : Remove outlier points far from surface using robust distance threshold; K is sigma multiplier (default 5.0)\n";
+                  << "  --decimate-stride=<s> : Stride per axis when decimating (default 3 -> ~11% per iter; use 2 to keep every other -> ~25%)\n"
+                  << "  --clean [K]    : Remove outlier points far from surface using robust distance threshold; K is sigma multiplier (default 5.0)\n"
+                  << "  --no-inpaint   : Disable filling of isolated invalid cells; on by default to prevent flattening NaNs from interior holes\n";
         return EXIT_SUCCESS;
     }
 
     if (argc < 3) {
     std::cerr << "error: too few arguments\n"
-                  << "usage: " << argv[0] << " <tiffxyz> <obj> [--normalize-uv] [--align-grid] [--decimate [iterations]] [--clean [K]]\n";
+                  << "usage: " << argv[0] << " <tiffxyz> <obj> [--normalize-uv] [--align-grid] [--decimate [iterations]] [--clean [K]] [--no-inpaint]\n";
         return EXIT_FAILURE;
     }
 
@@ -339,6 +353,8 @@ int main(int argc, char *argv[])
     bool clean_surface = false;
     float clean_sigma_k = 5.0f; // default K
     int decimate_iterations = 0;
+    int decimate_stride = 3;
+    bool inpaint_holes = true;
     
     // Parse optional arguments
     for (int i = 3; i < argc; ++i) {
@@ -363,6 +379,13 @@ int main(int argc, char *argv[])
                     // Not a number, continue with default of 1
                 }
             }
+        } else if (arg.rfind("--decimate-stride=", 0) == 0) {
+            try {
+                int s = std::stoi(arg.substr(18));
+                if (s >= 2) decimate_stride = s;
+            } catch (...) { /* keep default */ }
+        } else if (arg == "--no-inpaint") {
+            inpaint_holes = false;
         } else if (arg == "--clean") {
             clean_surface = true;
             // Optional numeric K argument following --clean
@@ -397,7 +420,7 @@ int main(int argc, char *argv[])
         return EXIT_FAILURE;
     }
 
-    surf_write_obj(surf.get(), obj_path, normalize_uv, align_grid, decimate_iterations, clean_surface, clean_sigma_k);
+    surf_write_obj(surf.get(), obj_path, normalize_uv, align_grid, decimate_iterations, decimate_stride, clean_surface, clean_sigma_k, inpaint_holes);
 
     return EXIT_SUCCESS;
 }

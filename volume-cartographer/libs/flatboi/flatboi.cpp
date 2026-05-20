@@ -1000,6 +1000,15 @@ int main(int argc, char** argv) {
       wblog.log_image("heatmap/log_area", paths.logarea.string());
       wblog.finish();
     }
+
+    // Fail the run if SLIM diverged. Otherwise we silently hand a UV map full
+    // of NaNs to downstream tools (UV lift / vc_obj2tifxyz) and they produce
+    // an empty / corrupted tifxyz with no error indication.
+    if (!uv_out.allFinite()) {
+      std::cerr << "Error: SLIM diverged (output UVs contain NaN/Inf). "
+                << "Try a higher --decimate level on the input.\n";
+      return 3;
+    }
   } catch (const std::exception& e) {
     std::cerr << "Error: " << e.what() << "\n";
     return 2;

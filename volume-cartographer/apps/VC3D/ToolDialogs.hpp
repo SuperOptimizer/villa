@@ -462,16 +462,23 @@ public:
     double tolerance() const;   // 0.0 = disabled (run all iterations)
     QString energyType() const; // "symmetric_dirichlet" or "conformal"
     QString outputPath() const;
+    // 0 = no decimation (flatten full mesh; OOMs / NaNs above ~500k pts).
+    // N>0 = run vc_tifxyz2obj --decimate N for the flatten step, then lift
+    // UVs back to the full mesh via vc_obj_uv_lift. Default 2 keeps ~1.2% of
+    // points -> robust SLIM convergence on big segments.
+    int decimateLevel() const;
 
 private:
     static bool s_haveSession;
     static int s_iterations;
     static double s_tolerance;
     static QString s_energy;
+    static int s_decimate;
 
     QSpinBox* spIterations_{nullptr};
     QDoubleSpinBox* spTolerance_{nullptr};
     QComboBox* cbEnergy_{nullptr};
+    QSpinBox* spDecimate_{nullptr};
     QLineEdit* edtOutput_{nullptr};
     QString defaultOutput_;
 };
