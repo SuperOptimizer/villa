@@ -660,6 +660,7 @@ public:
             double tolerance,
             const QString& energy,
             double keepPercent,
+            bool inpaintHoles,
             const QString& outputDir,
             double voxelSize)
     : QObject(handler)
@@ -678,6 +679,7 @@ public:
     , tolerance_(tolerance)
     , energy_(energy)
     , keepPercent_(keepPercent)
+    , inpaintHoles_(inpaintHoles)
     , voxelSize_(voxelSize)
     , proc_(new QProcess(this))
     , progress_(new QProgressDialog(QObject::tr("Preparing SLIM..."), QObject::tr("Cancel"), 0, 0, parentWidget))
@@ -827,6 +829,9 @@ private:
         if (decimating) {
             args << QStringLiteral("--keep=%1").arg(keepPercent_, 0, 'f', 4);
         }
+        if (inpaintHoles_) {
+            args << QStringLiteral("--inpaint");
+        }
         ioLog_ += QStringLiteral("Running: %1 %2\n").arg(tifxyz2objExe_, args.join(' '));
         proc_->start(tifxyz2objExe_, args);
     }
@@ -837,6 +842,9 @@ private:
         progress_->setLabelText(QObject::tr("Converting TIFXYZ -> full-res OBJ for UV lift..."));
         ioLog_.clear();
         QStringList args; args << segDir_ << objFine_;
+        if (inpaintHoles_) {
+            args << QStringLiteral("--inpaint");
+        }
         ioLog_ += QStringLiteral("Running: %1 %2\n").arg(tifxyz2objExe_, args.join(' '));
         proc_->start(tifxyz2objExe_, args);
     }
@@ -1158,6 +1166,7 @@ private:
     double  tolerance_ = 0.0;
     QString energy_ = QStringLiteral("symmetric_dirichlet");
     double  keepPercent_ = 100.0;
+    bool    inpaintHoles_ = false;
     double  voxelSize_ = 0.0;
 
     // process & progress
@@ -1641,6 +1650,7 @@ void SegmentationCommandHandler::onSlimFlatten(const std::string& segmentId)
     const double tol = dlg.tolerance();
     const QString energy = dlg.energyType();
     const double keepPercent = dlg.keepPercent();
+    const bool inpaintHoles = dlg.inpaintHoles();
     const QString outputDir = dlg.outputPath();
 
     const QByteArray pastixEnv = qgetenv("PASTIX_NUM_THREADS");
@@ -1653,6 +1663,7 @@ void SegmentationCommandHandler::onSlimFlatten(const std::string& segmentId)
               << " tol=" << tol
               << " energy=" << energy.toStdString()
               << " keep_percent=" << keepPercent
+              << " inpaint=" << (inpaintHoles ? "true" : "false")
               << " PASTIX_NUM_THREADS=" << (pastixEnv.isEmpty() ? "<unset, PaStiX auto>" : pastixEnv.toStdString())
               << " hardware_concurrency=" << hwConc
               << std::endl;
@@ -1665,7 +1676,7 @@ void SegmentationCommandHandler::onSlimFlatten(const std::string& segmentId)
     } catch (...) {}
     if (!std::isfinite(voxelSize) || voxelSize <= 0.0) voxelSize = 0.0;
 
-    new SlimJob(_parentWidget, segDir, segmentStem, flatboiExe, this, iters, tol, energy, keepPercent, outputDir, voxelSize);
+    new SlimJob(_parentWidget, segDir, segmentStem, flatboiExe, this, iters, tol, energy, keepPercent, inpaintHoles, outputDir, voxelSize);
 }
 
 void SegmentationCommandHandler::onABFFlatten(const std::string& segmentId)

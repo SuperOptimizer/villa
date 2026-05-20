@@ -292,7 +292,8 @@ int main(int argc, char *argv[])
                   << "  --align-grid   : Align grid Z only (flatten Z per row)\n"
                   << "  --keep=<p>     : Percent of source points to keep (1..100). 100 = no decimation. One pass; stride = round(1/sqrt(p/100)).\n"
                   << "  --clean [K]    : Remove outlier points far from surface using robust distance threshold; K is sigma multiplier (default 5.0)\n"
-                  << "  --no-inpaint   : Disable filling of isolated invalid cells; on by default to prevent flattening NaNs from interior holes\n";
+                  << "  --inpaint      : Fill isolated invalid cells via Ceres-smoothness solve before emitting OBJ. Off by default.\n"
+                  << "  --no-inpaint   : Legacy alias (inpaint is off by default now).\n";
         return EXIT_SUCCESS;
     }
 
@@ -307,7 +308,7 @@ int main(int argc, char *argv[])
     bool clean_surface = false;
     float clean_sigma_k = 5.0f; // default K
     float keep_percent = 100.0f; // 100 = no decimation
-    bool inpaint_holes = true;
+    bool inpaint_holes = false;
     
     // Parse optional arguments
     for (int i = 3; i < argc; ++i) {
@@ -328,6 +329,8 @@ int main(int argc, char *argv[])
                 std::cerr << "error: --keep needs a numeric percent\n";
                 return EXIT_FAILURE;
             }
+        } else if (arg == "--inpaint") {
+            inpaint_holes = true;
         } else if (arg == "--no-inpaint") {
             inpaint_holes = false;
         } else if (arg == "--clean") {

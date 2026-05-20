@@ -1477,6 +1477,7 @@ int SlimFlattenDialog::s_iterations = 50;
 double SlimFlattenDialog::s_tolerance = 1e-5;
 QString SlimFlattenDialog::s_energy = QStringLiteral("symmetric_dirichlet");
 double SlimFlattenDialog::s_keepPercent = 1.5;
+bool SlimFlattenDialog::s_inpaintHoles = false;
 
 SlimFlattenDialog::SlimFlattenDialog(QWidget* parent, const QString& defaultOutputPath)
     : QDialog(parent)
@@ -1529,6 +1530,15 @@ SlimFlattenDialog::SlimFlattenDialog(QWidget* parent, const QString& defaultOutp
         "full mesh via barycentric interpolation."));
     form->addRow(tr("Keep:"), spKeepPercent_);
 
+    cbInpaint_ = new QCheckBox(tr("Fill interior holes (Ceres smoothness inpaint)"), this);
+    cbInpaint_->setChecked(s_haveSession ? s_inpaintHoles : false);
+    cbInpaint_->setToolTip(tr(
+        "Run a Ceres-smoothness fill over isolated invalid grid cells before "
+        "emitting the coarse OBJ. Off by default: SLIM tolerates small holes "
+        "in the decimated mesh and inpainting can blur fine detail. Turn on "
+        "if you see flatten failures attributable to interior holes."));
+    form->addRow(QString(), cbInpaint_);
+
     auto outputRow = new QHBoxLayout();
     edtOutput_ = new QLineEdit(this);
     edtOutput_->setText(defaultOutput_);
@@ -1565,12 +1575,18 @@ SlimFlattenDialog::SlimFlattenDialog(QWidget* parent, const QString& defaultOutp
         s_tolerance = spTolerance_->value();
         s_energy = cbEnergy_->currentData().toString();
         s_keepPercent = spKeepPercent_->value();
+        s_inpaintHoles = cbInpaint_ ? cbInpaint_->isChecked() : false;
     });
 }
 
 double SlimFlattenDialog::keepPercent() const
 {
     return spKeepPercent_ ? spKeepPercent_->value() : 1.5;
+}
+
+bool SlimFlattenDialog::inpaintHoles() const
+{
+    return cbInpaint_ ? cbInpaint_->isChecked() : false;
 }
 
 int SlimFlattenDialog::maxIterations() const

@@ -525,6 +525,18 @@ struct Flatboi {
       std::cout << "PROGRESS " << (it+1) << "/" << max_iter << std::endl;
       if (wblog) wblog->log_energy(data.energy, /*step=*/it+1);
 
+      // Bail out as soon as the energy goes non-finite. Continuing only
+      // wastes time -- every subsequent iter recomputes weights from a
+      // NaN-poisoned state. The caller (main) inspects the energies list
+      // and returns a non-zero exit code.
+      if (!std::isfinite(data.energy)) {
+        std::cout << "SLIM diverged at iter " << (it+1) << "/"
+                  << max_iter << " (energy = " << data.energy
+                  << "); stopping early.\n";
+        iters_run = it + 1;
+        break;
+      }
+
       if (((it+1) % 20) == 0) {
         auto [l2m, l2med, linf, area] = stretch_metrics(data.V_o.leftCols<2>());
         std::cout << "  stretch: L2(mean)=" << l2m
