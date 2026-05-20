@@ -1001,12 +1001,21 @@ int main(int argc, char** argv) {
       wblog.finish();
     }
 
-    // Fail the run if SLIM diverged. Otherwise we silently hand a UV map full
-    // of NaNs to downstream tools (UV lift / vc_obj2tifxyz) and they produce
-    // an empty / corrupted tifxyz with no error indication.
-    if (!uv_out.allFinite()) {
-      std::cerr << "Error: SLIM diverged (output UVs contain NaN/Inf). "
-                << "Try a higher --decimate level on the input.\n";
+    // Fail the run if SLIM diverged. Two failure modes seen in practice:
+    //   1. Output UVs themselves contain NaN/Inf.
+    //   2. Every iter went NaN but data.V_o was left at the initial UVs
+    //      (allFinite passes, downstream sees an unchanged parametrization).
+    // Catch both by scanning the per-iter energies list for any non-finite
+    // entry past iter 0, and by checking UV finiteness.
+    bool diverged = !uv_out.allFinite();
+    if (!diverged) {
+      for (std::size_t k = 1; k < energies.size(); ++k) {
+        if (!std::isfinite(energies[k])) { diverged = true; break; }
+      }
+    }
+    if (diverged) {
+      std::cerr << "Error: SLIM diverged (NaN energy or non-finite UVs). "
+                << "Try a lower --keep percent on the input (smaller mesh).\n";
       return 3;
     }
   } catch (const std::exception& e) {

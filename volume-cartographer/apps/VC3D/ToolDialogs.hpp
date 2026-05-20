@@ -462,23 +462,25 @@ public:
     double tolerance() const;   // 0.0 = disabled (run all iterations)
     QString energyType() const; // "symmetric_dirichlet" or "conformal"
     QString outputPath() const;
-    // 0 = no decimation (flatten full mesh; OOMs / NaNs above ~500k pts).
-    // N>0 = run vc_tifxyz2obj --decimate N for the flatten step, then lift
-    // UVs back to the full mesh via vc_obj_uv_lift. Default 2 keeps ~1.2% of
-    // points -> robust SLIM convergence on big segments.
-    int decimateLevel() const;
+    // Target percentage of source grid points to flatten (1..100). 100 means
+    // no decimation. Below 100 the SLIM step runs on a decimated mesh and
+    // the resulting UVs are lifted back to the full-resolution mesh via
+    // vc_obj_uv_lift. Default 1.5% picks stride~8, which is roughly what
+    // 2-iter stride-3 produced in earlier versions and matches the
+    // configuration that converges on 2um Paris segments.
+    double keepPercent() const;
 
 private:
     static bool s_haveSession;
     static int s_iterations;
     static double s_tolerance;
     static QString s_energy;
-    static int s_decimate;
+    static double s_keepPercent;
 
     QSpinBox* spIterations_{nullptr};
     QDoubleSpinBox* spTolerance_{nullptr};
     QComboBox* cbEnergy_{nullptr};
-    QSpinBox* spDecimate_{nullptr};
+    QDoubleSpinBox* spKeepPercent_{nullptr};
     QLineEdit* edtOutput_{nullptr};
     QString defaultOutput_;
 };

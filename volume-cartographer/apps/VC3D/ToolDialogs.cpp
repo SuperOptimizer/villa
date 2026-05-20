@@ -1476,7 +1476,7 @@ bool SlimFlattenDialog::s_haveSession = false;
 int SlimFlattenDialog::s_iterations = 50;
 double SlimFlattenDialog::s_tolerance = 1e-5;
 QString SlimFlattenDialog::s_energy = QStringLiteral("symmetric_dirichlet");
-int SlimFlattenDialog::s_decimate = 2;
+double SlimFlattenDialog::s_keepPercent = 1.5;
 
 SlimFlattenDialog::SlimFlattenDialog(QWidget* parent, const QString& defaultOutputPath)
     : QDialog(parent)
@@ -1513,17 +1513,21 @@ SlimFlattenDialog::SlimFlattenDialog(QWidget* parent, const QString& defaultOutp
     cbEnergy_->setToolTip(tr("SLIM energy formulation."));
     form->addRow(tr("Energy:"), cbEnergy_);
 
-    spDecimate_ = new QSpinBox(this);
-    spDecimate_->setRange(0, 4);
-    spDecimate_->setValue(s_haveSession ? s_decimate : 2);
-    spDecimate_->setToolTip(tr(
-        "Decimation level for the SLIM step.\n"
-        "0 = flatten full mesh directly (can OOM or NaN on large segments).\n"
-        "1 = ~11% of grid points.\n"
-        "2 = ~1.2% of grid points (recommended for 2um segments).\n"
-        "Higher = coarser/faster flatten. UVs are lifted back to the full "
-        "mesh via barycentric interpolation when level > 0."));
-    form->addRow(tr("Decimation:"), spDecimate_);
+    spKeepPercent_ = new QDoubleSpinBox(this);
+    spKeepPercent_->setRange(0.1, 100.0);
+    spKeepPercent_->setDecimals(2);
+    spKeepPercent_->setSingleStep(0.5);
+    spKeepPercent_->setSuffix(QStringLiteral(" %"));
+    spKeepPercent_->setValue(s_haveSession ? s_keepPercent : 1.5);
+    spKeepPercent_->setToolTip(tr(
+        "Percent of source grid points to keep for the SLIM flatten step.\n"
+        "100%% = flatten the full mesh directly (can OOM or NaN on large segments).\n"
+        "~25%% = every other point per axis (stride 2).\n"
+        "~11%% = stride 3.\n"
+        "~1.5%% = stride 8 (recommended for 2um Paris segments).\n"
+        "Below 100%%, UVs from the decimated flatten are lifted back to the "
+        "full mesh via barycentric interpolation."));
+    form->addRow(tr("Keep:"), spKeepPercent_);
 
     auto outputRow = new QHBoxLayout();
     edtOutput_ = new QLineEdit(this);
@@ -1560,13 +1564,13 @@ SlimFlattenDialog::SlimFlattenDialog(QWidget* parent, const QString& defaultOutp
         s_iterations = spIterations_->value();
         s_tolerance = spTolerance_->value();
         s_energy = cbEnergy_->currentData().toString();
-        s_decimate = spDecimate_->value();
+        s_keepPercent = spKeepPercent_->value();
     });
 }
 
-int SlimFlattenDialog::decimateLevel() const
+double SlimFlattenDialog::keepPercent() const
 {
-    return spDecimate_ ? spDecimate_->value() : 2;
+    return spKeepPercent_ ? spKeepPercent_->value() : 1.5;
 }
 
 int SlimFlattenDialog::maxIterations() const

@@ -44,53 +44,6 @@ static inline cv::Vec3f fd_fallback_normal(const cv::Mat_<cv::Vec3f>& P, int y, 
 }
 // ---------------------------------------------------------------------------
 
-// Decimates a grid of points by keeping every nth point in both dimensions
-// This reduces the total point count by approximately (1 - 1/stride²)
-// For stride=3, this keeps ~11% of points (close to the 10% target)
-// For stride=2, keeps ~25% (every other point in each axis).
-static cv::Mat_<cv::Vec3f> decimate_grid(const cv::Mat_<cv::Vec3f>& points, int iterations = 1, int stride = 3)
-{
-    if (iterations <= 0) return points.clone();
-    if (stride < 2) stride = 2;
-
-    cv::Mat_<cv::Vec3f> result = points.clone();
-
-    for (int iter = 0; iter < iterations; ++iter) {
-
-        // Calculate new dimensions
-        int new_rows = (result.rows + stride - 1) / stride;
-        int new_cols = (result.cols + stride - 1) / stride;
-
-        cv::Mat_<cv::Vec3f> decimated(new_rows, new_cols);
-
-        // Sample every stride-th point
-        for (int j = 0; j < new_rows; ++j) {
-            for (int i = 0; i < new_cols; ++i) {
-                int src_j = j * stride;
-                int src_i = i * stride;
-
-                // Ensure we don't go out of bounds
-                if (src_j < result.rows && src_i < result.cols) {
-                    decimated(j, i) = result(src_j, src_i);
-                } else {
-                    // Handle edge case - use the last valid point
-                    src_j = std::min(src_j, result.rows - 1);
-                    src_i = std::min(src_i, result.cols - 1);
-                    decimated(j, i) = result(src_j, src_i);
-                }
-            }
-        }
-
-        result = decimated;
-
-        std::cout << "Decimation iteration " << (iter + 1) << ": "
-                  << "reduced to " << new_rows << " x " << new_cols
-                  << " (" << (new_rows * new_cols) << " points)" << std::endl;
-    }
-
-    return result;
-}
-
 // Decimates a grid by a target ratio (e.g., 0.5 keeps ~50% of points)
 // Computes the appropriate stride from the ratio: stride = 1/sqrt(ratio)
 static cv::Mat_<cv::Vec3f> decimate_grid_ratio(const cv::Mat_<cv::Vec3f>& points, float ratio)
@@ -220,7 +173,7 @@ static cv::Mat_<cv::Vec3f> build_vertex_normals_from_faces(
     return nsum;
 }
 
-static void surf_write_obj(QuadSurface *surf, const std::filesystem::path &out_fn, bool normalize_uv, bool align_grid, int decimate_iterations, int decimate_stride, bool clean_surface, float clean_sigma_k, bool inpaint_holes)
+static void surf_write_obj(QuadSurface *surf, const std::filesystem::path &out_fn, bool normalize_uv, bool align_grid, float keep_percent, bool clean_surface, float clean_sigma_k, bool inpaint_holes)
 {
     cv::Mat_<cv::Vec3f> points = surf->rawPoints();
     
@@ -259,11 +212,13 @@ static void surf_write_obj(QuadSurface *surf, const std::filesystem::path &out_f
         }
     }
     
-    // Apply decimation if requested
-    if (decimate_iterations > 0) {
+    // Apply decimation if requested: one pass, stride derived from the
+    // requested keep fraction (decimate_grid_ratio computes stride =
+    // round(1/sqrt(p))). Skip when keep_percent >= 100 (no decimation).
+    if (keep_percent > 0.0f && keep_percent < 100.0f) {
         std::cout << "Original grid: " << points.rows << " x " << points.cols
                   << " (" << (points.rows * points.cols) << " points)" << std::endl;
-        points = decimate_grid(points, decimate_iterations, decimate_stride);
+        points = decimate_grid_ratio(points, keep_percent / 100.0f);
     }
 
     // Fill isolated interior holes that would otherwise create extra boundary
@@ -332,11 +287,10 @@ static void surf_write_obj(QuadSurface *surf, const std::filesystem::path &out_f
 int main(int argc, char *argv[])
 {
     if (argc == 2 && (std::string(argv[1]) == "-h" || std::string(argv[1]) == "--help")) {
-        std::cout << "usage: " << argv[0] << " <tiffxyz> <obj> [--normalize-uv] [--align-grid] [--decimate [iterations]] [--clean [K]] [--no-inpaint]\n"
+        std::cout << "usage: " << argv[0] << " <tiffxyz> <obj> [--normalize-uv] [--align-grid] [--keep=<p>] [--clean [K]] [--no-inpaint]\n"
                   << "  --normalize-uv : Normalize UVs to [0,1] range\n"
                   << "  --align-grid   : Align grid Z only (flatten Z per row)\n"
-                  << "  --decimate [n] : Reduce points by ~90% per iteration (default n=1)\n"
-                  << "  --decimate-stride=<s> : Stride per axis when decimating (default 3 -> ~11% per iter; use 2 to keep every other -> ~25%)\n"
+                  << "  --keep=<p>     : Percent of source points to keep (1..100). 100 = no decimation. One pass; stride = round(1/sqrt(p/100)).\n"
                   << "  --clean [K]    : Remove outlier points far from surface using robust distance threshold; K is sigma multiplier (default 5.0)\n"
                   << "  --no-inpaint   : Disable filling of isolated invalid cells; on by default to prevent flattening NaNs from interior holes\n";
         return EXIT_SUCCESS;
@@ -344,7 +298,7 @@ int main(int argc, char *argv[])
 
     if (argc < 3) {
     std::cerr << "error: too few arguments\n"
-                  << "usage: " << argv[0] << " <tiffxyz> <obj> [--normalize-uv] [--align-grid] [--decimate [iterations]] [--clean [K]] [--no-inpaint]\n";
+                  << "usage: " << argv[0] << " <tiffxyz> <obj> [--normalize-uv] [--align-grid] [--keep=<p>] [--clean [K]] [--no-inpaint]\n";
         return EXIT_FAILURE;
     }
 
@@ -352,8 +306,7 @@ int main(int argc, char *argv[])
     bool align_grid = false;
     bool clean_surface = false;
     float clean_sigma_k = 5.0f; // default K
-    int decimate_iterations = 0;
-    int decimate_stride = 3;
+    float keep_percent = 100.0f; // 100 = no decimation
     bool inpaint_holes = true;
     
     // Parse optional arguments
@@ -363,27 +316,18 @@ int main(int argc, char *argv[])
             normalize_uv = true;
         } else if (arg == "--align-grid") {
             align_grid = true;
-        } else if (arg == "--decimate") {
-            decimate_iterations = 1; // Default to 1 iteration
-            
-            // Check if next argument is a number (iterations)
-            if (i + 1 < argc) {
-                std::string next = argv[i + 1];
-                try {
-                    int iters = std::stoi(next);
-                    if (iters > 0) {
-                        decimate_iterations = iters;
-                        ++i; // Skip the number argument
-                    }
-                } catch (...) {
-                    // Not a number, continue with default of 1
-                }
-            }
-        } else if (arg.rfind("--decimate-stride=", 0) == 0) {
+        } else if (arg.rfind("--keep=", 0) == 0) {
             try {
-                int s = std::stoi(arg.substr(18));
-                if (s >= 2) decimate_stride = s;
-            } catch (...) { /* keep default */ }
+                float p = std::stof(arg.substr(7));
+                if (p > 0.0f && p <= 100.0f) keep_percent = p;
+                else {
+                    std::cerr << "error: --keep must be in (0, 100]\n";
+                    return EXIT_FAILURE;
+                }
+            } catch (...) {
+                std::cerr << "error: --keep needs a numeric percent\n";
+                return EXIT_FAILURE;
+            }
         } else if (arg == "--no-inpaint") {
             inpaint_holes = false;
         } else if (arg == "--clean") {
@@ -420,7 +364,7 @@ int main(int argc, char *argv[])
         return EXIT_FAILURE;
     }
 
-    surf_write_obj(surf.get(), obj_path, normalize_uv, align_grid, decimate_iterations, decimate_stride, clean_surface, clean_sigma_k, inpaint_holes);
+    surf_write_obj(surf.get(), obj_path, normalize_uv, align_grid, keep_percent, clean_surface, clean_sigma_k, inpaint_holes);
 
     return EXIT_SUCCESS;
 }

@@ -659,7 +659,7 @@ public:
             int iters,
             double tolerance,
             const QString& energy,
-            int decimate,
+            double keepPercent,
             const QString& outputDir,
             double voxelSize)
     : QObject(handler)
@@ -667,9 +667,9 @@ public:
     , handler_(handler)
     , segDir_(segDir)
     , stem_(segmentStem)
-    , objPath_(QDir(segDir).filePath(segmentStem + (decimate > 0 ? "_coarse.obj" : ".obj")))
+    , objPath_(QDir(segDir).filePath(segmentStem + (keepPercent < 100.0 ? "_coarse.obj" : ".obj")))
     , objFine_(QDir(segDir).filePath(segmentStem + ".obj"))
-    , flatObj_(QDir(segDir).filePath(segmentStem + (decimate > 0 ? "_coarse_flatboi.obj" : "_flatboi.obj")))
+    , flatObj_(QDir(segDir).filePath(segmentStem + (keepPercent < 100.0 ? "_coarse_flatboi.obj" : "_flatboi.obj")))
     , liftedObj_(QDir(segDir).filePath(segmentStem + "_lifted.obj"))
     , outFinal_(outputDir)
     , outTemp_ (outputDir == segDir ? (segDir + "__rebuild_tmp__") : outputDir)
@@ -677,7 +677,7 @@ public:
     , inputIsAlreadyFlat_(outputDir == segDir)
     , tolerance_(tolerance)
     , energy_(energy)
-    , decimate_(decimate)
+    , keepPercent_(keepPercent)
     , voxelSize_(voxelSize)
     , proc_(new QProcess(this))
     , progress_(new QProgressDialog(QObject::tr("Preparing SLIM..."), QObject::tr("Cancel"), 0, 0, parentWidget))
@@ -815,14 +815,18 @@ private:
     void startToObj_() {
         if (tifxyz2objExe_.isEmpty()) { showImmediateToolNotFound_("vc_tifxyz2obj"); return; }
         phase_ = Phase::ToObj;
-        progress_->setLabelText(decimate_ > 0
-            ? QObject::tr("Converting TIFXYZ -> coarse OBJ (decimate=%1)...").arg(decimate_)
+        const bool decimating = keepPercent_ < 100.0;
+        progress_->setLabelText(decimating
+            ? QObject::tr("Converting TIFXYZ -> coarse OBJ (keep %1%)...")
+                  .arg(keepPercent_, 0, 'f', 2)
             : QObject::tr("Converting TIFXYZ -> OBJ..."));
         progress_->setMaximum(1 + iters_ + 1);
         progress_->setValue(0);
         ioLog_.clear();
         QStringList args; args << segDir_ << objPath_;
-        if (decimate_ > 0) args << QStringLiteral("--decimate") << QString::number(decimate_);
+        if (decimating) {
+            args << QStringLiteral("--keep=%1").arg(keepPercent_, 0, 'f', 4);
+        }
         ioLog_ += QStringLiteral("Running: %1 %2\n").arg(tifxyz2objExe_, args.join(' '));
         proc_->start(tifxyz2objExe_, args);
     }
@@ -899,7 +903,7 @@ private:
         // If decimation is in play, the UVs have been lifted onto the
         // full-res mesh (liftedObj_); otherwise flatObj_ itself is the
         // flattened full-res mesh.
-        const QString srcObj = (decimate_ > 0) ? liftedObj_ : flatObj_;
+        const QString srcObj = (keepPercent_ < 100.0) ? liftedObj_ : flatObj_;
         QStringList args;
         args << srcObj
              << outTemp_
@@ -1080,7 +1084,7 @@ private:
 
         if (phase_ == Phase::Flatboi) {
             if (!QFileInfo::exists(flatObj_)) { onFinished_(1, QProcess::NormalExit); return; }
-            if (decimate_ > 0) {
+            if (keepPercent_ < 100.0) {
                 startToObjFine_();
             } else {
                 startToTifxyz_();
@@ -1153,7 +1157,7 @@ private:
     bool    inputIsAlreadyFlat_ = false;
     double  tolerance_ = 0.0;
     QString energy_ = QStringLiteral("symmetric_dirichlet");
-    int     decimate_ = 0;
+    double  keepPercent_ = 100.0;
     double  voxelSize_ = 0.0;
 
     // process & progress
@@ -1636,7 +1640,7 @@ void SegmentationCommandHandler::onSlimFlatten(const std::string& segmentId)
     const int iters = dlg.maxIterations();
     const double tol = dlg.tolerance();
     const QString energy = dlg.energyType();
-    const int decimate = dlg.decimateLevel();
+    const double keepPercent = dlg.keepPercent();
     const QString outputDir = dlg.outputPath();
 
     const QByteArray pastixEnv = qgetenv("PASTIX_NUM_THREADS");
@@ -1648,7 +1652,7 @@ void SegmentationCommandHandler::onSlimFlatten(const std::string& segmentId)
               << " iters=" << iters
               << " tol=" << tol
               << " energy=" << energy.toStdString()
-              << " decimate=" << decimate
+              << " keep_percent=" << keepPercent
               << " PASTIX_NUM_THREADS=" << (pastixEnv.isEmpty() ? "<unset, PaStiX auto>" : pastixEnv.toStdString())
               << " hardware_concurrency=" << hwConc
               << std::endl;
@@ -1661,7 +1665,7 @@ void SegmentationCommandHandler::onSlimFlatten(const std::string& segmentId)
     } catch (...) {}
     if (!std::isfinite(voxelSize) || voxelSize <= 0.0) voxelSize = 0.0;
 
-    new SlimJob(_parentWidget, segDir, segmentStem, flatboiExe, this, iters, tol, energy, decimate, outputDir, voxelSize);
+    new SlimJob(_parentWidget, segDir, segmentStem, flatboiExe, this, iters, tol, energy, keepPercent, outputDir, voxelSize);
 }
 
 void SegmentationCommandHandler::onABFFlatten(const std::string& segmentId)
