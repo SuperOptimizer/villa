@@ -77,6 +77,9 @@ target_link_libraries(vc_ui PUBLIC vc_core Qt6::Core Qt6::Gui Qt6::Widgets)
 add_library(vc_flattening src/ABFFlattening.cpp)
 target_link_libraries(vc_flattening PUBLIC vc_core OpenABF)
 
+add_library(vc_inpaint src/InpaintSurface.cpp)
+target_link_libraries(vc_inpaint PUBLIC vc_core PRIVATE Ceres::ceres)
+
 add_library(vc_tracer
     src/GrowPatch.cpp
     src/GrowSurface.cpp
