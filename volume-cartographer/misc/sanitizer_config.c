@@ -57,13 +57,11 @@ const char* __nsan_default_options(void)
 const char* __tsan_default_suppressions(void)
 {
     // QtTest's internal watchdog thread is never joined before exit. The
-    // creation stack's top frame is inlined into the test binary, so
-    // called_from_lib alone doesn't catch it; pair it with a thread:
-    // match on the QTest watchdog symbol (requires llvm-symbolizer on PATH).
+    // QTest watchdog helper is inlined into the test binary, so the only
+    // stable frame to match against is QThread::start in libQt6Core
+    // (requires llvm-symbolizer on PATH to symbolize).
     return
-        "called_from_lib:libQt6Core.so.6\n"
-        "thread:QTest::watchDog\n"
-        "thread:QTestLib\n";
+        "thread:QThread::start\n";
 }
 
 const char* __lsan_default_suppressions(void)
