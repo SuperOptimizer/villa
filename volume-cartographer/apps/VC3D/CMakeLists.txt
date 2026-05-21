@@ -221,3 +221,7 @@ target_link_libraries(VC3D
 if(VC_USE_PCH)
     target_precompile_headers(VC3D REUSE_FROM vc_core)
 endif()
+
+if(VC_TESTING)
+    add_subdirectory(test)
+endif()

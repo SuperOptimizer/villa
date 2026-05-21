@@ -1,19 +1,3 @@
-include(FetchContent)
-
-set(CMAKE_POLICY_VERSION_MINIMUM 3.10 CACHE STRING "" FORCE)
-
-find_package(doctest CONFIG QUIET)
-if(NOT TARGET doctest::doctest)
-    FetchContent_Declare(
-        doctest
-        DOWNLOAD_EXTRACT_TIMESTAMP ON
-        URL https://github.com/doctest/doctest/archive/v2.4.12.tar.gz
-    )
-    FetchContent_MakeAvailable(doctest)
-endif()
-
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Test)
-
 function(vc_add_test)
     cmake_parse_arguments(T "" "NAME" "SOURCES;LIBS;INCLUDES;DEFS" ${ARGN})
     if(NOT T_SOURCES)
@@ -31,7 +15,7 @@ function(vc_add_test)
     target_include_directories(${T_NAME} PRIVATE ${T_INCLUDES})
     target_compile_definitions(${T_NAME} PRIVATE
         VC_TEST_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data" ${T_DEFS})
-    if(VC_USE_PCH AND NOT T_NAME MATCHES "^test_(smoke|segmentation_autosave_state)$")
+    if(VC_USE_PCH AND NOT T_NAME STREQUAL "test_smoke")
         target_precompile_headers(${T_NAME} REUSE_FROM vc_core)
     endif()
     add_test(NAME ${T_NAME} COMMAND ${T_NAME})
@@ -41,17 +25,6 @@ vc_add_test(NAME test_smoke LIBS doctest::doctest)
 vc_add_test(NAME test_appendmask_render)
 vc_add_test(NAME test_chunked_plane_sampler_fallback)
 vc_add_test(NAME test_volume_chunk_errors)
-
-vc_add_test(NAME test_segmentation_autosave_state
-    LIBS doctest::doctest
-    INCLUDES ${PROJECT_SOURCE_DIR}/apps/VC3D)
-
-vc_add_test(NAME test_segmentation_intersection_invalidation
-    SOURCES test_segmentation_intersection_invalidation.cpp
-            ${PROJECT_SOURCE_DIR}/apps/VC3D/VCCollection.cpp
-    LIBS Qt6::Core Qt6::Gui Qt6::Test vc_core
-    INCLUDES ${PROJECT_SOURCE_DIR}/apps/VC3D)
-
 vc_add_test(NAME test_quadsurface_save_roundtrip)
 vc_add_test(NAME test_atomic_imwrite_multi)
 vc_add_test(NAME test_post_process)

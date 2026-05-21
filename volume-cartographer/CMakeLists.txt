@@ -385,11 +385,25 @@ if(_san)
     add_link_options(${_san})
 endif()
 
+if(VC_TESTING)
+    include(FetchContent)
+    set(CMAKE_POLICY_VERSION_MINIMUM 3.10 CACHE STRING "" FORCE)
+    find_package(doctest CONFIG QUIET)
+    if(NOT TARGET doctest::doctest)
+        FetchContent_Declare(
+            doctest
+            DOWNLOAD_EXTRACT_TIMESTAMP ON
+            URL https://github.com/doctest/doctest/archive/v2.4.12.tar.gz
+        )
+        FetchContent_MakeAvailable(doctest)
+    endif()
+    enable_testing()
+endif()
+
 add_subdirectory(core)
 add_subdirectory(apps)
 
 if(VC_TESTING)
-    enable_testing()
     add_subdirectory(core/test)
     add_custom_target(check
         COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure
