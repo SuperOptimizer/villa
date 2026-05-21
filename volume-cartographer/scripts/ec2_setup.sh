@@ -6,8 +6,8 @@
 #
 # The core build toolchain is installed by scripts/install_build_deps.sh
 # (shared with the CI Dockerfile). This script runs that, then layers the
-# EC2-specific extras on top: timezone, ephemeral NVMe RAID, GUI/sync
-# tooling, and the xpra remote display server.
+# EC2-specific extras on top: timezone, ephemeral NVMe RAID, and GUI/sync
+# tooling.
 
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
@@ -64,19 +64,5 @@ if ! mountpoint -q /ephemeral; then
 else
   log "Ephemeral: /ephemeral already mounted; skipping"
 fi
-
-# ---- xpra (from xpra.org apt repo — matches distro Python) ------------------
-# We don't build from source because xpra master uses Python APIs newer than
-# what the distro Python ships. xpra.org publishes prebuilt packages per
-# distro/codename, so derive the codename from the running system instead of
-# hardcoding one.
-log "xpra: add xpra.org apt repo and install"
-install -d -m 0755 /usr/share/keyrings
-wget -qO- https://xpra.org/xpra.asc | gpg --dearmor > /usr/share/keyrings/xpra.gpg
-codename="$(lsb_release -cs)"
-echo "deb [signed-by=/usr/share/keyrings/xpra.gpg] https://xpra.org/ ${codename} main" \
-  > /etc/apt/sources.list.d/xpra.list
-apt-get update
-apt-get install -y -o Dpkg::Options::="--force-confnew" xpra xpra-codecs xvfb
 
 log "Done. Next: cmake --preset ci-release-gcc && cmake --build --preset ci-release-gcc"
