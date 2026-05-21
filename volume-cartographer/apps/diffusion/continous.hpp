@@ -1,7 +1,7 @@
 #pragma once
 
 #include "common.hpp"
-#include <vc/ui/VCCollection.hpp>
+#include <vc/core/PointCollections.hpp>
 
 struct continous_options {
     std::string input_volume;
@@ -13,7 +13,7 @@ struct continous_options {
 
 int continous_main(
     const cv::Mat& slice_mat,
-    const VCCollection& point_collection,
+    const PointCollections& point_collection,
     const std::optional<cv::Vec3f>& umbilicus_point,
     const std::string& umbilicus_set_name,
     int iterations,

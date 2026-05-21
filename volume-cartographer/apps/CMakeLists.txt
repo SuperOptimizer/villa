@@ -23,22 +23,22 @@ add_executable(vc_render_video src/vc_render_video.cpp)
 target_link_libraries(vc_render_video opencv_core vc_core opencv_videoio)
 
 add_executable(vc_render_tifxyz src/vc_render_tifxyz.cpp)
-target_link_libraries(vc_render_tifxyz vc_core vc_flattening Boost::program_options TIFF::TIFF)
+target_link_libraries(vc_render_tifxyz vc_core Boost::program_options TIFF::TIFF)
 
 add_executable(vc_objrefine src/ObjAlphaCompRefinement.cpp)
 target_link_libraries(vc_objrefine vc_core)
 
 add_executable(vc_grow_seg_from_seed src/vc_grow_seg_from_seed.cpp)
-target_link_libraries(vc_grow_seg_from_seed vc_core vc_ui vc_tracer Boost::program_options)
+target_link_libraries(vc_grow_seg_from_seed vc_core Boost::program_options)
 
 add_executable(vc_seg_add_overlap src/vc_seg_add_overlap.cpp)
 target_link_libraries(vc_seg_add_overlap vc_core)
 
 add_executable(vc_grow_seg_from_segments src/vc_grow_seg_from_segments.cpp)
-target_link_libraries(vc_grow_seg_from_segments vc_core vc_tracer Boost::program_options)
+target_link_libraries(vc_grow_seg_from_segments vc_core Boost::program_options)
 
 add_executable(vc_tifxyz2obj src/vc_tifxyz2obj.cpp)
-target_link_libraries(vc_tifxyz2obj vc_core vc_inpaint)
+target_link_libraries(vc_tifxyz2obj vc_core)
 
 add_executable(vc_obj_uv_lift src/vc_obj_uv_lift.cpp)
 target_link_libraries(vc_obj_uv_lift PRIVATE igl::core OpenMP::OpenMP_CXX)
@@ -64,7 +64,7 @@ add_executable(vc_obj2tifxyz_legacy src/vc_obj2tifxyz_legacy.cpp)
 target_link_libraries(vc_obj2tifxyz_legacy vc_core)
 
 add_executable(vc_flatten src/vc_flatten.cpp)
-target_link_libraries(vc_flatten vc_core vc_flattening Boost::program_options)
+target_link_libraries(vc_flatten vc_core Boost::program_options)
 
 add_executable(vc_tifxyz_inp_mask src/vc_tifxyz_inp_mask.cpp)
 target_link_libraries(vc_tifxyz_inp_mask vc_core)
@@ -79,10 +79,10 @@ add_executable(vc_tifxyz_winding src/vc_tifxyz_winding.cpp)
 target_link_libraries(vc_tifxyz_winding vc_core)
 
 add_executable(vc_calc_surface_metrics src/vc_calc_surface_metrics.cpp)
-target_link_libraries(vc_calc_surface_metrics vc_core vc_ui Boost::program_options)
+target_link_libraries(vc_calc_surface_metrics vc_core Boost::program_options)
 
 add_executable(vc_tifxyz_gengt src/vc_tifxyz_gengt.cpp)
-target_link_libraries(vc_tifxyz_gengt vc_core vc_ui Boost::program_options)
+target_link_libraries(vc_tifxyz_gengt vc_core Boost::program_options)
 
 set(vc_diffuse_winding_sources
     diffusion/continuous3d.cpp
@@ -103,7 +103,7 @@ target_link_libraries(vc_diffuse_winding
         opencv_videoio
         opencv_ximgproc
         vc_core
-        vc_ui
+       
         Boost::program_options
         OpenMP::OpenMP_CXX
         Ceres::ceres
@@ -168,19 +168,44 @@ target_link_libraries(vc_zarr_to_tiff vc_core Boost::program_options TIFF::TIFF)
 add_executable(vc_zarr_recompress src/vc_zarr_recompress.cpp)
 target_link_libraries(vc_zarr_recompress vc_core Blosc::blosc)
 
-# Reuse vc_core's PCH on every CLI app that actually links vc_core
-# (others don't get OpenCV/nlohmann_json include paths and the PCH
-# would fail to compile).
+# Reuse vc_core's PCH on CLI apps that link vc_core. Others (e.g.
+# vc_tifxyz_mmap_prepare, vc_obj_uv_lift) skip PCH — they don't pull in
+# OpenCV/nlohmann_json include paths and the PCH wouldn't compile.
 if(VC_USE_PCH)
-    get_property(_apps_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
-    foreach(_app ${_apps_targets})
-        get_target_property(_type ${_app} TYPE)
-        if(NOT _type STREQUAL "EXECUTABLE")
-            continue()
-        endif()
-        get_target_property(_libs ${_app} LINK_LIBRARIES)
-        if(_libs AND "vc_core" IN_LIST _libs)
-            target_precompile_headers(${_app} REUSE_FROM vc_core)
-        endif()
+    foreach(_app
+        vc_add_ignore_label
+        vc_calc_surface_metrics
+        vc_create_segment_mask
+        vc_cut_windings
+        vc_diffuse_winding
+        vc_flatten
+        vc_gen_normalgrids
+        vc_grow_seg_from_seed
+        vc_grow_seg_from_segments
+        vc_ngrids
+        vc_obj2tifxyz
+        vc_obj2tifxyz_legacy
+        vc_objrefine
+        vc_project_tifxyz
+        vc_render_tifxyz
+        vc_render_video
+        vc_rgb2tifxyz
+        vc_seg_add_overlap
+        vc_thinning
+        vc_tifxyz
+        vc_tifxyz2obj
+        vc_tifxyz2rgb
+        vc_tifxyz2zarr_sparse
+        vc_tifxyz_gengt
+        vc_tifxyz_inp_mask
+        vc_tifxyz_trim
+        vc_tifxyz_winding
+        vc_transform_geom
+        vc_visualize
+        vc_volpkg_convert
+        vc_zarr_recompress
+        vc_zarr_to_tiff
+    )
+        target_precompile_headers(${_app} REUSE_FROM vc_core)
     endforeach()
 endif()

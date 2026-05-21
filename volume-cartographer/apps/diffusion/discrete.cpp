@@ -13,7 +13,7 @@
 #include <iomanip>
 #include <random>
 
-#include <vc/ui/VCCollection.hpp>
+#include <vc/core/PointCollections.hpp>
 
 constexpr int32_t BASE_LABEL_STEP = 4096;
 
@@ -226,7 +226,7 @@ std::unordered_map<std::string, int> estimate_offsets(
 
 int discrete_main(
     const cv::Mat& slice_mat,
-    const VCCollection& point_collection,
+    const PointCollections& point_collection,
     const std::optional<cv::Vec3f>& umbilicus_point,
     const std::string& umbilicus_set_name,
     int iterations,

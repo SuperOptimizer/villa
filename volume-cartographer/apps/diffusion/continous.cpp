@@ -15,7 +15,7 @@
 #include <atomic>
 #include <omp.h>
 
-#include <vc/ui/VCCollection.hpp>
+#include <vc/core/PointCollections.hpp>
 
 const float sheet_step_weight = 2.0f;
 
@@ -60,7 +60,7 @@ void visualize_sheet_distance_constraints(
 
 int continous_main(
     const cv::Mat& slice_mat,
-    const VCCollection& point_collection,
+    const PointCollections& point_collection,
     const std::optional<cv::Vec3f>& umbilicus_point,
     const std::string& umbilicus_set_name,
     int iterations,

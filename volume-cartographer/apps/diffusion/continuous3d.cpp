@@ -2,7 +2,7 @@
 #include <iostream>
 
 #include "common.hpp"
-#include <vc/ui/VCCollection.hpp>
+#include <vc/core/PointCollections.hpp>
 #include <vc/core/util/GridStore.hpp>
 #include "vc/core/types/Volume.hpp"
 
@@ -129,7 +129,7 @@ int continuous3d_main(const po::variables_map& vm) {
     int box_d = box_dims[2];
     int iterations = vm["iterations"].as<int>();
 
-    VCCollection point_collection;
+    PointCollections point_collection;
     if (!point_collection.loadFromJSON(points_path.string())) {
         std::cerr << "Error: Failed to load point file: " << points_path << std::endl;
         return 1;

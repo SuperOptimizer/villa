@@ -24,7 +24,7 @@
 #include "utils/Json.hpp"
 
 #include "vc/core/util/GridStore.hpp"
-#include "vc/ui/VCCollection.hpp"
+#include "vc/core/PointCollections.hpp"
 
 void optimize_spiral_trace(
     std::vector<SpiralPoint>& spiral_trace,

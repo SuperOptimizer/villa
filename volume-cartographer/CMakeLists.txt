@@ -11,25 +11,14 @@ set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-# Shared libraries everywhere (our libs + every FetchContent dep that
-# respects BUILD_SHARED_LIBS). Cuts CI runner disk usage by ~10× — the
-# main pain was 80 sanitizer-instrumented test executables each statically
-# linking vc_core/vc_tracer/vc_ui — and speeds linking by avoiding the
-# full static-archive rescan per binary. PIC is implied by SHARED but
-# also needed by static dependencies they consume, so set it globally.
 set(BUILD_SHARED_LIBS ON CACHE BOOL "Build vc_* and FetchContent deps as .so")
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
-# Force -fPIC on executables too (cmake's default is -fPIE), so PCH from
-# our -fPIC shared libs is reusable. -no-pie only applies to exe links,
-# not shared-lib links (mold rejects -no-pie on a .so).
 add_compile_options(-fPIC)
 add_link_options($<$<STREQUAL:$<TARGET_PROPERTY:TYPE>,EXECUTABLE>:-no-pie>)
-# Keep dlopen of vc_* libs working from the build tree without LD_LIBRARY_PATH.
 set(CMAKE_BUILD_RPATH_USE_ORIGIN ON)
 set(CMAKE_INSTALL_RPATH "$ORIGIN/../lib")
 set(CMAKE_BUILD_WITH_INSTALL_RPATH OFF)
 
-# Slim debug info: split DWARF + zlib-compress. -g level set with _dbg below.
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
     add_compile_options($<$<CONFIG:Debug>:-gsplit-dwarf> $<$<CONFIG:Debug>:-gz=zlib>)
     add_link_options($<$<CONFIG:Debug>:-Wl,--compress-debug-sections=zlib>)

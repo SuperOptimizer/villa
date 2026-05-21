@@ -75,27 +75,19 @@ coverage_in_dir() {
     local image=$1 src=$2
     local build_dir="build/ci-coverage-clang-$image"
     cmd_builder "$image"
-    # Clang source-based coverage (-fprofile-instr-generate -fcoverage-mapping):
-    # accurate at any -O level (gcov is only honest at -O0) and reads from
-    # .profraw + the binary's coverage-mapping section, no .gcno/.gcda. We
-    # merge per-test .profraw files into a single .profdata, then run llvm-cov
-    # against every test executable to produce html / lcov / text summary.
-    # lcov.info is what diff-cover consumes in cmd_patch_coverage.
+    # clang source-based coverage: build, run, merge .profraw -> .profdata,
+    # then html / lcov / text via llvm-cov.
     run_in_builder "$image" "$src" "
         set -o pipefail &&
         cmake --preset ci-coverage-clang &&
         cmake --build --preset ci-coverage-clang &&
         rm -rf /src/$build_dir/coverage-raw && mkdir -p /src/$build_dir/coverage-raw &&
-        # Absolute path: each test binary's cwd is set by ctest to its own
-        # source dir, so a relative LLVM_PROFILE_FILE writes profraws all
-        # over the tree. Pin it to /src/<build>/coverage-raw inside the
-        # container.
+        # Absolute path: ctest cwd's vary per test, relative would scatter profraws.
         LLVM_PROFILE_FILE=\"/src/$build_dir/coverage-raw/%p-%m.profraw\" \
             ctest --preset ci-coverage-clang &&
         mkdir -p coverage &&
         llvm-profdata merge -sparse -o $build_dir/coverage.profdata \
             $build_dir/coverage-raw/*.profraw &&
-        # llvm-cov takes the first binary as -object and the rest as -object=...
         objects=( ) &&
         for b in $build_dir/bin/test_*; do objects+=( -object \"\$b\" ); done &&
         llvm-cov show \"\${objects[@]}\" \
@@ -114,9 +106,8 @@ coverage_in_dir() {
             > coverage/summary.txt"
 }
 
-# Extract TOTAL line coverage % from an llvm-cov report summary.txt. The
-# TOTAL row has four trailing %-columns: Region, Function, Line, Branch
-# (in that order). We track line coverage — the 3rd.
+# TOTAL row in llvm-cov report: 4 %-columns (Region, Function, Line, Branch).
+# Pick the 3rd (Line).
 total_coverage_pct() {
     awk '/^TOTAL/ {
         n = 0
@@ -130,9 +121,7 @@ cmd_builder() {
     local want_hash
     want_hash="$(builder_deps_hash "$image")"
 
-    # Reuse the already-tagged local image only if it matches the current
-    # Dockerfile + install_build_deps.sh. Otherwise the local tag could
-    # be a stale image left behind by a previous branch.
+    # Local tag matches current Dockerfile + install_build_deps.sh? Done.
     local existing_hash
     existing_hash="$(docker image inspect "$local_tag" \
         --format '{{ index .Config.Labels "vc-builder-deps-hash" }}' \
@@ -141,10 +130,8 @@ cmd_builder() {
         return 0
     fi
 
-    # Try pulling the published image from ghcr. Same hash check applies —
-    # if the registry's image was built from a different revision of the
-    # builder inputs, we refuse it and build locally instead of silently
-    # retagging a stale image over the fresh local one we just discarded.
+    # Pull ghcr only if its image's deps-hash matches the tree; otherwise
+    # build locally so a stale registry image doesn't clobber a fresh one.
     if [[ "${VC_BUILDER_FORCE_LOCAL:-0}" != "1" ]]; then
         local owner
         owner=$(echo "${VC_BUILDER_REGISTRY_OWNER:-${GITHUB_REPOSITORY_OWNER:-scrollprize}}" | tr 'A-Z' 'a-z')

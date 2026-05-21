@@ -206,9 +206,6 @@ target_link_libraries(VC3D
     $<$<BOOL:${mimalloc_FOUND}>:mimalloc>
     vc_core
     vc_ui
-    vc_tracer
-    vc_flattening
-    Ceres::ceres
     Qt6::Core
     Qt6::Concurrent
     Qt6::Gui

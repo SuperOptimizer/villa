@@ -23,7 +23,7 @@
 #include "utils/Json.hpp"
 
 #include "vc/core/util/GridStore.hpp"
-#include "vc/ui/VCCollection.hpp"
+#include "vc/core/PointCollections.hpp"
 
 class VideoCallback : public ceres::IterationCallback {
 public:
@@ -70,7 +70,7 @@ void visualize_spiral(cv::Mat& vis, const std::vector<SpiralPoint>& spiral, cons
 // JSON serialization for SpiralPoint
 void visualize_annotations(
     const cv::Size& slice_size,
-    const VCCollection::Collection& collection,
+    const PointCollections::Collection& collection,
     const ColPoint& start_point_fw,
     const ColPoint& start_point_bw,
     const std::string& path
@@ -260,7 +260,7 @@ std::vector<SpiralPoint> generate_single_spiral_wrap(
 
 int spiral2_main(
     const cv::Mat& slice_mat,
-    const VCCollection& point_collection,
+    const PointCollections& point_collection,
     const std::optional<cv::Vec3f>& umbilicus_point,
     const std::string& umbilicus_set_name,
     const po::variables_map& vm

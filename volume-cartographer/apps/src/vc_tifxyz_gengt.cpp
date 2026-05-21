@@ -1,4 +1,4 @@
-#include "vc/ui/VCCollection.hpp"
+#include "vc/core/PointCollections.hpp"
 #include "vc/core/util/Geometry.hpp"
 #include "vc/core/util/Surface.hpp"
 #include "vc/core/util/QuadSurface.hpp"
@@ -133,7 +133,7 @@ int main(int argc, char** argv) {
         ("help,h", "Print help")
         ("input", po::value<std::string>(), "Input surface file (.tiffxyz)")
         ("winding", po::value<std::string>(), "Input winding file (.tif)")
-        ("output", po::value<std::string>(), "Output VCCollection file (.json)")
+        ("output", po::value<std::string>(), "Output PointCollections file (.json)")
         ("num-collections", po::value<int>()->default_value(10), "Number of random collections to generate");
 
     po::variables_map vm;
@@ -169,7 +169,7 @@ int main(int argc, char** argv) {
 
     cv::Mat_<cv::Vec3f> points = surface->rawPoints();
     
-    VCCollection collection;
+    PointCollections collection;
 
     std::cout << "wtf "  << std::endl;
     for (int i = 0; i < num_collections; ++i) {

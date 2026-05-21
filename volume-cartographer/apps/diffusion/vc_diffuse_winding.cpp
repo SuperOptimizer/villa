@@ -24,7 +24,7 @@
 
 #include "vc/core/types/Volume.hpp"
 
-#include "vc/ui/VCCollection.hpp"
+#include "vc/core/PointCollections.hpp"
 #include "vc/core/util/GridStore.hpp"
 
 #include "discrete.hpp"
@@ -117,7 +117,7 @@ int main(int argc, char** argv) {
     po::options_description desc("Diffuse winding number through a voxel grid.");
     desc.add_options()
         ("help,h", "Print help")
-        ("points", po::value<std::string>(), "Input JSON point sets file (VCCollection format)")
+        ("points", po::value<std::string>(), "Input JSON point sets file (PointCollections format)")
         ("volume", po::value<std::string>(), "Input zarr volume path")
         ("dataset", po::value<std::string>()->default_value("0"), "Numeric zarr scale-level dataset name (e.g., 0 or 1; use 0 for root-array zarrs)")
         ("output", po::value<std::string>(), "Output image file for visualization")
@@ -183,7 +183,7 @@ int main(int argc, char** argv) {
     std::cout << "Mode: " << mode << std::endl;
 
     // Load points
-    VCCollection point_collection;
+    PointCollections point_collection;
     if (!point_collection.loadFromJSON(points_path.string())) {
         std::cerr << "Error: Failed to load point file: " << points_path << std::endl;
         return 1;

@@ -35,9 +35,22 @@ add_library(vc_core
         src/render/Colormaps.cpp
         src/render/PostProcess.cpp
         src/render/ZarrChunkFetcher.cpp
+        src/ABFFlattening.cpp
+        src/InpaintSurface.cpp
+        src/GrowPatch.cpp
+        src/GrowSurface.cpp
+        src/SurfTrackerData.cpp
+        src/NeuralTracerConnection.cpp
+        src/ChunkedTensor.cpp
+        src/growth_strategies/CandidateOrdering.cpp
+        src/growth_strategies/ComponentPruning.cpp
+        src/growth_strategies/GrowthConfig.cpp
+        src/PointCollections.cpp
+        src/surface_metrics.cpp
         ${CMAKE_CURRENT_BINARY_DIR}/Version.cpp
 )
 
+target_include_directories(vc_core PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../libs/edt)
 
 target_link_libraries(vc_core
         PUBLIC
@@ -50,6 +63,7 @@ target_link_libraries(vc_core
         OpenMP::OpenMP_CXX
         TIFF::TIFF
         OpenABF
+        Ceres::ceres
         CURL::libcurl
 )
 
@@ -102,31 +116,10 @@ if(VC_USE_PCH)
     target_precompile_headers(vc_core PRIVATE ${VC_PCH_HEADERS})
 endif()
 
-qt6_wrap_cpp(metrics_moc include/vc/ui/VCCollection.hpp)
-add_library(vc_ui src/VCCollection.cpp src/UDataManipulateUtils.cpp src/surface_metrics.cpp ${metrics_moc})
-target_link_libraries(vc_ui PUBLIC vc_core Qt6::Core Qt6::Gui Qt6::Widgets)
-
-add_library(vc_flattening src/ABFFlattening.cpp)
-target_link_libraries(vc_flattening PUBLIC vc_core OpenABF)
-
-add_library(vc_inpaint src/InpaintSurface.cpp)
-target_link_libraries(vc_inpaint PUBLIC vc_core PRIVATE Ceres::ceres)
-
-add_library(vc_tracer
-    src/GrowPatch.cpp
-    src/GrowSurface.cpp
-    src/SurfTrackerData.cpp
-    src/NeuralTracerConnection.cpp
-    src/ChunkedTensor.cpp
-    src/growth_strategies/CandidateOrdering.cpp
-    src/growth_strategies/ComponentPruning.cpp
-    src/growth_strategies/GrowthConfig.cpp
-)
-target_link_libraries(vc_tracer PUBLIC vc_core vc_ui vc_flattening Ceres::ceres Qt6::Core)
-target_include_directories(vc_tracer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../libs/edt)
+qt6_wrap_cpp(vccollection_moc include/vc/ui/VCCollection.hpp)
+add_library(vc_ui src/VCCollection.cpp ${vccollection_moc})
+target_link_libraries(vc_ui PUBLIC vc_core Qt6::Core)
 
 if(VC_USE_PCH)
-    foreach(_lib vc_ui vc_flattening vc_inpaint vc_tracer)
-        target_precompile_headers(${_lib} REUSE_FROM vc_core)
-    endforeach()
+    target_precompile_headers(vc_ui REUSE_FROM vc_core)
 endif()

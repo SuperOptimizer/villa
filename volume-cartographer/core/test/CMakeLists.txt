@@ -14,52 +14,24 @@ endif()
 
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Test)
 
-# vc_add_test(NAME ... [SOURCES ...] [LIBS ...] [INCLUDES ...] [DEFS ...])
-#
-# Standard wrapper for the add_executable / target_link_libraries / add_test
-# trio used by every test in this directory. Defaults SOURCES to <name>.cpp
-# and LIBS to "doctest::doctest vc_core" — pass LIBS to override (e.g. the
-# Qt-based tests). Also links misc/sanitizer_config.c into every test exe
-# when any sanitizer is enabled, so __tsan_default_suppressions and friends
-# actually take effect at runtime (otherwise the symbols only end up in
-# VC3D and sanitizer_canary).
 function(vc_add_test)
     cmake_parse_arguments(T "" "NAME" "SOURCES;LIBS;INCLUDES;DEFS" ${ARGN})
-    if(NOT T_NAME)
-        message(FATAL_ERROR "vc_add_test: NAME is required")
-    endif()
     if(NOT T_SOURCES)
         set(T_SOURCES ${T_NAME}.cpp)
     endif()
     if(NOT DEFINED T_LIBS)
         set(T_LIBS doctest::doctest vc_core)
     endif()
-    # sanitizer_config.cpp must be linked into the executable itself —
-    # TSan reads __tsan_default_suppressions eagerly during init, before
-    # vc_core's dlsym table is visible. (ASan/UBSan resolve lazily so they
-    # don't care, but uniform inclusion keeps the rule simple.)
-    if(VC_ENABLE_ASAN OR VC_ENABLE_UBSAN OR VC_ENABLE_TSAN OR VC_ENABLE_LSAN
-       OR VC_ENABLE_TYSAN OR VC_ENABLE_NSAN)
+    if(VC_ENABLE_ASAN OR VC_ENABLE_UBSAN OR VC_ENABLE_TSAN
+       OR VC_ENABLE_LSAN OR VC_ENABLE_TYSAN OR VC_ENABLE_NSAN)
         list(APPEND T_SOURCES "${CMAKE_SOURCE_DIR}/misc/sanitizer_config.cpp")
     endif()
     add_executable(${T_NAME} ${T_SOURCES})
-    if(T_LIBS)
-        target_link_libraries(${T_NAME} PRIVATE ${T_LIBS})
-    endif()
-    if(T_INCLUDES)
-        target_include_directories(${T_NAME} PRIVATE ${T_INCLUDES})
-    endif()
-    # VC_TEST_FIXTURES_DIR is always the data/ dir next to this CMakeLists;
-    # bake it into every test so individual targets don't need to repeat it.
+    target_link_libraries(${T_NAME} PRIVATE ${T_LIBS})
+    target_include_directories(${T_NAME} PRIVATE ${T_INCLUDES})
     target_compile_definitions(${T_NAME} PRIVATE
-        VC_TEST_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")
-    if(T_DEFS)
-        target_compile_definitions(${T_NAME} PRIVATE ${T_DEFS})
-    endif()
-    # PCH: REUSE_FROM vc_core. Skip tests that don't link vc_core —
-    # their include paths don't reach OpenCV / nlohmann_json.
-    set(_pch_skip test_smoke test_segmentation_autosave_state)
-    if(VC_USE_PCH AND NOT T_NAME IN_LIST _pch_skip)
+        VC_TEST_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data" ${T_DEFS})
+    if(VC_USE_PCH AND NOT T_NAME MATCHES "^test_(smoke|segmentation_autosave_state)$")
         target_precompile_headers(${T_NAME} REUSE_FROM vc_core)
     endif()
     add_test(NAME ${T_NAME} COMMAND ${T_NAME})
@@ -82,57 +54,32 @@ vc_add_test(NAME test_quadsurface_save_roundtrip)
 vc_add_test(NAME test_atomic_imwrite_multi)
 vc_add_test(NAME test_post_process)
 
-# Pin the on-disk wire format: chunks must remain Blosc1-readable because
-# VcDataset writes Zarr v2 metadata advertising compressor_id = "blosc".
-# This catches any future migration to Blosc2 that would silently produce
-# chunks numcodecs / zarr-python cannot decode.
-#
-# Links vc_core directly so it can call vc::testing::bloscCompressForTest,
-# which exercises the *real* compress path used by VcDataset.
+# Pin Blosc1-readable on-disk format; guards against silent Blosc2 migration.
 vc_add_test(NAME test_blosc1_compat LIBS doctest::doctest vc_core Blosc::blosc)
 
-# Parser-only regression tests for vc_merge_tifxyz: link the small static
-# lib that holds gmResolveGrid + gmCheckConnected so the failure-message
-# assertions are exact, without spawning the binary.
 vc_add_test(NAME test_merge_grid_resolve LIBS doctest::doctest vc_merge_grid)
 
-# End-to-end test that spawns the built vc_merge_tifxyz binary on two
-# synthetic 16x16 tifxyz dirs. Opt-in via VC_RUN_E2E=1; the test skips
-# itself if unset, so the default ctest run stays fast.
+# Opt-in via VC_RUN_E2E=1; spawns the built vc_merge_tifxyz binary.
 add_executable(test_merge_e2e_small test_merge_e2e_small.cpp)
 target_link_libraries(test_merge_e2e_small PRIVATE doctest::doctest vc_core nlohmann_json::nlohmann_json)
 if(VC_RUN_E2E)
     add_test(NAME test_merge_e2e_small COMMAND test_merge_e2e_small)
-    # The binary path probe in the test prefers VC_MERGE_TIFXYZ_BIN, so
-    # CTest runs reliably regardless of the working directory.
     set_tests_properties(test_merge_e2e_small PROPERTIES
         ENVIRONMENT "VC_RUN_E2E=1;VC_MERGE_TIFXYZ_BIN=$<TARGET_FILE:vc_merge_tifxyz>")
 endif()
 
+# Benches: built always, opt-in to ctest via VC_RUN_BENCHES (loose wall-clock).
 add_executable(bench_volume_sample bench_volume_sample.cpp)
 target_link_libraries(bench_volume_sample PRIVATE doctest::doctest vc_core)
-# Bench has a generous wall-clock assertion; not part of default ctest
-# unless the user opts in via VC_RUN_BENCHES. Expose it as a target so
-# it's always built and runnable manually.
-if(VC_RUN_BENCHES)
-    add_test(NAME bench_volume_sample COMMAND bench_volume_sample)
-endif()
-
 add_executable(bench_chunked_plane_sampler bench_chunked_plane_sampler.cpp)
 target_link_libraries(bench_chunked_plane_sampler PRIVATE doctest::doctest vc_core)
-# Perf guard for the slice sampler hot path. Like bench_volume_sample it
-# carries only a loose wall-clock assertion, so it stays out of default
-# ctest unless the user opts in via VC_RUN_BENCHES; the target is always
-# built and runnable manually.
 if(VC_RUN_BENCHES)
+    add_test(NAME bench_volume_sample COMMAND bench_volume_sample)
     add_test(NAME bench_chunked_plane_sampler COMMAND bench_chunked_plane_sampler)
 endif()
 
-# Sanitizer canaries: one exe, one subcommand per sanitizer. Each canary
-# triggers a violation that the matching sanitizer must report; ctest
-# expects the abort and matches the report text via PASS_REGULAR_EXPRESSION.
-# A miss (sanitizer not actually instrumenting) makes the canary exit 0,
-# which fails the test — that's the whole point.
+# Per-sanitizer canary: triggers a violation the sanitizer must report.
+# Miss (canary exits 0) fails ctest — proves the sanitizer is wired.
 set(_canary_srcs sanitizer_canary.cpp)
 if(VC_ENABLE_ASAN OR VC_ENABLE_UBSAN OR VC_ENABLE_TSAN OR VC_ENABLE_LSAN
    OR VC_ENABLE_TYSAN OR VC_ENABLE_NSAN)
@@ -141,12 +88,6 @@ endif()
 add_executable(sanitizer_canary ${_canary_srcs})
 set_target_properties(sanitizer_canary PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF)
 
-# ctest: PASS_REGULAR_EXPRESSION must match in stdout/stderr for the test
-# to pass. The canary aborts via the sanitizer runtime on success, or
-# `exit(1)`s on the fall-through (sanitizer not actually instrumenting), so
-# both the regex and a non-zero exit are required for a meaningful signal.
-# Regexes are tight — generic substrings like "runtime error" can be emitted
-# by unrelated failures and would mask a regression.
 function(_add_canary name arg regex)
     add_test(NAME ${name} COMMAND sanitizer_canary ${arg})
     set_tests_properties(${name} PROPERTIES PASS_REGULAR_EXPRESSION "${regex}")
@@ -187,8 +128,6 @@ vc_add_test(NAME test_surface_patch_index)
 vc_add_test(NAME test_tiff_merge)
 vc_add_test(NAME test_http_fetch_errors)
 
-# Live S3: stages PHerc 0172 level 5 to a local zarr dir, then exercises
-# the NormalGridGenerate library API against it. Soft-skips on network.
 vc_add_test(NAME test_normal_grid_live)
 
 vc_add_test(NAME test_normalgridtools_real)
@@ -233,25 +172,24 @@ vc_add_test(NAME test_slicing_more)
 vc_add_test(NAME test_vcdataset_more)
 
 vc_add_test(NAME test_segmentation)
-vc_add_test(NAME test_chunked_tensor_meta LIBS doctest::doctest vc_tracer)
+vc_add_test(NAME test_chunked_tensor_meta LIBS doctest::doctest vc_core)
 vc_add_test(NAME test_post_process_util)
 vc_add_test(NAME test_render)
 vc_add_test(NAME test_growth_config
-    LIBS doctest::doctest vc_tracer
+    LIBS doctest::doctest vc_core
     INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/..)
 vc_add_test(NAME test_growth_helpers
-    LIBS doctest::doctest vc_tracer
+    LIBS doctest::doctest vc_core
     INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/..)
 vc_add_test(NAME test_surf_tracker_data
-    LIBS doctest::doctest vc_tracer
+    LIBS doctest::doctest vc_core
     INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/..)
 vc_add_test(NAME test_sparse_chunk_spool)
-vc_add_test(NAME test_neural_tracer_connection LIBS doctest::doctest vc_tracer)
+vc_add_test(NAME test_neural_tracer_connection LIBS doctest::doctest vc_core)
 vc_add_test(NAME test_quadsurface_final)
 vc_add_test(NAME test_quadsurface_components)
 
-# Real PHerc 0172 segments committed under core/test/data/segments/ are
-# reached via VC_TEST_FIXTURES_DIR, which vc_add_test bakes into every exe.
+# Real PHerc 0172 fixtures under data/segments/, reached via VC_TEST_FIXTURES_DIR.
 vc_add_test(NAME test_quadsurface_fixtures)
 vc_add_test(NAME test_volume_pkg_full)
 vc_add_test(NAME test_load_quad_from_tifxyz)

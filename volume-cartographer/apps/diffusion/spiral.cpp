@@ -21,7 +21,7 @@
 
 
 #include "vc/core/util/GridStore.hpp"
-#include "vc/ui/VCCollection.hpp"
+#include "vc/core/PointCollections.hpp"
 
 
 using SkeletonGraph = boost::adjacency_list<boost::vecS, boost::vecS, boost::undirectedS, SkeletonVertex, SkeletonEdge>;
