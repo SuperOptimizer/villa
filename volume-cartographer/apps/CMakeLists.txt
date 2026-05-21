@@ -168,41 +168,19 @@ target_link_libraries(vc_zarr_to_tiff vc_core Boost::program_options TIFF::TIFF)
 add_executable(vc_zarr_recompress src/vc_zarr_recompress.cpp)
 target_link_libraries(vc_zarr_recompress vc_core Blosc::blosc)
 
-# Precompiled headers for CLI apps (reuse vc_core's PCH)
+# Reuse vc_core's PCH on every CLI app that actually links vc_core
+# (others don't get OpenCV/nlohmann_json include paths and the PCH
+# would fail to compile).
 if(VC_USE_PCH)
-    foreach(_app
-        vc_render_video
-        vc_render_tifxyz
-        vc_objrefine
-        vc_grow_seg_from_seed
-        vc_seg_add_overlap
-        vc_grow_seg_from_segments
-        vc_tifxyz2obj
-        vc_obj2tifxyz
-        vc_obj2tifxyz_legacy
-        vc_flatten
-        vc_tifxyz_inp_mask
-        vc_tifxyz_trim
-        vc_cut_windings
-        vc_tifxyz_winding
-        vc_tifxyz2zarr_sparse
-        vc_add_ignore_label
-        vc_calc_surface_metrics
-        vc_tifxyz_gengt
-        vc_diffuse_winding
-        vc_tifxyz_mmap_prepare
-        vc_create_segment_mask
-        vc_visualize
-        vc_transform_geom
-        vc_gen_normalgrids
-        vc_ngrids
-        vc_tifxyz2rgb
-        vc_rgb2tifxyz
-        vc_thinning
-        vc_tifxyz
-        vc_project_tifxyz
-        vc_zarr_to_tiff
-    )
-        target_precompile_headers(${_app} REUSE_FROM vc_core)
+    get_property(_apps_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+    foreach(_app ${_apps_targets})
+        get_target_property(_type ${_app} TYPE)
+        if(NOT _type STREQUAL "EXECUTABLE")
+            continue()
+        endif()
+        get_target_property(_libs ${_app} LINK_LIBRARIES)
+        if(_libs AND "vc_core" IN_LIST _libs)
+            target_precompile_headers(${_app} REUSE_FROM vc_core)
+        endif()
     endforeach()
 endif()

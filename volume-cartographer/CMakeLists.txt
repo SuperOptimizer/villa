@@ -20,9 +20,10 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(BUILD_SHARED_LIBS ON CACHE BOOL "Build vc_* and FetchContent deps as .so")
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 # Force -fPIC on executables too (cmake's default is -fPIE), so PCH from
-# our -fPIC shared libs is reusable. Drops PIE/ASLR on the main binaries.
+# our -fPIC shared libs is reusable. -no-pie only applies to exe links,
+# not shared-lib links (mold rejects -no-pie on a .so).
 add_compile_options(-fPIC)
-add_link_options(-no-pie)
+add_link_options($<$<STREQUAL:$<TARGET_PROPERTY:TYPE>,EXECUTABLE>:-no-pie>)
 # Keep dlopen of vc_* libs working from the build tree without LD_LIBRARY_PATH.
 set(CMAKE_BUILD_RPATH_USE_ORIGIN ON)
 set(CMAKE_INSTALL_RPATH "$ORIGIN/../lib")
