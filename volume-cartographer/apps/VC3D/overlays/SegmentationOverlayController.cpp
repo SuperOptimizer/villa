@@ -569,9 +569,10 @@ void SegmentationOverlayController::saveApprovalMaskToSurface(QuadSurface* surfa
         }
     }
 
-    // Save to surface
+    // Only approval.tif changed; saveChannel avoids the full-segment snapshot
+    // + x/y/z rewrite that saveOverwrite() would do on every update.
     surface->setChannel("approval", approvalMask);
-    surface->saveOverwrite();
+    surface->saveChannel("approval");
 
     // Update saved image to match what we just wrote and clear pending
     for (int row = 0; row < height; ++row) {

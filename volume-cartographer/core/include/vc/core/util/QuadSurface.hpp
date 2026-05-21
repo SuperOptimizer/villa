@@ -378,6 +378,9 @@ public:
     cv::Mat channel(const std::string& name, int flags = 0);
     void invalidateCache();
     void saveOverwrite();
+    // Write a single ancillary channel to path/<name>.tif in place, without
+    // snapshotting or rewriting x/y/z. No-op if the channel is absent/empty.
+    void saveChannel(const std::string& name);
     void saveSnapshot(int maxBackups = 10);
     void invalidateMask();
     std::vector<std::string> channelNames() const;
@@ -436,6 +439,8 @@ protected:
 private:
     // Write surface data to directory without modifying state. skipChannel can be used to exclude a channel.
     void writeDataToDirectory(const std::filesystem::path& dir, const std::string& skipChannel = "");
+    // Write a single ancillary channel as dir/<name>.tif.
+    void writeChannelFile(const std::filesystem::path& dir, const std::string& name, const cv::Mat& mat);
     // Flag for lazy loading - true if points need to be loaded from path
     bool _needsLoad = false;
     // Mutex to protect lazy loading from concurrent access
