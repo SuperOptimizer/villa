@@ -62,6 +62,7 @@ run_in_builder() {
 coverage_in_dir() {
     local image=$1 src=$2
     local build_dir="build/ci-coverage-gcc-$image"
+    cmd_builder "$image"
     run_in_builder "$image" "$src" "
         cmake --preset ci-coverage-gcc &&
         cmake --build --preset ci-coverage-gcc &&
@@ -142,6 +143,7 @@ cmd_publish() {
 
 cmd_test() {
     local image=$1 compiler=$2 preset=$3
+    cmd_builder "$image"
     run_in_builder "$image" "$REPO_ROOT" "
         cmake --preset $preset-$compiler &&
         cmake --build --preset $preset-$compiler &&
@@ -150,6 +152,7 @@ cmd_test() {
 
 cmd_compile() {
     local image=$1 compiler=$2 preset=$3
+    cmd_builder "$image"
     run_in_builder "$image" "$REPO_ROOT" "
         cmake --preset $preset-$compiler &&
         cmake --build --preset $preset-$compiler"
@@ -258,6 +261,7 @@ cmd_dead_code() {
     local image=${1:-ubuntu-26.04}
     local compiler=${2:-clang}
     local build_dir="build/ci-dead-code-$compiler-$image"
+    cmd_builder "$image"
     mkdir -p "$REPO_ROOT/dead-code"
 
     # Build inside the container; capture full build log for compile-warning
@@ -272,10 +276,10 @@ cmd_dead_code() {
 }
 
 cmd_all() {
-    for image in "${IMAGES[@]}"; do
-        echo "=== Builder: $image ==="
-        cmd_builder "$image"
-    done
+    # cmd_compile / cmd_test / cmd_coverage / cmd_dead_code each call
+    # cmd_builder up-front, so we don't pre-warm the images here. Repeat
+    # cmd_builder calls are cheap (pull is cached, buildx hits its cache).
+
     # 26.04: Release compile + full test matrix + sanitizers.
     for compiler in "${COMPILERS[@]}"; do
         echo "=== ubuntu-26.04: ci-release-$compiler (compile) ==="
