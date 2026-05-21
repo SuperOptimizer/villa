@@ -47,10 +47,20 @@ add_library(vc_core
         src/growth_strategies/GrowthConfig.cpp
         src/PointCollections.cpp
         src/surface_metrics.cpp
+        src/merge_grid.cpp
+        # was utils/
+        ${CMAKE_CURRENT_SOURCE_DIR}/../utils/src/zarr.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/../utils/src/Json.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/../utils/src/aws_auth.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/../utils/src/c3d_codec.cpp
         ${CMAKE_CURRENT_BINARY_DIR}/Version.cpp
 )
 
-target_include_directories(vc_core PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../libs/edt)
+target_include_directories(vc_core
+        PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../utils/include
+        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../libs/edt)
+
+target_compile_definitions(vc_core PUBLIC UTILS_HAS_CURL=1 UTILS_HAS_C3D_CODEC=1)
 
 target_link_libraries(vc_core
         PUBLIC
@@ -65,12 +75,10 @@ target_link_libraries(vc_core
         OpenABF
         Ceres::ceres
         CURL::libcurl
-)
-
-# utils header-only library + vendored c3d codec.
-target_link_libraries(vc_core PUBLIC
-    $<BUILD_INTERFACE:utils>
-    $<BUILD_INTERFACE:utils_c3d_codec>
+        zstd::libzstd
+        LZ4::lz4
+        ZLIB::ZLIB
+        c3d
 )
 target_link_libraries(vc_core PRIVATE
     Blosc::blosc

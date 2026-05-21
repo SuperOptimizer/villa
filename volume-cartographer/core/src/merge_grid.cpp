@@ -2,7 +2,7 @@
 // factored out of vc_merge_tifxyz.cpp for testability. No behavior change
 // from the previous in-place definitions.
 
-#include "vc_merge_tifxyz_grid.hpp"
+#include "vc/core/merge_grid.hpp"
 
 #include <nlohmann/json.hpp>
 

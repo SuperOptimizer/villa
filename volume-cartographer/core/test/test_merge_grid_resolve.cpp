@@ -8,7 +8,7 @@
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include <doctest/doctest.h>
 
-#include "vc_merge_tifxyz_grid.hpp"
+#include "vc/core/merge_grid.hpp"
 
 #include <algorithm>
 #include <cstdint>

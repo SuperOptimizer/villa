@@ -28,11 +28,6 @@ set(PASTIX_WITH_MPI        OFF CACHE BOOL "" FORCE)
 set(PASTIX_WITH_CUDA       OFF CACHE BOOL "" FORCE)
 set(PASTIX_WITH_FORTRAN    OFF CACHE BOOL "" FORCE)
 set(BUILD_TESTING          OFF CACHE BOOL "" FORCE)
-# Build PaStiX as a static lib so flatboi doesn't need libpastix.so at runtime
-# and so the static parent-tree archives don't have to be PIC. Scope to
-# PaStiX's add_subdirectory; restore after so it doesn't leak to siblings.
-set(_flatboi_saved_bsl "${BUILD_SHARED_LIBS}")
-set(BUILD_SHARED_LIBS OFF)
 
 FetchContent_GetProperties(pastix)
 if(NOT pastix_POPULATED)
@@ -92,9 +87,6 @@ if(NOT pastix_POPULATED)
     file(WRITE "${pastix_SOURCE_DIR}/spm/CMakeLists.txt" "${_pastix_spm_cml}")
     add_subdirectory(${pastix_SOURCE_DIR} ${pastix_BINARY_DIR})
 endif()
-
-set(BUILD_SHARED_LIBS "${_flatboi_saved_bsl}")
-unset(_flatboi_saved_bsl)
 
 add_executable(flatboi flatboi.cpp)
 

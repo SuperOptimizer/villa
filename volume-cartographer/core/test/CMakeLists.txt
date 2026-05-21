@@ -59,7 +59,7 @@ vc_add_test(NAME test_post_process)
 # Pin Blosc1-readable on-disk format; guards against silent Blosc2 migration.
 vc_add_test(NAME test_blosc1_compat LIBS doctest::doctest vc_core Blosc::blosc)
 
-vc_add_test(NAME test_merge_grid_resolve LIBS doctest::doctest vc_merge_grid)
+vc_add_test(NAME test_merge_grid_resolve)
 
 # Opt-in via VC_RUN_E2E=1; spawns the built vc_merge_tifxyz binary.
 add_executable(test_merge_e2e_small test_merge_e2e_small.cpp)

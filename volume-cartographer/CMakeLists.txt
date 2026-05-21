@@ -385,7 +385,6 @@ if(_san)
     add_link_options(${_san})
 endif()
 
-add_subdirectory(utils)
 add_subdirectory(core)
 add_subdirectory(apps)
 
