@@ -213,9 +213,12 @@ fs::path defaultAutosaveRoot()
 
 void atomicWriteString(const fs::path& target, const std::string& text)
 {
+    // Per-pid tmp name so concurrent writers (parallel test processes,
+    // two live VC3D instances) don't clobber each other's .tmp before
+    // rename. rename(2) is atomic on the same filesystem.
     fs::create_directories(target.parent_path());
     auto tmp = target;
-    tmp += ".tmp";
+    tmp += ".tmp." + std::to_string(getpid());
     {
         std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
         if (!out) throw std::runtime_error("cannot open " + tmp.string() + " for write");
