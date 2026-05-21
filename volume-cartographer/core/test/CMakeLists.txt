@@ -47,6 +47,8 @@ vc_add_test(NAME test_segmentation_autosave_state
     INCLUDES ${PROJECT_SOURCE_DIR}/apps/VC3D)
 
 vc_add_test(NAME test_segmentation_intersection_invalidation
+    SOURCES test_segmentation_intersection_invalidation.cpp
+            ${PROJECT_SOURCE_DIR}/apps/VC3D/VCCollection.cpp
     LIBS Qt6::Core Qt6::Gui Qt6::Test vc_core
     INCLUDES ${PROJECT_SOURCE_DIR}/apps/VC3D)
 

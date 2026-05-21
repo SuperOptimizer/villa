@@ -25,7 +25,7 @@
 #include <filesystem>
 #include "utils/Json.hpp"
 
-#include "vc/ui/VCCollection.hpp"
+#include "VCCollection.hpp"
 
 namespace {
 // Check if a corr result's stored position matches the current point position.

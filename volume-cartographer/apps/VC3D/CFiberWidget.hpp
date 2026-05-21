@@ -5,7 +5,7 @@
 #include <QStandardItemModel>
 #include <QPushButton>
 #include <QButtonGroup>
-#include "vc/ui/VCCollection.hpp"
+#include "VCCollection.hpp"
 
 class CFiberWidget : public QDockWidget
 {

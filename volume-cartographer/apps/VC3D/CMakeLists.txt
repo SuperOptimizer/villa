@@ -5,6 +5,8 @@ add_definitions(-DCHUNK_CACHE_SIZE_GB=${CHUNK_CACHE_SIZE_GB})
 
 set(srcs
     VCAppMain.cpp
+    VCCollection.cpp
+    VCCollection.hpp
     CState.cpp
     CState.hpp
     Keybinds.cpp
@@ -205,7 +207,6 @@ target_link_libraries(VC3D
     # mimalloc first so its symbols win malloc/free resolution.
     $<$<BOOL:${mimalloc_FOUND}>:mimalloc>
     vc_core
-    vc_ui
     Qt6::Core
     Qt6::Concurrent
     Qt6::Gui

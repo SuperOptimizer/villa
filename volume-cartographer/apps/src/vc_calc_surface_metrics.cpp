@@ -1,4 +1,4 @@
-#include "vc/ui/surface_metrics.hpp"
+#include "vc/core/surface_metrics.hpp"
 #include "vc/core/PointCollections.hpp"
 #include "vc/core/util/Surface.hpp"
 #include "vc/core/util/QuadSurface.hpp"

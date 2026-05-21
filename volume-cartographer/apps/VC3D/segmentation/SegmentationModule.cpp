@@ -14,7 +14,7 @@
 #include "ViewerManager.hpp"
 #include "overlays/SegmentationOverlayController.hpp"
 
-#include "vc/ui/VCCollection.hpp"
+#include "VCCollection.hpp"
 
 #include <QApplication>
 #include <QDebug>

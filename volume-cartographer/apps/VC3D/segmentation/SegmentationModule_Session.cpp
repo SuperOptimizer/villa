@@ -13,7 +13,7 @@
 
 #include "vc/core/util/QuadSurface.hpp"
 #include "vc/core/util/SurfacePatchIndex.hpp"
-#include "vc/ui/VCCollection.hpp"
+#include "VCCollection.hpp"
 
 bool SegmentationModule::beginEditingSession(std::shared_ptr<QuadSurface> surface)
 {

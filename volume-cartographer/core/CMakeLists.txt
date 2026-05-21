@@ -116,10 +116,3 @@ if(VC_USE_PCH)
     target_precompile_headers(vc_core PRIVATE ${VC_PCH_HEADERS})
 endif()
 
-qt6_wrap_cpp(vccollection_moc include/vc/ui/VCCollection.hpp)
-add_library(vc_ui src/VCCollection.cpp ${vccollection_moc})
-target_link_libraries(vc_ui PUBLIC vc_core Qt6::Core)
-
-if(VC_USE_PCH)
-    target_precompile_headers(vc_ui REUSE_FROM vc_core)
-endif()

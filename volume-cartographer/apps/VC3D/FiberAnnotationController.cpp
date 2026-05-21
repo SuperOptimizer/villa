@@ -1,7 +1,7 @@
 #include "FiberAnnotationController.hpp"
 
 #include "CState.hpp"
-#include "vc/ui/VCCollection.hpp"
+#include "VCCollection.hpp"
 #include "vc/core/util/PlaneSurface.hpp"
 #include "volume_viewers/CChunkedVolumeViewer.hpp"
 

@@ -1,4 +1,4 @@
-#include "vc/ui/surface_metrics.hpp"
+#include "vc/core/surface_metrics.hpp"
 #include "vc/core/util/QuadSurface.hpp"
 #include <vector>
 #include <algorithm>

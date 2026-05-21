@@ -7,7 +7,7 @@
 #include "vc/core/types/Volume.hpp"
 #include "vc/core/types/VolumePkg.hpp"
 #include "vc/core/util/QuadSurface.hpp"
-#include "vc/ui/VCCollection.hpp"
+#include "VCCollection.hpp"
 
 #include <QCheckBox>
 #include <QComboBox>

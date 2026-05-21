@@ -1,4 +1,4 @@
-#include "vc/ui/VCCollection.hpp"
+#include "VCCollection.hpp"
 
 VCCollection::VCCollection(QObject* parent)
     : QObject(parent)

@@ -25,7 +25,7 @@
 #include "vc/core/util/LoadJson.hpp"
 #include "vc/core/util/DateTime.hpp"
 #include "vc/tracer/Tracer.hpp"
-#include "vc/ui/VCCollection.hpp"
+#include "VCCollection.hpp"
 
 Q_DECLARE_LOGGING_CATEGORY(lcSegGrowth)
 

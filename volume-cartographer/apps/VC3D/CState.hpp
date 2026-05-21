@@ -13,7 +13,7 @@
 #include "vc/core/types/Volume.hpp"
 #include "vc/core/util/QuadSurface.hpp"
 #include "vc/core/util/Surface.hpp"
-#include "vc/ui/VCCollection.hpp"
+#include "VCCollection.hpp"
 
 struct POI
 {

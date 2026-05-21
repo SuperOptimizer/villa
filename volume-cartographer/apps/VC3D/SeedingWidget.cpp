@@ -23,7 +23,7 @@
 #include "vc/core/util/Slicing.hpp"
 #include "vc/core/util/Logging.hpp"
 
-#include "vc/ui/VCCollection.hpp"
+#include "VCCollection.hpp"
 #include <cmath>
 #include <filesystem>
 #include <fstream>

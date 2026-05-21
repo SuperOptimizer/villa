@@ -13,7 +13,7 @@
 #include "vc/core/util/DateTime.hpp"
 #include "vc/core/util/LoadJson.hpp"
 #include "utils/Json.hpp"
-#include "vc/ui/VCCollection.hpp"
+#include "VCCollection.hpp"
 
 #include <QCheckBox>
 #include <QComboBox>

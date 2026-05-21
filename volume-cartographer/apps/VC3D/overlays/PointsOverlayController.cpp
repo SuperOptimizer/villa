@@ -3,7 +3,7 @@
 #include "../volume_viewers/VolumeViewerBase.hpp"
 #include "../ViewerManager.hpp"
 
-#include "vc/ui/VCCollection.hpp"
+#include "VCCollection.hpp"
 #include "vc/core/util/Surface.hpp"
 #include "vc/core/util/PlaneSurface.hpp"
 

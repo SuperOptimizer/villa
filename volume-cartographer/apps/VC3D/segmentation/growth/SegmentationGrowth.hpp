@@ -14,7 +14,7 @@
 
 #include <opencv2/core.hpp>
 
-#include "vc/ui/VCCollection.hpp"
+#include "VCCollection.hpp"
 
 class QuadSurface;
 class SurfacePatchIndex;

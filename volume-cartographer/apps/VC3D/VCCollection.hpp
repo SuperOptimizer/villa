@@ -9,6 +9,9 @@ class VCCollection : public QObject, public PointCollections
     Q_OBJECT
 
 public:
+    using Collection = ::Collection;
+    using WindingFillMode = ::WindingFillMode;
+
     explicit VCCollection(QObject* parent = nullptr);
     ~VCCollection() override;
 

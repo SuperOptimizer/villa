@@ -12,7 +12,7 @@
 #include <vector>
 #include "ui_VCMain.h"
 
-#include "vc/ui/VCCollection.hpp"
+#include "VCCollection.hpp"
 
 #include <QShortcut>
 #include <unordered_map>

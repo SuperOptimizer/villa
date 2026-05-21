@@ -21,7 +21,7 @@
 
 using PathPrimitive = ViewerOverlayControllerBase::PathPrimitive;
 #include "vc/core/types/VolumePkg.hpp"
-#include "vc/ui/VCCollection.hpp"
+#include "VCCollection.hpp"
 
 class CState;
 

@@ -1,6 +1,6 @@
 #include "volume_viewers/annotation_tools/SameWrapAnnotationTool.hpp"
 
-#include "vc/ui/VCCollection.hpp"
+#include "VCCollection.hpp"
 
 #include "dijkstra3d.hpp"
 
