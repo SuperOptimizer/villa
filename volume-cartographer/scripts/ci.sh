@@ -43,6 +43,18 @@ dockerfile_for() {
     return 1
 }
 
+# Hash the contents that determine the builder image. If a pulled ghcr
+# image carries a different value of this hash on its vc-builder-deps-hash
+# label, cmd_builder rejects it and falls through to a local build —
+# otherwise a stale ghcr image silently retags over a fresher local one.
+builder_deps_hash() {
+    local image=$1
+    local dockerfile
+    dockerfile="$(dockerfile_for "$image")"
+    cat "$REPO_ROOT/$dockerfile" "$REPO_ROOT/scripts/install_build_deps.sh" \
+        | sha256sum | cut -c1-16
+}
+
 run_in_builder() {
     local image=$1 src=$2; shift 2
     # --user host UID/GID: files written under /src land owned by the
@@ -88,19 +100,41 @@ total_coverage_pct() {
 cmd_builder() {
     local image=$1
     local local_tag="vc-builder:$image"
+    local want_hash
+    want_hash="$(builder_deps_hash "$image")"
 
-    # Try pulling the published image from ghcr first. Skip the pull if
-    # VC_BUILDER_FORCE_LOCAL=1 is set (the PR touched a Dockerfile, or
-    # the user explicitly wants a from-scratch local build).
+    # Reuse the already-tagged local image only if it matches the current
+    # Dockerfile + install_build_deps.sh. Otherwise the local tag could
+    # be a stale image left behind by a previous branch.
+    local existing_hash
+    existing_hash="$(docker image inspect "$local_tag" \
+        --format '{{ index .Config.Labels "vc-builder-deps-hash" }}' \
+        2>/dev/null || true)"
+    if [[ "$existing_hash" == "$want_hash" ]]; then
+        return 0
+    fi
+
+    # Try pulling the published image from ghcr. Same hash check applies —
+    # if the registry's image was built from a different revision of the
+    # builder inputs, we refuse it and build locally instead of silently
+    # retagging a stale image over the fresh local one we just discarded.
     if [[ "${VC_BUILDER_FORCE_LOCAL:-0}" != "1" ]]; then
         local owner
         owner=$(echo "${VC_BUILDER_REGISTRY_OWNER:-${GITHUB_REPOSITORY_OWNER:-scrollprize}}" | tr 'A-Z' 'a-z')
         local remote="ghcr.io/$owner/villa/volume-cartographer:builder-$image"
         if docker pull "$remote" 2>/dev/null; then
-            docker tag "$remote" "$local_tag"
-            return 0
+            local pulled_hash
+            pulled_hash="$(docker image inspect "$remote" \
+                --format '{{ index .Config.Labels "vc-builder-deps-hash" }}' \
+                2>/dev/null || true)"
+            if [[ "$pulled_hash" == "$want_hash" ]]; then
+                docker tag "$remote" "$local_tag"
+                return 0
+            fi
+            echo "ci.sh: ghcr image $remote has deps-hash '$pulled_hash' but tree wants '$want_hash'; building locally" >&2
+        else
+            echo "ci.sh: ghcr pull of $remote failed; building locally" >&2
         fi
-        echo "ci.sh: ghcr pull of $remote failed; building locally" >&2
     fi
 
     local dockerfile
@@ -117,6 +151,7 @@ cmd_builder() {
     docker buildx build \
         --target builder \
         --tag "$local_tag" \
+        --label "vc-builder-deps-hash=$want_hash" \
         --file "$dockerfile" \
         --load \
         "${cache_args[@]}" \
@@ -131,11 +166,14 @@ cmd_publish() {
     dockerfile="$(dockerfile_for "$image")"
     local repo="ghcr.io/$owner/villa/volume-cartographer"
     local sha=${GITHUB_SHA:-$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo local)}
+    local deps_hash
+    deps_hash="$(builder_deps_hash "$image")"
 
     docker buildx build \
         --target builder \
         --tag "$repo:builder-$image" \
         --tag "$repo:builder-$image-$sha" \
+        --label "vc-builder-deps-hash=$deps_hash" \
         --file "$dockerfile" \
         --push \
         .
