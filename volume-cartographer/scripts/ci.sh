@@ -43,19 +43,6 @@ dockerfile_for() {
     return 1
 }
 
-# A dropped image (e.g. ubuntu-24.04 after consolidation) is a clean no-op,
-# not an error. GitHub runs the base-branch workflow for PR CI, so a PR that
-# removes an image from IMAGES still gets matrix cells for it until it merges
-# — those cells call us with the old name and must pass harmlessly.
-skip_if_image_dropped() {
-    local image=$1
-    for known in "${IMAGES[@]}"; do
-        [[ "$known" == "$image" ]] && return 1   # known: don't skip
-    done
-    echo "ci.sh: image '$image' no longer built (valid: ${IMAGES[*]}); no-op." >&2
-    return 0   # dropped: caller should `return 0`
-}
-
 run_in_builder() {
     local image=$1 src=$2; shift 2
     # --user host UID/GID: files written under /src land owned by the
@@ -99,7 +86,6 @@ total_coverage_pct() {
 
 cmd_builder() {
     local image=$1
-    skip_if_image_dropped "$image" && return 0
     local local_tag="vc-builder:$image"
 
     # Try pulling the published image from ghcr first. Skip the pull if
@@ -156,7 +142,6 @@ cmd_publish() {
 
 cmd_test() {
     local image=$1 compiler=$2 preset=$3
-    skip_if_image_dropped "$image" && return 0
     run_in_builder "$image" "$REPO_ROOT" "
         cmake --preset $preset-$compiler &&
         cmake --build --preset $preset-$compiler &&
@@ -165,7 +150,6 @@ cmd_test() {
 
 cmd_compile() {
     local image=$1 compiler=$2 preset=$3
-    skip_if_image_dropped "$image" && return 0
     run_in_builder "$image" "$REPO_ROOT" "
         cmake --preset $preset-$compiler &&
         cmake --build --preset $preset-$compiler"
