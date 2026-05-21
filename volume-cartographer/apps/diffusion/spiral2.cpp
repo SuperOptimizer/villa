@@ -70,7 +70,7 @@ void visualize_spiral(cv::Mat& vis, const std::vector<SpiralPoint>& spiral, cons
 // JSON serialization for SpiralPoint
 void visualize_annotations(
     const cv::Size& slice_size,
-    const PointCollections::Collection& collection,
+    const Collection& collection,
     const ColPoint& start_point_fw,
     const ColPoint& start_point_bw,
     const std::string& path

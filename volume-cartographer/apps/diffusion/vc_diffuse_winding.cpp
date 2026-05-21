@@ -102,15 +102,6 @@ private:
     cv::VideoWriter* writer_;
 };
 
-struct SkeletonVertex {
-    cv::Point pos;
-};
-
-struct SkeletonEdge {
-    std::vector<cv::Point> path;
-    int id;
-};
-
 using SkeletonGraph = boost::adjacency_list<boost::vecS, boost::vecS, boost::undirectedS, SkeletonVertex, SkeletonEdge>;
  
 int main(int argc, char** argv) {

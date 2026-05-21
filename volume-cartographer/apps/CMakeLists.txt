@@ -169,7 +169,6 @@ if(VC_USE_PCH)
         vc_calc_surface_metrics
         vc_create_segment_mask
         vc_cut_windings
-        vc_diffuse_winding
         vc_flatten
         vc_gen_normalgrids
         vc_grow_seg_from_seed
@@ -200,4 +199,15 @@ if(VC_USE_PCH)
     )
         target_precompile_headers(${_app} REUSE_FROM vc_core)
     endforeach()
+
+    # vc_diffuse_winding: own PCH with its diffusion-local heavies
+    # (common.hpp, support.hpp, spiral_common.hpp, spiral_ceres.hpp) on
+    # top of the standard global headers — those locals get re-parsed
+    # 8-11× across the diffusion TUs otherwise.
+    target_precompile_headers(vc_diffuse_winding PRIVATE
+        ${VC_PCH_HEADERS}
+        "$<$<COMPILE_LANGUAGE:CXX>:${CMAKE_CURRENT_SOURCE_DIR}/diffusion/common.hpp>"
+        "$<$<COMPILE_LANGUAGE:CXX>:${CMAKE_CURRENT_SOURCE_DIR}/diffusion/support.hpp>"
+        "$<$<COMPILE_LANGUAGE:CXX>:${CMAKE_CURRENT_SOURCE_DIR}/diffusion/spiral_common.hpp>"
+        "$<$<COMPILE_LANGUAGE:CXX>:${CMAKE_CURRENT_SOURCE_DIR}/diffusion/spiral_ceres.hpp>")
 endif()

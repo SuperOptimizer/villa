@@ -19,11 +19,6 @@
 
 const float sheet_step_weight = 2.0f;
 
-struct SheetConstraintRay {
-    cv::Point2f dir;
-    std::vector<std::pair<cv::Point, cv::Point>> constraints;
-};
-
 void calculate_sheet_distance_constraints(
     const cv::Mat& slice_mat,
     const cv::Point& umbilicus,

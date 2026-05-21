@@ -250,7 +250,7 @@ endif()
 
 if(VC_PROFILE_COMPILE)
     if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
-        add_compile_options(-ftime-trace -ftime-trace-granularity=200)
+        add_compile_options(-ftime-trace -ftime-trace-granularity=0)
     else()
         add_compile_options(-ftime-report)
     endif()

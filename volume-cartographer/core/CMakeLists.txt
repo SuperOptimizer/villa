@@ -109,9 +109,11 @@ if(VC_USE_PCH)
         "$<$<COMPILE_LANGUAGE:CXX>:<memory>>"
         "$<$<COMPILE_LANGUAGE:CXX>:<mutex>>"
         "$<$<COMPILE_LANGUAGE:CXX>:<optional>>"
+        "$<$<COMPILE_LANGUAGE:CXX>:<random>>"
         "$<$<COMPILE_LANGUAGE:CXX>:<sstream>>"
         "$<$<COMPILE_LANGUAGE:CXX>:<stdexcept>>"
         "$<$<COMPILE_LANGUAGE:CXX>:<string>>"
+        "$<$<COMPILE_LANGUAGE:CXX>:<thread>>"
         "$<$<COMPILE_LANGUAGE:CXX>:<unordered_map>>"
         "$<$<COMPILE_LANGUAGE:CXX>:<unordered_set>>"
         "$<$<COMPILE_LANGUAGE:CXX>:<utility>>"
@@ -119,7 +121,14 @@ if(VC_USE_PCH)
         "$<$<COMPILE_LANGUAGE:CXX>:<opencv2/core.hpp>>"
         "$<$<COMPILE_LANGUAGE:CXX>:<opencv2/imgproc.hpp>>"
         "$<$<COMPILE_LANGUAGE:CXX>:<opencv2/imgcodecs.hpp>>"
+        "$<$<COMPILE_LANGUAGE:CXX>:<Eigen/Core>>"
+        "$<$<COMPILE_LANGUAGE:CXX>:<Eigen/Dense>>"
         "$<$<COMPILE_LANGUAGE:CXX>:<nlohmann/json.hpp>>"
+        "$<$<COMPILE_LANGUAGE:CXX>:<vc/core/util/QuadSurface.hpp>>"
+        "$<$<COMPILE_LANGUAGE:CXX>:<vc/core/types/Volume.hpp>>"
+        "$<$<COMPILE_LANGUAGE:CXX>:<vc/core/types/VcDataset.hpp>>"
+        "$<$<COMPILE_LANGUAGE:CXX>:<utils/zarr.hpp>>"
+        "$<$<COMPILE_LANGUAGE:CXX>:<utils/http_fetch.hpp>>"
         CACHE INTERNAL "PCH header list shared by vc_* and downstream targets")
     target_precompile_headers(vc_core PRIVATE ${VC_PCH_HEADERS})
 endif()
