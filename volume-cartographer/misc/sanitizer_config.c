@@ -78,7 +78,8 @@ const char* __tsan_default_suppressions(void)
         "race:tbb::detail::\n"
         "race:tbb::interface\n"
         "race:libopencv_core.so\n"
-        "race:libopencv_imgproc.so\n";
+        "race:libopencv_imgproc.so\n"
+        "race:libQt6Test.so.6\n";
 }
 
 const char* __lsan_default_suppressions(void)
