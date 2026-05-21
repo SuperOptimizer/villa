@@ -56,10 +56,14 @@ const char* __nsan_default_options(void)
 
 const char* __tsan_default_suppressions(void)
 {
-    // QtTest's internal watchdog thread is never joined before exit; the
-    // leak is entirely inside libQt6Core. Match by lib since CI has no symbols.
+    // QtTest's internal watchdog thread is never joined before exit. The
+    // creation stack's top frame is inlined into the test binary, so
+    // called_from_lib alone doesn't catch it; pair it with a thread:
+    // match on the QTest watchdog symbol (requires llvm-symbolizer on PATH).
     return
-        "called_from_lib:libQt6Core.so.6\n";
+        "called_from_lib:libQt6Core.so.6\n"
+        "thread:QTest::watchDog\n"
+        "thread:QTestLib\n";
 }
 
 const char* __lsan_default_suppressions(void)
