@@ -1,4 +1,4 @@
-add_library(utils STATIC src/zarr.cpp src/Json.cpp src/aws_auth.cpp)
+add_library(utils STATIC src/zarr.cpp src/Json.cpp src/aws_auth.cpp src/http_fetch.cpp)
 target_include_directories(utils PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
