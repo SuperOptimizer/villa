@@ -108,6 +108,16 @@ if(VC_RUN_BENCHES)
     add_test(NAME bench_volume_sample COMMAND bench_volume_sample)
 endif()
 
+add_executable(bench_chunked_plane_sampler bench_chunked_plane_sampler.cpp)
+target_link_libraries(bench_chunked_plane_sampler PRIVATE doctest::doctest vc_core)
+# Perf guard for the slice sampler hot path. Like bench_volume_sample it
+# carries only a loose wall-clock assertion, so it stays out of default
+# ctest unless the user opts in via VC_RUN_BENCHES; the target is always
+# built and runnable manually.
+if(VC_RUN_BENCHES)
+    add_test(NAME bench_chunked_plane_sampler COMMAND bench_chunked_plane_sampler)
+endif()
+
 # Sanitizer canaries: one exe, one subcommand per sanitizer. Each canary
 # triggers a violation that the matching sanitizer must report; ctest
 # expects the abort and matches the report text via PASS_REGULAR_EXPRESSION.
@@ -211,6 +221,24 @@ vc_add_test(NAME test_zarr_chunk_fetcher)
 vc_add_test(NAME test_chunked_plane_sampler_more)
 vc_add_test(NAME test_slicing_more)
 vc_add_test(NAME test_vcdataset_more)
+
+vc_add_test(NAME test_segmentation)
+vc_add_test(NAME test_chunked_tensor_meta LIBS doctest::doctest vc_tracer)
+vc_add_test(NAME test_post_process_util)
+vc_add_test(NAME test_render)
+vc_add_test(NAME test_growth_config
+    LIBS doctest::doctest vc_tracer
+    INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/..)
+vc_add_test(NAME test_growth_helpers
+    LIBS doctest::doctest vc_tracer
+    INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/..)
+vc_add_test(NAME test_surf_tracker_data
+    LIBS doctest::doctest vc_tracer
+    INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/..)
+vc_add_test(NAME test_sparse_chunk_spool)
+vc_add_test(NAME test_neural_tracer_connection LIBS doctest::doctest vc_tracer)
+vc_add_test(NAME test_quadsurface_final)
+vc_add_test(NAME test_quadsurface_components)
 
 # Real PHerc 0172 segments committed under core/test/data/segments/ are
 # reached via VC_TEST_FIXTURES_DIR, which vc_add_test bakes into every exe.
