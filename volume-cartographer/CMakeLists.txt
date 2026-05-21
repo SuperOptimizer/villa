@@ -11,6 +11,28 @@ set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# Shared libraries everywhere (our libs + every FetchContent dep that
+# respects BUILD_SHARED_LIBS). Cuts CI runner disk usage by ~10× — the
+# main pain was 80 sanitizer-instrumented test executables each statically
+# linking vc_core/vc_tracer/vc_ui — and speeds linking by avoiding the
+# full static-archive rescan per binary. PIC is implied by SHARED but
+# also needed by static dependencies they consume, so set it globally.
+set(BUILD_SHARED_LIBS ON CACHE BOOL "Build vc_* and FetchContent deps as .so")
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+# Keep dlopen of vc_* libs working from the build tree without LD_LIBRARY_PATH.
+set(CMAKE_BUILD_RPATH_USE_ORIGIN ON)
+set(CMAKE_INSTALL_RPATH "$ORIGIN/../lib")
+set(CMAKE_BUILD_WITH_INSTALL_RPATH OFF)
+
+# Split + compressed debug info. -gsplit-dwarf emits .dwo sidecars so the
+# linker doesn't load (and the final binary doesn't carry) the full DWARF;
+# -gz=zlib compresses what remains. Drops test-exe disk footprint by ~5×
+# in Debug builds. Skipped under sanitizers that don't tolerate it.
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+    add_compile_options($<$<CONFIG:Debug>:-gsplit-dwarf> $<$<CONFIG:Debug>:-gz=zlib>)
+    add_link_options($<$<CONFIG:Debug>:-Wl,--compress-debug-sections=zlib>)
+endif()
+
 option(VC_MARCH_NATIVE     "Tune for the host CPU (-march=native)"        OFF)
 option(VC_WARNINGS        "Enable curated warning set"                   OFF)
 option(VC_WERROR          "Treat compiler warnings as errors"            OFF)
@@ -160,18 +182,15 @@ if(VC_ENABLE_ASAN OR VC_ENABLE_UBSAN OR VC_ENABLE_TSAN
     list(APPEND _san -fno-sanitize-recover=all)
 endif()
 if(VC_ENABLE_COVERAGE)
-    if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
-        list(APPEND _san -fprofile-instr-generate -fcoverage-mapping)
-    else()
-        list(APPEND _san --coverage)
+    if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+        message(FATAL_ERROR "VC_ENABLE_COVERAGE requires clang — gcc/gcov was retired (only accurate at -O0, and the build needed -O0 just for the coverage report to make sense). Use the ci-coverage-clang preset.")
     endif()
-    # Coverage doesn't need DWARF: gcov/llvm-cov read .gcno/.gcda (gcc) or
-    # .profraw + the binary's coverage-mapping section (clang), neither of
-    # which depends on debug info. Drop to -g1 (line tables only — keeps
-    # backtraces useful when an assertion fires) and split DWARF into .dwo
-    # files so the executables stay small. On a full build this trims the
-    # coverage build dir from ~12 GB to ~5 GB and avoids ENOSPC on CI.
-    list(APPEND _san -g1 -gsplit-dwarf)
+    list(APPEND _san -fprofile-instr-generate -fcoverage-mapping)
+    # Coverage doesn't need DWARF: llvm-cov reads .profraw + the binary's
+    # coverage-mapping section. Drop to -g1 (line tables only — keeps
+    # backtraces useful when an assertion fires). The global -gsplit-dwarf
+    # +-gz=zlib pair below already handles the rest of the disk footprint.
+    list(APPEND _san -g1)
 endif()
 # Sanitizer/coverage flags applied below, after libs/ — see that block.
 

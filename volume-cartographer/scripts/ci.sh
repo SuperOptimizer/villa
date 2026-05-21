@@ -73,28 +73,55 @@ run_in_builder() {
 
 coverage_in_dir() {
     local image=$1 src=$2
-    local build_dir="build/ci-coverage-gcc-$image"
+    local build_dir="build/ci-coverage-clang-$image"
     cmd_builder "$image"
+    # Clang source-based coverage (-fprofile-instr-generate -fcoverage-mapping):
+    # accurate at any -O level (gcov is only honest at -O0) and reads from
+    # .profraw + the binary's coverage-mapping section, no .gcno/.gcda. We
+    # merge per-test .profraw files into a single .profdata, then run llvm-cov
+    # against every test executable to produce html / lcov / text summary.
+    # lcov.info is what diff-cover consumes in cmd_patch_coverage.
     run_in_builder "$image" "$src" "
-        cmake --preset ci-coverage-gcc &&
-        cmake --build --preset ci-coverage-gcc &&
-        ctest --preset ci-coverage-gcc &&
+        set -o pipefail &&
+        cmake --preset ci-coverage-clang &&
+        cmake --build --preset ci-coverage-clang &&
+        rm -rf /src/$build_dir/coverage-raw && mkdir -p /src/$build_dir/coverage-raw &&
+        # Absolute path: each test binary's cwd is set by ctest to its own
+        # source dir, so a relative LLVM_PROFILE_FILE writes profraws all
+        # over the tree. Pin it to /src/<build>/coverage-raw inside the
+        # container.
+        LLVM_PROFILE_FILE=\"/src/$build_dir/coverage-raw/%p-%m.profraw\" \
+            ctest --preset ci-coverage-clang &&
         mkdir -p coverage &&
-        gcovr --root . \
-          --filter '^core/' --filter '^apps/' --filter '^utils/' \
-          --exclude '.*/_deps/.*' --exclude 'build/.*' --exclude 'libs/.*' \
-          --gcov-ignore-errors=no_working_dir_found \
-          --gcov-ignore-parse-errors=negative_hits.warn_once_per_file \
-          --html-details coverage/index.html \
-          --cobertura coverage/cobertura.xml \
-          --txt coverage/summary.txt \
-          $build_dir &&
-        find . -name '*.gcov' -not -path './coverage/*' -delete"
+        llvm-profdata merge -sparse -o $build_dir/coverage.profdata \
+            $build_dir/coverage-raw/*.profraw &&
+        # llvm-cov takes the first binary as -object and the rest as -object=...
+        objects=( ) &&
+        for b in $build_dir/bin/test_*; do objects+=( -object \"\$b\" ); done &&
+        llvm-cov show \"\${objects[@]}\" \
+            -instr-profile=$build_dir/coverage.profdata \
+            -format=html -output-dir=coverage \
+            -ignore-filename-regex='(/_deps/|/build/|/libs/)' \
+            -show-line-counts-or-regions &&
+        llvm-cov export \"\${objects[@]}\" \
+            -instr-profile=$build_dir/coverage.profdata \
+            -format=lcov \
+            -ignore-filename-regex='(/_deps/|/build/|/libs/)' \
+            > coverage/lcov.info &&
+        llvm-cov report \"\${objects[@]}\" \
+            -instr-profile=$build_dir/coverage.profdata \
+            -ignore-filename-regex='(/_deps/|/build/|/libs/)' \
+            > coverage/summary.txt"
 }
 
-# Extract TOTAL line coverage % from a gcovr summary.txt.
+# Extract TOTAL line coverage % from an llvm-cov report summary.txt. The
+# TOTAL row has four trailing %-columns: Region, Function, Line, Branch
+# (in that order). We track line coverage — the 3rd.
 total_coverage_pct() {
-    awk '/^TOTAL/ { for (i=1;i<=NF;i++) if ($i ~ /%$/) { gsub("%","",$i); print $i; exit } }' "$1"
+    awk '/^TOTAL/ {
+        n = 0
+        for (i = 1; i <= NF; i++) if ($i ~ /%$/) { n++; if (n == 3) { gsub("%", "", $i); print $i; exit } }
+    }' "$1"
 }
 
 cmd_builder() {
@@ -208,9 +235,9 @@ cmd_patch_coverage() {
     # When volume-cartographer lives as a subdir of a larger repo the .git is
     # outside the docker mount and diff-cover dies with "not a git repository".
     local min_pct=${PATCH_COVERAGE_MIN:-0}
-    local cobertura="$REPO_ROOT/coverage/cobertura.xml"
-    if [[ ! -f "$cobertura" ]]; then
-        echo "patch-coverage: $cobertura missing — run 'ci.sh coverage' first" >&2
+    local lcov="$REPO_ROOT/coverage/lcov.info"
+    if [[ ! -f "$lcov" ]]; then
+        echo "patch-coverage: $lcov missing — run 'ci.sh coverage' first" >&2
         return 1
     fi
 
@@ -218,16 +245,16 @@ cmd_patch_coverage() {
     git_root=$(git -C "$REPO_ROOT" rev-parse --show-toplevel)
     git -C "$git_root" fetch --quiet origin "${base_ref#origin/}" || true
 
-    # gcovr emits paths relative to volume-cartographer with <source>.</source>.
-    # When the git root is a parent dir, prepend the subdir so diff-cover's
-    # path lookup matches what git reports as changed.
+    # llvm-cov export -format=lcov writes absolute paths starting with the
+    # cwd it ran in (/src inside the docker mount). Rewrite those to paths
+    # relative to git_root so diff-cover's git-diff lookups line up.
     local src_in_git fixed
     src_in_git=$(realpath --relative-to="$git_root" "$REPO_ROOT")
-    fixed=$(mktemp -t cobertura-diffcov.XXXXXX.xml)
+    fixed=$(mktemp -t lcov-diffcov.XXXXXX.info)
     if [[ "$src_in_git" == "." ]]; then
-        cp "$cobertura" "$fixed"
+        sed 's|^SF:/src/|SF:|' "$lcov" > "$fixed"
     else
-        sed "s|<source>\.</source>|<source>${src_in_git}</source>|" "$cobertura" > "$fixed"
+        sed "s|^SF:/src/|SF:${src_in_git}/|" "$lcov" > "$fixed"
     fi
 
     # Per-invocation venv so concurrent ci.sh runs on the same host don't
@@ -275,11 +302,11 @@ cmd_coverage_regression() {
         base_tree="$worktree_root/$subdir"
     fi
 
-    # Base branch may not have the ci-coverage-gcc preset (e.g. before this
-    # CI lands). In that case, skip the regression gate with a warning rather
-    # than failing — there's no meaningful "base coverage" to compare to.
-    if ! grep -q '"name": "ci-coverage-gcc"' "$base_tree/CMakePresets.json" 2>/dev/null; then
-        echo "::warning::base ($base_ref) has no ci-coverage-gcc preset; skipping non-regression gate"
+    # Base branch may not have the ci-coverage-clang preset (e.g. before
+    # this CI lands). Skip the regression gate with a warning rather than
+    # failing — there's no meaningful "base coverage" to compare to.
+    if ! grep -q '"name": "ci-coverage-clang"' "$base_tree/CMakePresets.json" 2>/dev/null; then
+        echo "::warning::base ($base_ref) has no ci-coverage-clang preset; skipping non-regression gate"
         return 0
     fi
 
@@ -333,7 +360,7 @@ cmd_all() {
         echo "=== ubuntu-26.04: $preset-clang ==="
         cmd_test ubuntu-26.04 clang "$preset"
     done
-    echo "=== Coverage (gcc, gcov) ==="
+    echo "=== Coverage (clang, source-based) ==="
     cmd_coverage ubuntu-26.04
     echo "=== Dead-code report ==="
     cmd_dead_code ubuntu-26.04 clang

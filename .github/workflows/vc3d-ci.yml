@@ -90,6 +90,17 @@ jobs:
     env:
       VC_BUILDER_FORCE_LOCAL: ${{ needs.changes.outputs.dockerfile == 'true' && '1' || '0' }}
     steps:
+      - name: Free runner disk space
+        # GitHub-hosted runners ship with ~14 GB free on /. 80 sanitizer-
+        # instrumented test exes plus the Docker builder image cumulatively
+        # don't fit. Nuke pre-installed toolchains we don't use (Android
+        # SDK, .NET, Haskell, large apt packages) to free ~25 GB.
+        run: |
+          set -eux
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup
+          sudo rm -rf "${AGENT_TOOLSDIRECTORY:-/opt/hostedtoolcache}"
+          sudo docker image prune --all --force || true
+          df -h /
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
       - name: Pull or build builder image
@@ -98,7 +109,7 @@ jobs:
         run: volume-cartographer/scripts/ci.sh ${{ matrix.action }} ${{ matrix.image }} ${{ matrix.compiler }} ${{ matrix.preset }}
 
   coverage:
-    name: Coverage (gcc, gcov)
+    name: Coverage (clang, source-based)
     needs: [changes, builder]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -109,12 +120,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      # Coverage builds are huge: -O0 -g + libgcov instrumentation, every
-      # test executable linked statically against vc_core. The default
-      # ubuntu runner ships ~14 GB free, which is not enough — `ar` and
-      # the final link step hit ENOSPC intermittently. Free ~25-30 GB by
-      # purging preinstalled toolchains we don't use (Android SDK, .NET,
-      # Haskell, hosted-tool caches).
+      # Coverage builds are huge: -O0 -g + libgcov instrumentation across
+      # every test exe. Even with vc_* as shared libs and split-dwarf debug
+      # info, the default runner's ~14 GB free is tight when combined with
+      # the Docker builder image. Free ~25 GB by purging preinstalled
+      # toolchains we don't use.
       - name: Free disk space on runner
         run: |
           set -x
@@ -234,6 +244,13 @@ jobs:
     env:
       VC_BUILDER_FORCE_LOCAL: ${{ needs.changes.outputs.dockerfile == 'true' && '1' || '0' }}
     steps:
+      - name: Free runner disk space
+        run: |
+          set -eux
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup
+          sudo rm -rf "${AGENT_TOOLSDIRECTORY:-/opt/hostedtoolcache}"
+          sudo docker image prune --all --force || true
+          df -h /
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
       - name: Pull or build builder image
