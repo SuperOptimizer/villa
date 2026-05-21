@@ -917,7 +917,10 @@ private:
         args << srcObj
              << outTemp_
              // Downsample UV grid by 20x per axis to reduce compute/memory.
-             << QStringLiteral("--uv-downsample=20");
+             << QStringLiteral("--uv-downsample=20")
+             // Resample the original approval mask onto the flattened grid via
+             // the grid-UV sidecar carried alongside srcObj. No-op if absent.
+             << QStringLiteral("--approval-src=%1").arg(segDir_);
         ioLog_ += QStringLiteral("Running: %1 %2\n").arg(obj2tifxyzExe_, args.join(' '));
         proc_->start(obj2tifxyzExe_, args);
     }

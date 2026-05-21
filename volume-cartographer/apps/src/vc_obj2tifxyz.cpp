@@ -11,6 +11,8 @@
 #include <map>
 #include <algorithm>
 #include <limits>
+#include <cmath>
+#include <memory>
 
 struct Vertex {
     cv::Vec3f pos;
@@ -18,6 +20,12 @@ struct Vertex {
 
 struct UV {
     cv::Vec2f coord;
+};
+
+// Per-vertex source grid (col,row), parsed from the <obj>.griduv sidecar.
+// Used to resample the original approval mask onto the new flattened grid.
+struct GridUV {
+    cv::Vec2f cr;  // (col, row) in the original source grid
 };
 
 struct Face {
@@ -35,7 +43,8 @@ private:
     std::vector<Vertex> vertices;
     std::vector<UV> uvs;
     std::vector<Face> faces;
-    
+    std::vector<GridUV> grid_uv;  // per-vertex source (col,row); empty if no sidecar
+
     cv::Vec2f uv_min, uv_max;
     cv::Vec2i grid_size;
     cv::Vec2f scale;
@@ -45,12 +54,18 @@ private:
     // UV decimation / capping
     float uv_downsample = 1.0f;            // user-specified uniform decimation
     uint64_t grid_cap_pixels = 0;          // cap total pixel count (0=off)
+    // Approval resampling: original mask (BGR or 1-ch) + output accumulator.
+    cv::Mat src_approval;                  // empty if not resampling approval
+    cv::Mat_<cv::Vec3b> out_approval;      // sized to grid_size when active
 
 public:
     void setUVMetric(bool v) { uv_is_metric = v; }
     void setUVToObj(float r) { uv_to_obj = r; }
     void setUVDownsample(float f) { uv_downsample = std::max(1.0f, f); }
     void setGridCapPixels(uint64_t cap) { grid_cap_pixels = cap; }
+    void setSrcApproval(const cv::Mat& m) { src_approval = m; }
+    bool hasApproval() const { return !src_approval.empty() && !grid_uv.empty(); }
+    const cv::Mat_<cv::Vec3b>& outApproval() const { return out_approval; }
 
     bool loadObj(const std::string& filename) {
         std::ifstream file(filename);
@@ -112,8 +127,33 @@ public:
         std::cout << "  Vertices: " << vertices.size() << std::endl;
         std::cout << "  UVs: " << uvs.size() << std::endl;
         std::cout << "  Faces: " << faces.size() << std::endl;
-        
+
         return !vertices.empty() && !faces.empty() && !uvs.empty();
+    }
+
+    // Load the per-vertex grid-UV sidecar (<obj>.griduv: "col row" per line, in
+    // OBJ vertex order). Returns false if absent or count mismatches vertices.
+    bool loadGridUV(const std::string& obj_filename) {
+        const std::string sidecar = obj_filename + ".griduv";
+        std::ifstream file(sidecar);
+        if (!file.is_open()) {
+            return false;
+        }
+        grid_uv.clear();
+        grid_uv.reserve(vertices.size());
+        float col = 0, row = 0;
+        while (file >> col >> row) {
+            grid_uv.push_back(GridUV{cv::Vec2f(col, row)});
+        }
+        if (grid_uv.size() != vertices.size()) {
+            std::cerr << "warning: grid-UV sidecar has " << grid_uv.size()
+                      << " entries but OBJ has " << vertices.size()
+                      << " vertices; skipping approval resample\n";
+            grid_uv.clear();
+            return false;
+        }
+        std::cout << "Loaded grid-UV sidecar: " << grid_uv.size() << " entries\n";
+        return true;
     }
     
     void determineGridDimensions(float stretch_factor = 1.0f) {
@@ -211,7 +251,12 @@ public:
     QuadSurface* createQuadSurface(float mesh_units = 1.0f) {
         // Create points matrix initialized with invalid values
         cv::Mat_<cv::Vec3f>* points = new cv::Mat_<cv::Vec3f>(grid_size[1], grid_size[0], cv::Vec3f(-1, -1, -1));
-        
+
+        // Approval accumulator (unapproved = black) when resampling is active.
+        if (hasApproval()) {
+            out_approval = cv::Mat_<cv::Vec3b>(grid_size[1], grid_size[0], cv::Vec3b(0, 0, 0));
+        }
+
         // Rasterize triangles onto the grid
         for (const auto& face : faces) {
             rasterizeTriangle(*points, face);
@@ -360,16 +405,40 @@ private:
                 if (bary[0] >= 0 && bary[1] >= 0 && bary[2] >= 0) {
                     // Interpolate 3D position
                     cv::Vec3f pos = bary[0] * v0 + bary[1] * v1 + bary[2] * v2;
-                    
+
                     // Only update if not already set (first triangle wins)
                     if (points(y, x)[0] == -1) {
                         points(y, x) = pos;
+
+                        // Same first-wins gate for approval: interpolate the
+                        // original (col,row) with the same weights and sample
+                        // the source mask there.
+                        if (hasApproval()) {
+                            const cv::Vec2f cr = bary[0] * grid_uv[face.v[0]].cr
+                                               + bary[1] * grid_uv[face.v[1]].cr
+                                               + bary[2] * grid_uv[face.v[2]].cr;
+                            out_approval(y, x) = sampleSrcApproval(cr[0], cr[1]);
+                        }
                     }
                 }
             }
         }
     }
     
+    // Nearest-neighbor sample of the source approval mask at original grid
+    // (col,row). Returns BGR; 1-channel legacy masks map nonzero -> white.
+    cv::Vec3b sampleSrcApproval(float colf, float rowf) const {
+        int col = static_cast<int>(std::lround(colf));
+        int row = static_cast<int>(std::lround(rowf));
+        col = std::clamp(col, 0, src_approval.cols - 1);
+        row = std::clamp(row, 0, src_approval.rows - 1);
+        if (src_approval.channels() == 1) {
+            return src_approval.at<uint8_t>(row, col) > 0 ? cv::Vec3b(255, 255, 255)
+                                                          : cv::Vec3b(0, 0, 0);
+        }
+        return src_approval.at<cv::Vec3b>(row, col);
+    }
+
     cv::Vec3f computeBarycentric(const cv::Vec2f& p, const cv::Vec2f& a, const cv::Vec2f& b, const cv::Vec2f& c) {
         cv::Vec2f v0 = c - a;
         cv::Vec2f v1 = b - a;
@@ -412,6 +481,8 @@ int main(int argc, char *argv[])
         std::cout << "  --uv-to-obj=<ratio> : OBJ units per 1 UV unit (default: 1.0). Only used with --uv-metric." << std::endl;
         std::cout << "  --uv-downsample=<f> : Uniform UV decimation factor (>=1.0). Reduces grid by ~f^2." << std::endl;
         std::cout << "  --grid-cap=<pixels> : Upper bound on total grid pixels. Implies extra decimation if needed." << std::endl;
+        std::cout << "  --approval-src=<dir>: Resample approval.tif from this original tifxyz onto the new grid" << std::endl;
+        std::cout << "                        (requires a <input.obj>.griduv sidecar; otherwise ignored)." << std::endl;
         std::cout << std::endl;
         std::cout << "Note: Scale factors are automatically calculated from the mesh grid structure." << std::endl;
         std::cout << "Examples:" << std::endl;
@@ -429,6 +500,7 @@ int main(int argc, char *argv[])
     float uv_to_obj = 1.0f;       // OBJ units per UV unit (only when uv_metric)
     float uv_downsample = 1.0f;
     uint64_t grid_cap = 0;
+    std::string approval_src;  // original tifxyz dir to resample approval from
 
     // Backward-compatible parsing:
     // positional numbers: stretch_factor, mesh_units
@@ -471,6 +543,10 @@ int main(int argc, char *argv[])
                 std::cerr << "Invalid value for --grid-cap\n";
                 return EXIT_FAILURE;
             }
+        }
+        if (starts_with(a, "--approval-src=")) {
+            approval_src = a.substr(std::string("--approval-src=").size());
+            continue;
         }
         // numbers (legacy positional)
         if (consumed_numbers == 0) {
@@ -525,7 +601,31 @@ int main(int argc, char *argv[])
         std::cerr << "Failed to load OBJ file" << std::endl;
         return EXIT_FAILURE;
     }
-    
+
+    // Approval resampling (optional): needs the grid-UV sidecar (per-vertex
+    // original col,row) and the source mask. Both must be present; otherwise
+    // we just skip and write a tifxyz with no approval channel.
+    if (!approval_src.empty()) {
+        if (!converter.loadGridUV(obj_path.string())) {
+            std::cerr << "note: no usable grid-UV sidecar; approval will not be resampled\n";
+        } else {
+            try {
+                std::unique_ptr<QuadSurface> src(load_quad_from_tifxyz(approval_src));
+                cv::Mat ap = src->channel("approval", SURF_CHANNEL_NORESIZE);
+                if (ap.empty()) {
+                    std::cerr << "note: source has no approval channel; nothing to resample\n";
+                } else {
+                    converter.setSrcApproval(ap);
+                    std::cout << "Resampling approval from " << approval_src
+                              << " (" << ap.cols << "x" << ap.rows
+                              << ", " << ap.channels() << "ch)\n";
+                }
+            } catch (...) {
+                std::cerr << "warning: could not load approval source: " << approval_src << "\n";
+            }
+        }
+    }
+
     // Determine grid dimensions from UV coordinates
     converter.determineGridDimensions(stretch_factor);
     
@@ -534,6 +634,13 @@ int main(int argc, char *argv[])
     if (!surf) {
         std::cerr << "Failed to create quad surface" << std::endl;
         return EXIT_FAILURE;
+    }
+
+    // Attach the resampled approval mask so save() writes approval.tif at the
+    // new grid size alongside x/y/z.tif.
+    if (converter.hasApproval()) {
+        surf->setChannel("approval", converter.outApproval());
+        std::cout << "Attached resampled approval channel\n";
     }
     
     // Generate a UUID for the surface
