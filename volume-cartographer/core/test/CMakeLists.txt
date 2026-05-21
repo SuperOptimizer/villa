@@ -34,9 +34,13 @@ function(vc_add_test)
     if(NOT DEFINED T_LIBS)
         set(T_LIBS doctest::doctest vc_core)
     endif()
+    # sanitizer_config.cpp must be linked into the executable itself —
+    # TSan reads __tsan_default_suppressions eagerly during init, before
+    # vc_core's dlsym table is visible. (ASan/UBSan resolve lazily so they
+    # don't care, but uniform inclusion keeps the rule simple.)
     if(VC_ENABLE_ASAN OR VC_ENABLE_UBSAN OR VC_ENABLE_TSAN OR VC_ENABLE_LSAN
        OR VC_ENABLE_TYSAN OR VC_ENABLE_NSAN)
-        list(APPEND T_SOURCES "${CMAKE_SOURCE_DIR}/misc/sanitizer_config.c")
+        list(APPEND T_SOURCES "${CMAKE_SOURCE_DIR}/misc/sanitizer_config.cpp")
     endif()
     add_executable(${T_NAME} ${T_SOURCES})
     if(T_LIBS)
@@ -51,6 +55,12 @@ function(vc_add_test)
         VC_TEST_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")
     if(T_DEFS)
         target_compile_definitions(${T_NAME} PRIVATE ${T_DEFS})
+    endif()
+    # PCH: REUSE_FROM vc_core. Skip tests that don't link vc_core —
+    # their include paths don't reach OpenCV / nlohmann_json.
+    set(_pch_skip test_smoke test_segmentation_autosave_state)
+    if(VC_USE_PCH AND NOT T_NAME IN_LIST _pch_skip)
+        target_precompile_headers(${T_NAME} REUSE_FROM vc_core)
     endif()
     add_test(NAME ${T_NAME} COMMAND ${T_NAME})
 endfunction()
@@ -126,7 +136,7 @@ endif()
 set(_canary_srcs sanitizer_canary.cpp)
 if(VC_ENABLE_ASAN OR VC_ENABLE_UBSAN OR VC_ENABLE_TSAN OR VC_ENABLE_LSAN
    OR VC_ENABLE_TYSAN OR VC_ENABLE_NSAN)
-    list(APPEND _canary_srcs "${CMAKE_SOURCE_DIR}/misc/sanitizer_config.c")
+    list(APPEND _canary_srcs "${CMAKE_SOURCE_DIR}/misc/sanitizer_config.cpp")
 endif()
 add_executable(sanitizer_canary ${_canary_srcs})
 set_target_properties(sanitizer_canary PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF)

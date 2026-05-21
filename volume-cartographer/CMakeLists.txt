@@ -19,15 +19,16 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # also needed by static dependencies they consume, so set it globally.
 set(BUILD_SHARED_LIBS ON CACHE BOOL "Build vc_* and FetchContent deps as .so")
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+# Force -fPIC on executables too (cmake's default is -fPIE), so PCH from
+# our -fPIC shared libs is reusable. Drops PIE/ASLR on the main binaries.
+add_compile_options(-fPIC)
+add_link_options(-no-pie)
 # Keep dlopen of vc_* libs working from the build tree without LD_LIBRARY_PATH.
 set(CMAKE_BUILD_RPATH_USE_ORIGIN ON)
 set(CMAKE_INSTALL_RPATH "$ORIGIN/../lib")
 set(CMAKE_BUILD_WITH_INSTALL_RPATH OFF)
 
-# Split + compressed debug info. -gsplit-dwarf emits .dwo sidecars so the
-# linker doesn't load (and the final binary doesn't carry) the full DWARF;
-# -gz=zlib compresses what remains. Drops test-exe disk footprint by ~5×
-# in Debug builds. Skipped under sanitizers that don't tolerate it.
+# Slim debug info: split DWARF + zlib-compress. -g level set with _dbg below.
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
     add_compile_options($<$<CONFIG:Debug>:-gsplit-dwarf> $<$<CONFIG:Debug>:-gz=zlib>)
     add_link_options($<$<CONFIG:Debug>:-Wl,--compress-debug-sections=zlib>)
@@ -47,6 +48,12 @@ option(VC_TESTING         "Build and run unit tests"                     OFF)
 option(VC_DEAD_CODE_REPORT "Enable dead-code reporting (curated -Wunused* + linker --print-gc-sections; use a Debug build to avoid LTO)" OFF)
 option(VC_PROFILE_COMPILE  "Emit per-TU compile-time profiles (-ftime-trace on clang, -ftime-report on gcc)" OFF)
 option(VC_BUILD_FLATBOI    "Build the flatboi SLIM flattening tool"      ON)
+option(VC_USE_PCH          "Precompile common headers into vc_core; downstream targets REUSE_FROM it" ON)
+
+# PCH + ccache together usually nukes ccache's hit rate. Pick at most one.
+if(VC_USE_PCH AND (CMAKE_C_COMPILER_LAUNCHER MATCHES "ccache" OR CMAKE_CXX_COMPILER_LAUNCHER MATCHES "ccache"))
+    message(FATAL_ERROR "VC_USE_PCH and ccache are mutually exclusive — disable one. Set -DVC_USE_PCH=OFF, or unset CMAKE_*_COMPILER_LAUNCHER.")
+endif()
 option(VC_USE_SYSTEM_LIBBACKTRACE "Prefer installed libbacktrace when available" ON)
 
 # Skip building app executables (vc_*, VC3D) when generating coverage:
@@ -111,7 +118,7 @@ else()
 endif()
 
 if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
-    set(_dbg -g3 -fno-omit-frame-pointer -fasynchronous-unwind-tables -fstandalone-debug)
+    set(_dbg -g1 -fno-omit-frame-pointer -fasynchronous-unwind-tables)
     set(_lto -flto=thin)
     if(APPLE)
         set(_link "")
@@ -119,7 +126,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
         set(_link -fuse-ld=lld -Wl,--gc-sections -Wl,--as-needed)
     endif()
 else()
-    set(_dbg -g3 -fno-omit-frame-pointer -fasynchronous-unwind-tables -fno-eliminate-unused-debug-types)
+    set(_dbg -g1 -fno-omit-frame-pointer -fasynchronous-unwind-tables)
     set(_lto -flto=auto)
     if(APPLE)
         set(_link "")
@@ -186,11 +193,6 @@ if(VC_ENABLE_COVERAGE)
         message(FATAL_ERROR "VC_ENABLE_COVERAGE requires clang — gcc/gcov was retired (only accurate at -O0, and the build needed -O0 just for the coverage report to make sense). Use the ci-coverage-clang preset.")
     endif()
     list(APPEND _san -fprofile-instr-generate -fcoverage-mapping)
-    # Coverage doesn't need DWARF: llvm-cov reads .profraw + the binary's
-    # coverage-mapping section. Drop to -g1 (line tables only — keeps
-    # backtraces useful when an assertion fires). The global -gsplit-dwarf
-    # +-gz=zlib pair below already handles the rest of the disk footprint.
-    list(APPEND _san -g1)
 endif()
 # Sanitizer/coverage flags applied below, after libs/ — see that block.
 

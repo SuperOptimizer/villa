@@ -1,6 +1,11 @@
 // Default runtime options for the *San family. Linked into any target built
 // with a sanitizer enabled; per-process overrides still flow through the
 // matching {ASAN,UBSAN,TSAN,LSAN,TYSAN,NSAN}_OPTIONS env vars.
+//
+// .cpp + extern "C" so vc_core stays a single-language CXX target and
+// REUSE_FROM works for downstream consumers without a C PCH companion.
+
+extern "C" {
 
 const char* __asan_default_options(void)
 {
@@ -96,3 +101,5 @@ const char* __lsan_default_suppressions(void)
         "leak:pango_*\n"
         "leak:g_type_*\n";
 }
+
+}  // extern "C"
