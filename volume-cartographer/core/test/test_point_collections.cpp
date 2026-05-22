@@ -6,7 +6,9 @@
 
 #include "vc/core/PointCollections.hpp"
 
+#include <algorithm>
 #include <filesystem>
+#include <vector>
 
 namespace fs = std::filesystem;
 
@@ -77,6 +79,119 @@ TEST_CASE("tags and anchor2d + offset")
     REQUIRE(a.has_value());
     CHECK((*a)[0] == doctest::Approx(15));
     CHECK((*a)[1] == doctest::Approx(15));
+}
+
+TEST_CASE("addPoints batch + generateNewCollectionName")
+{
+    PointCollections c;
+    c.addPoints("batch", {{0, 0, 0}, {1, 1, 1}, {2, 2, 2}});
+    CHECK(c.getPoints("batch").size() == 3);
+
+    // No collections named "col1" yet → first generated name.
+    CHECK(c.generateNewCollectionName() == "col1");
+    c.addCollection("col1");
+    CHECK(c.generateNewCollectionName() == "col2");
+}
+
+TEST_CASE("setCollectionMetadata round-trips the flag")
+{
+    PointCollections c;
+    c.addPoint("a", {0, 0, 0});
+    const uint64_t cid = c.getCollectionId("a");
+    CollectionMetadata m;
+    m.absolute_winding_number = false;
+    c.setCollectionMetadata(cid, m);
+    CHECK_FALSE(c.getAllCollections().at(cid).metadata.absolute_winding_number);
+}
+
+TEST_CASE("autofill winding modes")
+{
+    auto windings = [](PointCollections& c, const std::string& name) {
+        std::vector<float> w;
+        for (const auto& p : c.getPoints(name)) w.push_back(p.winding_annotation);
+        std::sort(w.begin(), w.end());
+        return w;
+    };
+
+    SUBCASE("incremental assigns 1..N by id order")
+    {
+        PointCollections c;
+        c.addPoints("a", {{0, 0, 0}, {1, 1, 1}, {2, 2, 2}});
+        const uint64_t cid = c.getCollectionId("a");
+        c.autoFillWindingNumbers(cid, PointCollections::WindingFillMode::Incremental);
+        CHECK(windings(c, "a") == std::vector<float>{1, 2, 3});
+    }
+    SUBCASE("decremental assigns N..1")
+    {
+        PointCollections c;
+        c.addPoints("a", {{0, 0, 0}, {1, 1, 1}, {2, 2, 2}});
+        const uint64_t cid = c.getCollectionId("a");
+        c.autoFillWindingNumbers(cid, PointCollections::WindingFillMode::Decremental);
+        CHECK(windings(c, "a") == std::vector<float>{1, 2, 3});  // sorted; values are 3,2,1
+    }
+    SUBCASE("constant assigns the given value")
+    {
+        PointCollections c;
+        c.addPoints("a", {{0, 0, 0}, {1, 1, 1}});
+        const uint64_t cid = c.getCollectionId("a");
+        c.autoFillWindingNumbers(cid, PointCollections::WindingFillMode::Constant, 7.5f);
+        CHECK(windings(c, "a") == std::vector<float>{7.5f, 7.5f});
+    }
+}
+
+TEST_CASE("setAutoFillMode + computeAutoFillValue")
+{
+    PointCollections c;
+    c.addPoints("a", {{0, 0, 0}, {1, 1, 1}});
+    const uint64_t cid = c.getCollectionId("a");
+
+    c.setAutoFillMode(cid, PointCollections::WindingFillMode::Constant, 4.0f);
+    CHECK(c.getAutoFillMode(cid) == PointCollections::WindingFillMode::Constant);
+    CHECK(c.getAutoFillConstant(cid) == doctest::Approx(4.0f));
+    CHECK(c.computeAutoFillValue(cid) == doctest::Approx(4.0f));
+
+    // Incremental → max existing winding + 1; none set yet → 1.
+    c.setAutoFillMode(cid, PointCollections::WindingFillMode::Incremental);
+    CHECK(c.computeAutoFillValue(cid) == doctest::Approx(1.0f));
+    c.autoFillWindingNumbers(cid, PointCollections::WindingFillMode::Incremental);  // sets 1,2
+    CHECK(c.computeAutoFillValue(cid) == doctest::Approx(3.0f));  // max(2)+1
+}
+
+TEST_CASE("missing-id queries are safe")
+{
+    PointCollections c;
+    CHECK(c.getCollectionId("nope") == 0);
+    CHECK_FALSE(c.getPoint(424242).has_value());
+    CHECK(c.getPoints("nope").empty());
+    CHECK(c.getAutoFillMode(999) == PointCollections::WindingFillMode::None);
+}
+
+TEST_CASE("segment-path round-trip (anchored collections only)")
+{
+    const fs::path dir = fs::temp_directory_path() /
+        ("pc_seg_" + std::to_string(::getpid()));
+    fs::create_directories(dir);
+
+    PointCollections c;
+    c.addPoint("anchored", {1, 2, 3});
+    c.addPoint("plain", {4, 5, 6});
+    const uint64_t anchored = c.getCollectionId("anchored");
+    c.setCollectionAnchor2d(anchored, cv::Vec2f(8, 9));
+    REQUIRE(c.saveToSegmentPath(dir));
+    CHECK(fs::exists(dir / "corrections.json"));
+
+    PointCollections loaded;
+    REQUIRE(loaded.loadFromSegmentPath(dir));
+    // Only the anchored collection is persisted.
+    bool has_anchored = false, has_plain = false;
+    for (const auto& [id, col] : loaded.getAllCollections()) {
+        if (col.name == "anchored") has_anchored = true;
+        if (col.name == "plain") has_plain = true;
+    }
+    CHECK(has_anchored);
+    CHECK_FALSE(has_plain);
+
+    fs::remove_all(dir);
 }
 
 TEST_CASE("JSON round-trip preserves data")
