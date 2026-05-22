@@ -7,7 +7,9 @@
 #include "vc/core/PointCollections.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <filesystem>
+#include <fstream>
 #include <vector>
 
 namespace fs = std::filesystem;
@@ -218,4 +220,89 @@ TEST_CASE("JSON round-trip preserves data")
     CHECK(loaded.getPoints("alpha").size() == 2);
     CHECK(loaded.getPoints("beta").size() == 1);
     CHECK(loaded.getCollectionTag(la, "kind") == std::optional<std::string>("correction"));
+}
+
+TEST_CASE("JSON round-trip preserves per-point fields")
+{
+    PointCollections c;
+    auto p = c.addPoint("a", {1.5f, 2.5f, 3.5f});
+    p.winding_annotation = 4.0f;
+    c.updatePoint(p);
+    c.addPoint("a", {9, 9, 9});  // leaves winding_annotation NaN
+
+    const fs::path tmp = fs::temp_directory_path() /
+        ("pc_fields_" + std::to_string(::getpid()) + ".json");
+    REQUIRE(c.saveToJSON(tmp.string()));
+    PointCollections loaded;
+    REQUIRE(loaded.loadFromJSON(tmp.string()));
+    fs::remove(tmp);
+
+    int with_winding = 0, nan_winding = 0;
+    cv::Vec3f seen_pos{};
+    for (const auto& q : loaded.getPoints("a")) {
+        if (std::isnan(q.winding_annotation)) { nan_winding++; }
+        else { with_winding++; seen_pos = q.p; }
+    }
+    CHECK(with_winding == 1);
+    CHECK(nan_winding == 1);
+    CHECK(seen_pos == cv::Vec3f(1.5f, 2.5f, 3.5f));  // float position survives
+}
+
+TEST_CASE("loadFromJSON rejects bad input and returns false")
+{
+    const fs::path tmp = fs::temp_directory_path() /
+        ("pc_bad_" + std::to_string(::getpid()) + ".json");
+
+    auto write = [&](const std::string& s) {
+        std::ofstream o(tmp); o << s; o.close();
+    };
+
+    PointCollections c;
+
+    SUBCASE("malformed json")
+    {
+        write("{ this is not json ");
+        CHECK_FALSE(c.loadFromJSON(tmp.string()));
+    }
+    SUBCASE("missing version key")
+    {
+        write(R"({"collections": {}})");
+        CHECK_FALSE(c.loadFromJSON(tmp.string()));
+    }
+    SUBCASE("nonexistent file")
+    {
+        CHECK_FALSE(c.loadFromJSON((tmp.string() + ".missing")));
+    }
+    fs::remove(tmp);
+}
+
+TEST_CASE("saveToJSON fails on an unwritable path")
+{
+    PointCollections c;
+    c.addPoint("a", {0, 0, 0});
+    CHECK_FALSE(c.saveToJSON("/nonexistent_dir_xyz/corrections.json"));
+}
+
+TEST_CASE("ids stay unique across a load + further adds")
+{
+    PointCollections c;
+    c.addPoint("a", {0, 0, 0});
+    c.addPoint("a", {1, 1, 1});
+
+    const fs::path tmp = fs::temp_directory_path() /
+        ("pc_ids_" + std::to_string(::getpid()) + ".json");
+    REQUIRE(c.saveToJSON(tmp.string()));
+    PointCollections loaded;
+    REQUIRE(loaded.loadFromJSON(tmp.string()));
+    fs::remove(tmp);
+
+    auto fresh = loaded.addPoint("a", {2, 2, 2});
+    // The fresh id must be exactly one of the three points (no collision with
+    // a loaded id, which would have left only two distinct ids / two points).
+    int matches = 0;
+    for (const auto& q : loaded.getPoints("a")) {
+        if (q.id == fresh.id) matches++;
+    }
+    CHECK(matches == 1);
+    CHECK(loaded.getPoints("a").size() == 3);
 }
