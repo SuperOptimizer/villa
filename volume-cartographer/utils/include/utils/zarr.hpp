@@ -1037,3 +1037,9 @@ private:
 };
 
 } // namespace utils
+
+namespace vc {
+// Declared here (not VcDataset.hpp) so its CodecRegistry return type doesn't
+// drag zarr.hpp into every VcDataset.hpp includer; defined in VcDataset.cpp.
+utils::ZarrArray::CodecRegistry buildZarrCodecRegistry(int dtypeSize);
+}

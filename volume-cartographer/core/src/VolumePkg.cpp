@@ -13,7 +13,10 @@
 #include <pwd.h>
 #include <unistd.h>
 
+#include "vc/core/types/Segmentation.hpp"
+#include "vc/core/types/Volume.hpp"
 #include "vc/core/util/Logging.hpp"
+#include "vc/core/util/QuadSurface.hpp"
 #include "vc/core/util/RemoteUrl.hpp"
 
 namespace fs = std::filesystem;

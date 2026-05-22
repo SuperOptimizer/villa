@@ -12,8 +12,10 @@
 #include <vector>
 
 #include "utils/Json.hpp"
-#include "vc/core/types/Segmentation.hpp"
-#include "vc/core/types/Volume.hpp"
+
+class Volume;
+class Segmentation;
+class QuadSurface;
 
 namespace vc::project {
 
