@@ -67,13 +67,39 @@ target_link_libraries(vc_core PRIVATE
     ${VC_LIBBACKTRACE}
 )
 
-
-
-# Slicing.cpp is the hot sampling loop (87% of render time).
-# Force O3 + fast-math for maximum vectorization regardless of build type.
-set_source_files_properties(src/Slicing.cpp PROPERTIES
-    COMPILE_OPTIONS "-O3;-ffast-math"
-)
+# PCH on vc_core; downstream libs/apps/tests REUSE_FROM it. CXX-gated as a
+# guard so any future C source can't try to precompile C++ headers.
+if(VC_USE_PCH)
+    set(VC_PCH_HEADERS
+        "$<$<COMPILE_LANGUAGE:CXX>:<algorithm>>"
+        "$<$<COMPILE_LANGUAGE:CXX>:<array>>"
+        "$<$<COMPILE_LANGUAGE:CXX>:<atomic>>"
+        "$<$<COMPILE_LANGUAGE:CXX>:<chrono>>"
+        "$<$<COMPILE_LANGUAGE:CXX>:<cmath>>"
+        "$<$<COMPILE_LANGUAGE:CXX>:<cstdint>>"
+        "$<$<COMPILE_LANGUAGE:CXX>:<cstring>>"
+        "$<$<COMPILE_LANGUAGE:CXX>:<filesystem>>"
+        "$<$<COMPILE_LANGUAGE:CXX>:<fstream>>"
+        "$<$<COMPILE_LANGUAGE:CXX>:<iomanip>>"
+        "$<$<COMPILE_LANGUAGE:CXX>:<iostream>>"
+        "$<$<COMPILE_LANGUAGE:CXX>:<limits>>"
+        "$<$<COMPILE_LANGUAGE:CXX>:<memory>>"
+        "$<$<COMPILE_LANGUAGE:CXX>:<mutex>>"
+        "$<$<COMPILE_LANGUAGE:CXX>:<optional>>"
+        "$<$<COMPILE_LANGUAGE:CXX>:<sstream>>"
+        "$<$<COMPILE_LANGUAGE:CXX>:<stdexcept>>"
+        "$<$<COMPILE_LANGUAGE:CXX>:<string>>"
+        "$<$<COMPILE_LANGUAGE:CXX>:<unordered_map>>"
+        "$<$<COMPILE_LANGUAGE:CXX>:<unordered_set>>"
+        "$<$<COMPILE_LANGUAGE:CXX>:<utility>>"
+        "$<$<COMPILE_LANGUAGE:CXX>:<vector>>"
+        "$<$<COMPILE_LANGUAGE:CXX>:<opencv2/core.hpp>>"
+        "$<$<COMPILE_LANGUAGE:CXX>:<opencv2/imgproc.hpp>>"
+        "$<$<COMPILE_LANGUAGE:CXX>:<opencv2/imgcodecs.hpp>>"
+        "$<$<COMPILE_LANGUAGE:CXX>:<nlohmann/json.hpp>>"
+        CACHE INTERNAL "PCH header list shared by vc_* and downstream targets")
+    target_precompile_headers(vc_core PRIVATE ${VC_PCH_HEADERS})
+endif()
 
 qt6_wrap_cpp(metrics_moc include/vc/ui/VCCollection.hpp)
 add_library(vc_ui src/VCCollection.cpp src/UDataManipulateUtils.cpp src/surface_metrics.cpp ${metrics_moc})
@@ -97,3 +123,9 @@ add_library(vc_tracer
 )
 target_link_libraries(vc_tracer PUBLIC vc_core vc_ui vc_flattening Ceres::ceres Qt6::Core)
 target_include_directories(vc_tracer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../libs/edt)
+
+if(VC_USE_PCH)
+    foreach(_lib vc_ui vc_flattening vc_inpaint vc_tracer)
+        target_precompile_headers(${_lib} REUSE_FROM vc_core)
+    endforeach()
+endif()

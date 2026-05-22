@@ -168,7 +168,7 @@ set(srcs
 )
 
 if(VC_ENABLE_TSAN OR VC_ENABLE_LSAN OR VC_ENABLE_UBSAN OR VC_ENABLE_ASAN)
-    list(APPEND srcs "${CMAKE_SOURCE_DIR}/misc/sanitizer_config.c")
+    list(APPEND srcs "${CMAKE_SOURCE_DIR}/misc/sanitizer_config.cpp")
 endif()
 
 
@@ -220,3 +220,7 @@ target_link_libraries(VC3D
     $<$<BOOL:${AVAHI_FOUND}>:PkgConfig::AVAHI>
     Blosc::blosc
 )
+
+if(VC_USE_PCH)
+    target_precompile_headers(VC3D REUSE_FROM vc_core)
+endif()
