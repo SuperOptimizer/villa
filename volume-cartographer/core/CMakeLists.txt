@@ -67,9 +67,8 @@ target_link_libraries(vc_core PRIVATE
     ${VC_LIBBACKTRACE}
 )
 
-# PCH on vc_core; downstream libs/apps/tests REUSE_FROM it. CXX-gated so C
-# sources (e.g. misc/sanitizer_config.c injected into test exes) don't try
-# to precompile C++ headers.
+# PCH on vc_core; downstream libs/apps/tests REUSE_FROM it. CXX-gated as a
+# guard so any future C source can't try to precompile C++ headers.
 if(VC_USE_PCH)
     set(VC_PCH_HEADERS
         "$<$<COMPILE_LANGUAGE:CXX>:<algorithm>>"
