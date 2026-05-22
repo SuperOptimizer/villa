@@ -226,5 +226,13 @@ target_link_libraries(VC3D
 )
 
 if(VC_USE_PCH)
-    target_precompile_headers(VC3D REUSE_FROM vc_core)
+    # VC3D gets its own PCH = vc_core's common headers + the heavy Qt umbrella
+    # headers. Qt stays out of vc_core's shared PCH so the Qt-free CLI apps that
+    # REUSE_FROM it don't pay to parse Qt. (Can't REUSE_FROM vc_core and add Qt
+    # — a target has one PCH — so build VC3D's directly from the same list.)
+    target_precompile_headers(VC3D PRIVATE
+        ${VC_PCH_HEADERS}
+        "$<$<COMPILE_LANGUAGE:CXX>:<QtCore/QtCore>>"
+        "$<$<COMPILE_LANGUAGE:CXX>:<QtWidgets/QtWidgets>>"
+        "$<$<COMPILE_LANGUAGE:CXX>:<QtConcurrent/QtConcurrent>>")
 endif()

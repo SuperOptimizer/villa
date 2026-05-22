@@ -93,8 +93,13 @@ if(VC_USE_PCH)
         "$<$<COMPILE_LANGUAGE:CXX>:<string>>"
         "$<$<COMPILE_LANGUAGE:CXX>:<unordered_map>>"
         "$<$<COMPILE_LANGUAGE:CXX>:<unordered_set>>"
+        "$<$<COMPILE_LANGUAGE:CXX>:<random>>"
         "$<$<COMPILE_LANGUAGE:CXX>:<utility>>"
         "$<$<COMPILE_LANGUAGE:CXX>:<vector>>"
+        # <format> is the heaviest std header in the build (~1.3k s of
+        # instantiation across TUs; libstdc++ 15 + Qt pull it in widely).
+        "$<$<COMPILE_LANGUAGE:CXX>:<format>>"
+        "$<$<COMPILE_LANGUAGE:CXX>:<string_view>>"
         "$<$<COMPILE_LANGUAGE:CXX>:<opencv2/core.hpp>>"
         "$<$<COMPILE_LANGUAGE:CXX>:<opencv2/imgproc.hpp>>"
         "$<$<COMPILE_LANGUAGE:CXX>:<opencv2/imgcodecs.hpp>>"
