@@ -1,16 +1,11 @@
-include(FetchContent)
-
-set(CMAKE_POLICY_VERSION_MINIMUM 3.10 CACHE STRING "" FORCE)
-
-find_package(doctest CONFIG QUIET)
-if(NOT TARGET doctest::doctest)
-    FetchContent_Declare(
-        doctest
-        DOWNLOAD_EXTRACT_TIMESTAMP ON
-        URL https://github.com/doctest/doctest/archive/v2.4.12.tar.gz
-    )
-    FetchContent_MakeAvailable(doctest)
-endif()
+# In-tree minimal doctest replacement (vc_test.hpp). The doctest single-header
+# was the heaviest include in the test build (~350s across the suite); ours is
+# tiny. The doctest_compat/ shim keeps `#include <doctest/doctest.h>` working,
+# and vc_test.hpp provides the doctest API subset the tests use.
+add_library(doctest::doctest INTERFACE IMPORTED)
+set_target_properties(doctest::doctest PROPERTIES
+    INTERFACE_INCLUDE_DIRECTORIES
+        "${CMAKE_CURRENT_SOURCE_DIR};${CMAKE_CURRENT_SOURCE_DIR}/doctest_compat")
 
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Test)
 
