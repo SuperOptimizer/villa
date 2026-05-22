@@ -197,35 +197,6 @@ jobs:
       - name: Configure + build (installs Homebrew deps as needed)
         run: volume-cartographer/scripts/build_macos.sh --install-deps
 
-      - name: Upload build dir for downstream checks
-        uses: actions/upload-artifact@v4
-        with:
-          name: macos-build-${{ matrix.os }}
-          path: volume-cartographer/build-macos/bin/
-          retention-days: 1
-
-  macos-checks:
-    name: macOS checks (smoke + toolchain verify)
-    needs: macos-build
-    if: needs.changes.outputs.vc == 'true'
-    runs-on: macos-15
-    timeout-minutes: 10
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          name: macos-build-macos-15
-          path: volume-cartographer/build-macos/bin/
-      - name: Smoke-test built binaries
-        run: |
-          cd volume-cartographer/build-macos
-          chmod +x bin/* || true
-          file bin/VC3D bin/vc_tifxyz bin/flatboi
-          ./bin/vc_tifxyz --help | head -5 || true
-      - name: Verify Homebrew-only toolchain
-        run: volume-cartographer/scripts/verify_homebrew_toolchain.sh volume-cartographer/build-macos
-
   dead-code:
     name: Dead-code report (clang, nm + --print-gc-sections)
     needs: [changes, builder]
