@@ -68,6 +68,18 @@ vc_add_test(NAME test_segmentation_intersection_invalidation
     LIBS Qt6::Core Qt6::Gui Qt6::Test vc_core
     INCLUDES ${PROJECT_SOURCE_DIR}/apps/VC3D)
 
+# Qt-free data/IO layer.
+vc_add_test(NAME test_point_collections)
+
+# VCCollection shim: verify the on*() hooks still emit Qt signals. Needs the
+# shim TU + its MOC (it isn't built into a lib anymore).
+qt6_wrap_cpp(vccollection_test_moc ${PROJECT_SOURCE_DIR}/core/include/vc/ui/VCCollection.hpp)
+vc_add_test(NAME test_vccollection_signals
+    SOURCES test_vccollection_signals.cpp
+            ${PROJECT_SOURCE_DIR}/core/src/VCCollection.cpp
+            ${vccollection_test_moc}
+    LIBS doctest::doctest vc_core Qt6::Core Qt6::Test)
+
 vc_add_test(NAME test_quadsurface_save_roundtrip)
 
 vc_add_test(NAME test_atomic_imwrite_multi)
