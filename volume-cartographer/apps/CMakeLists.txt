@@ -95,7 +95,7 @@ set_target_properties(vc_obj_uv_lift PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC 
 add_executable(vc_tifxyz2zarr_sparse src/vc_tifxyz2zarr_sparse.cpp)
 target_link_libraries(vc_tifxyz2zarr_sparse vc_core Boost::program_options)
 
-add_executable(vc_add_ignore_label src/vc_add_ignore_label.cpp)
+add_executable(vc_add_ignore_label src/vc_add_ignore_label.cpp src/alpha_wrap.cpp)
 target_link_libraries(vc_add_ignore_label
     vc_core
     Boost::program_options
