@@ -22,7 +22,6 @@ apt-get install -y --no-install-recommends \
     zlib1g-dev gfortran libopenblas-dev liblapack-dev liblapacke-dev libomp-dev \
     libscotch-dev libscotchmetis-dev libhwloc-dev \
     file bzip2 wget jq \
-    gcovr lcov \
     python3 python3-venv
 
 ln -sf /usr/bin/flang-21 /usr/local/bin/flang
