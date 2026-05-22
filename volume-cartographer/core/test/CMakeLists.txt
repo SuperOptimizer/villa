@@ -63,11 +63,11 @@ add_executable(test_blosc1_compat test_blosc1_compat.cpp)
 target_link_libraries(test_blosc1_compat PRIVATE doctest::doctest vc_core Blosc::blosc)
 add_test(NAME test_blosc1_compat COMMAND test_blosc1_compat)
 
-# Parser-only regression tests for vc_merge_tifxyz: link the small static
-# lib that holds gmResolveGrid + gmCheckConnected so the failure-message
-# assertions are exact, without spawning the binary.
+# Parser-only regression tests for vc_merge_tifxyz: gmResolveGrid +
+# gmCheckConnected are compiled into vc_core, so link that and assert the
+# failure messages exactly without spawning the binary.
 add_executable(test_merge_grid_resolve test_merge_grid_resolve.cpp)
-target_link_libraries(test_merge_grid_resolve PRIVATE doctest::doctest vc_merge_grid)
+target_link_libraries(test_merge_grid_resolve PRIVATE doctest::doctest vc_core)
 add_test(NAME test_merge_grid_resolve COMMAND test_merge_grid_resolve)
 
 # End-to-end test that spawns the built vc_merge_tifxyz binary on two

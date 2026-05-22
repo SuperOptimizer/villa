@@ -11,6 +11,19 @@ set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# Shared libs to shrink binaries and CI disk usage. (flatboi forces this
+# OFF locally for PaStiX.)
+set(BUILD_SHARED_LIBS ON CACHE BOOL "Build vc_* and FetchContent deps as .so")
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+# Exes default to -fPIE; force -fPIC to match the shared libs' PCH. -no-pie
+# only on exe links (mold/lld reject it on a .so).
+add_compile_options(-fPIC)
+add_link_options($<$<STREQUAL:$<TARGET_PROPERTY:TYPE>,EXECUTABLE>:-no-pie>)
+# Find the .so via $ORIGIN without LD_LIBRARY_PATH.
+set(CMAKE_BUILD_RPATH_USE_ORIGIN ON)
+set(CMAKE_INSTALL_RPATH "$ORIGIN/../lib")
+set(CMAKE_BUILD_WITH_INSTALL_RPATH OFF)
+
 option(VC_MARCH_NATIVE     "Tune for the host CPU (-march=native)"        OFF)
 option(VC_WARNINGS        "Enable curated warning set"                   OFF)
 option(VC_WERROR          "Treat compiler warnings as errors"            OFF)
