@@ -12,7 +12,6 @@
 #include <string>
 
 #include "Surface.hpp"
-#include "Tiff.hpp"
 
 // Surface loading and channel flags
 #define SURF_LOAD_IGNORE_MASK 1
