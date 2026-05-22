@@ -43,6 +43,18 @@ dockerfile_for() {
     return 1
 }
 
+# Hash the contents that determine the builder image. If a pulled ghcr
+# image carries a different value of this hash on its vc-builder-deps-hash
+# label, cmd_builder rejects it and falls through to a local build —
+# otherwise a stale ghcr image silently retags over a fresher local one.
+builder_deps_hash() {
+    local image=$1
+    local dockerfile
+    dockerfile="$(dockerfile_for "$image")"
+    cat "$REPO_ROOT/$dockerfile" "$REPO_ROOT/scripts/install_build_deps.sh" \
+        | sha256sum | cut -c1-16
+}
+
 run_in_builder() {
     local image=$1 src=$2; shift 2
     # --user host UID/GID: files written under /src land owned by the
@@ -62,6 +74,7 @@ run_in_builder() {
 coverage_in_dir() {
     local image=$1 src=$2
     local build_dir="build/ci-coverage-gcc-$image"
+    cmd_builder "$image"
     run_in_builder "$image" "$src" "
         cmake --preset ci-coverage-gcc &&
         cmake --build --preset ci-coverage-gcc &&
@@ -87,6 +100,17 @@ total_coverage_pct() {
 cmd_builder() {
     local image=$1
     local local_tag="vc-builder:$image"
+    local want_hash
+    want_hash="$(builder_deps_hash "$image")"
+
+    # A local image already stamped with the wanted deps-hash is fresh.
+    local existing_hash
+    existing_hash="$(docker image inspect "$local_tag" \
+        --format '{{ index .Config.Labels "vc-builder-deps-hash" }}' \
+        2>/dev/null || true)"
+    if [[ "$existing_hash" == "$want_hash" ]]; then
+        return 0
+    fi
 
     # Try pulling the published image from ghcr first. Skip the pull if
     # VC_BUILDER_FORCE_LOCAL=1 is set (the PR touched a Dockerfile, or
@@ -96,10 +120,18 @@ cmd_builder() {
         owner=$(echo "${VC_BUILDER_REGISTRY_OWNER:-${GITHUB_REPOSITORY_OWNER:-scrollprize}}" | tr 'A-Z' 'a-z')
         local remote="ghcr.io/$owner/villa/volume-cartographer:builder-$image"
         if docker pull "$remote" 2>/dev/null; then
-            docker tag "$remote" "$local_tag"
-            return 0
+            local pulled_hash
+            pulled_hash="$(docker image inspect "$remote" \
+                --format '{{ index .Config.Labels "vc-builder-deps-hash" }}' \
+                2>/dev/null || true)"
+            if [[ "$pulled_hash" == "$want_hash" ]]; then
+                docker tag "$remote" "$local_tag"
+                return 0
+            fi
+            echo "ci.sh: ghcr image $remote has deps-hash '$pulled_hash' but tree wants '$want_hash'; building locally" >&2
+        else
+            echo "ci.sh: ghcr pull of $remote failed; building locally" >&2
         fi
-        echo "ci.sh: ghcr pull of $remote failed; building locally" >&2
     fi
 
     local dockerfile
@@ -116,6 +148,7 @@ cmd_builder() {
     docker buildx build \
         --target builder \
         --tag "$local_tag" \
+        --label "vc-builder-deps-hash=$want_hash" \
         --file "$dockerfile" \
         --load \
         "${cache_args[@]}" \
@@ -135,6 +168,7 @@ cmd_publish() {
         --target builder \
         --tag "$repo:builder-$image" \
         --tag "$repo:builder-$image-$sha" \
+        --label "vc-builder-deps-hash=$(builder_deps_hash "$image")" \
         --file "$dockerfile" \
         --push \
         .
@@ -142,6 +176,7 @@ cmd_publish() {
 
 cmd_test() {
     local image=$1 compiler=$2 preset=$3
+    cmd_builder "$image"
     run_in_builder "$image" "$REPO_ROOT" "
         cmake --preset $preset-$compiler &&
         cmake --build --preset $preset-$compiler &&
@@ -150,6 +185,7 @@ cmd_test() {
 
 cmd_compile() {
     local image=$1 compiler=$2 preset=$3
+    cmd_builder "$image"
     run_in_builder "$image" "$REPO_ROOT" "
         cmake --preset $preset-$compiler &&
         cmake --build --preset $preset-$compiler"
@@ -258,6 +294,7 @@ cmd_dead_code() {
     local image=${1:-ubuntu-26.04}
     local compiler=${2:-clang}
     local build_dir="build/ci-dead-code-$compiler-$image"
+    cmd_builder "$image"
     mkdir -p "$REPO_ROOT/dead-code"
 
     # Build inside the container; capture full build log for compile-warning
@@ -272,10 +309,7 @@ cmd_dead_code() {
 }
 
 cmd_all() {
-    for image in "${IMAGES[@]}"; do
-        echo "=== Builder: $image ==="
-        cmd_builder "$image"
-    done
+    # cmd_compile/cmd_test/cmd_coverage/cmd_dead_code each call cmd_builder up-front; repeats are cheap (pull+buildx cached), so no pre-warm here.
     # 26.04: Release compile + full test matrix + sanitizers.
     for compiler in "${COMPILERS[@]}"; do
         echo "=== ubuntu-26.04: ci-release-$compiler (compile) ==="
