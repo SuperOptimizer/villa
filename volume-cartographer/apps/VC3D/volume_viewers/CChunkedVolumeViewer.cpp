@@ -9,6 +9,7 @@
 #include "vc/core/render/PostProcess.hpp"
 #include "render/ChunkCache.hpp"
 #include "vc/core/types/Volume.hpp"
+#include "vc/core/types/VolumePkg.hpp"
 #include "vc/core/util/PlaneSurface.hpp"
 #include "vc/core/util/QuadSurface.hpp"
 #include "vc/core/util/Geometry.hpp"

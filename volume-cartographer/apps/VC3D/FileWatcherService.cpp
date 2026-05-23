@@ -7,6 +7,7 @@
 #include "segmentation/SegmentationModule.hpp"
 #include "SurfaceTreeWidget.hpp"
 #include "vc/core/types/Segmentation.hpp"
+#include "vc/core/types/VolumePkg.hpp"
 #include "vc/core/util/Logging.hpp"
 #include "VCSettings.hpp"
 #include <sys/inotify.h>

@@ -57,6 +57,7 @@
 
 #include "CommandLineToolRunner.hpp"
 #include "vc/core/types/VolumePkg.hpp"
+#include "vc/core/types/Volume.hpp"
 #include "vc/core/types/Segmentation.hpp"
 #include "vc/core/util/Surface.hpp"
 #include "vc/core/util/QuadSurface.hpp"

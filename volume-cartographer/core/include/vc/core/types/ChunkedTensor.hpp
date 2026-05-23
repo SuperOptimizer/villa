@@ -1,6 +1,5 @@
 #pragma once
 
-#include <iostream>
 #include "vc/core/util/HashFunctions.hpp"
 #include "vc/core/render/ChunkCache.hpp"
 #include "vc/core/render/ZarrChunkFetcher.hpp"
