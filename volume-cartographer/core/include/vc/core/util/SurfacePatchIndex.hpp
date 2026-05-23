@@ -14,7 +14,7 @@
 
 #include <opencv2/core/mat.hpp>
 
-#include "vc/core/util/QuadSurface.hpp"
+#include "vc/core/util/Rect3D.hpp"
 
 class QuadSurface;
 class PlaneSurface;

@@ -96,6 +96,10 @@ if(VC_USE_PCH)
         "$<$<COMPILE_LANGUAGE:CXX>:<random>>"
         "$<$<COMPILE_LANGUAGE:CXX>:<utility>>"
         "$<$<COMPILE_LANGUAGE:CXX>:<vector>>"
+        "$<$<COMPILE_LANGUAGE:CXX>:<functional>>"
+        "$<$<COMPILE_LANGUAGE:CXX>:<set>>"
+        "$<$<COMPILE_LANGUAGE:CXX>:<map>>"
+        "$<$<COMPILE_LANGUAGE:CXX>:<thread>>"
         # <format> is the heaviest std header in the build (~1.3k s of
         # instantiation across TUs; libstdc++ 15 + Qt pull it in widely).
         "$<$<COMPILE_LANGUAGE:CXX>:<format>>"

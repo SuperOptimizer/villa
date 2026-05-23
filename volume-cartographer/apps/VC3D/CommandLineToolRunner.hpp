@@ -7,14 +7,10 @@
 #include <QDialog>
 #include <QFile>
 
-#include "CWindow.hpp"
 #include "elements/ProgressUtil.hpp"
 #include "ConsoleOutputWidget.hpp"
 
-
-
-// Forward declaration
-
+class CWindow;
 
 /**
  * @brief Class to manage execution of command-line tools

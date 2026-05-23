@@ -1,6 +1,7 @@
 #include "continous.hpp"
 #include "support.hpp"
 
+#include <boost/program_options.hpp>
 #include <opencv2/imgproc.hpp>
 #include <opencv2/imgcodecs.hpp>
 #include "discrete.hpp"
