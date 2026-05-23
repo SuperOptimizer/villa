@@ -9,6 +9,19 @@ set_target_properties(doctest::doctest PROPERTIES
 
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Test)
 
+# Dedicated PCH carrier for the test suite. vc_core is SHARED, so CMake bakes
+# -Dvc_core_EXPORTS into its PCH; GCC then rejects that PCH for tests (which
+# don't define the macro) with -Winvalid-pch. Owning the PCH on a STATIC target
+# also leaves room to add test-only headers without bloating vc_core.
+if(VC_USE_PCH)
+    add_library(vc_test_pch STATIC vc_test_pch_dummy.cpp)
+    set_target_properties(vc_test_pch PROPERTIES
+        AUTOMOC OFF AUTOUIC OFF AUTORCC OFF
+        POSITION_INDEPENDENT_CODE ON)
+    target_link_libraries(vc_test_pch PRIVATE vc_core)
+    target_precompile_headers(vc_test_pch PRIVATE ${VC_PCH_HEADERS})
+endif()
+
 # vc_add_test(NAME ... [SOURCES ...] [LIBS ...] [INCLUDES ...] [DEFS ...])
 #
 # Wraps the add_executable / target_link_libraries / add_test trio. SOURCES
@@ -37,7 +50,7 @@ function(vc_add_test)
         target_link_libraries(${T_NAME} PRIVATE ${T_LIBS})
     endif()
     if(VC_USE_PCH AND T_LIBS AND "vc_core" IN_LIST T_LIBS)
-        target_precompile_headers(${T_NAME} REUSE_FROM vc_core)
+        target_precompile_headers(${T_NAME} REUSE_FROM vc_test_pch)
     endif()
     if(T_INCLUDES)
         target_include_directories(${T_NAME} PRIVATE ${T_INCLUDES})
