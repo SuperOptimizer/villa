@@ -19,7 +19,7 @@
 #include <unordered_set>
 #include <vector>
 
-#include <opencv2/core.hpp>
+#include <opencv2/core/mat.hpp>
 
 #include "CVolumeViewerView.hpp"
 #include "VolumeViewerBase.hpp"

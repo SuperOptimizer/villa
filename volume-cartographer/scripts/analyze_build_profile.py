@@ -161,8 +161,21 @@ def main():
         if cat in cat_total:
             print(f"  {cat_total[cat]:7.0f}  {cat}")
 
-    print("\n## Heaviest headers (inclusive top-level parse time; s, #TUs)")
+    # All headers incl. third-party — a heavy 3rd-party header is a candidate
+    # to replace or drop (e.g. doctest was swapped for an in-tree framework).
+    print("\n## Heaviest headers — all, incl. third-party (s, #TUs)")
     for det, s in sorted(header_total.items(), key=lambda x: -x[1])[:args.top]:
+        print(f"  {s:6.0f}  x{header_tus[det]:<4} {shorten(det, args.build_dir)}")
+
+    # First-party = under the repo but not the build dir (which holds _deps).
+    # These are the headers we can actually edit; ranking by cost x #TUs finds
+    # the highest-leverage include-trimming targets.
+    repo = os.path.dirname(os.path.dirname(os.path.abspath(args.build_dir)))
+    bdir = os.path.abspath(args.build_dir)
+    ours = {h: s for h, s in header_total.items()
+            if os.path.abspath(h).startswith(repo) and not os.path.abspath(h).startswith(bdir)}
+    print("\n## Heaviest first-party headers (ours to fix; s, #TUs)")
+    for det, s in sorted(ours.items(), key=lambda x: -x[1])[:args.top]:
         print(f"  {s:6.0f}  x{header_tus[det]:<4} {shorten(det, args.build_dir)}")
 
     print("\n## Heaviest template instantiations (s, summed)")
