@@ -3,7 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 
-#include <opencv2/core.hpp>
+#include <opencv2/core/mat.hpp>
 #include <QComboBox>
 #include <QCheckBox>
 #include <QString>

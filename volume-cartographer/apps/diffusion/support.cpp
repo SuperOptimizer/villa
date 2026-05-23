@@ -1,4 +1,6 @@
 #include "support.hpp"
+#include <opencv2/imgproc.hpp>
+#include <opencv2/imgcodecs.hpp>
 #include <iostream>
 #include "spiral_ceres.hpp"
 #include "vc/core/util/LifeTime.hpp"

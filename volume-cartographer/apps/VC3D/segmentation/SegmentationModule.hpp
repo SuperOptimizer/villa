@@ -19,7 +19,7 @@
 #include <utility>
 #include <vector>
 
-#include <opencv2/core.hpp>
+#include <opencv2/core/mat.hpp>
 
 #include "../volume_viewers/VolumeViewerBase.hpp"
 #include "tools/SegmentationEditManager.hpp"

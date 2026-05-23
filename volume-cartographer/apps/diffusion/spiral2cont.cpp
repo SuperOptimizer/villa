@@ -1,5 +1,9 @@
 #include "spiral2cont.hpp"
 #include "support.hpp"
+
+#include <opencv2/imgproc.hpp>
+#include <opencv2/imgcodecs.hpp>
+#include <opencv2/videoio.hpp>
 #include "spiral_ceres.hpp"
 #include "spiral.hpp"
 #include "spiral2.hpp"

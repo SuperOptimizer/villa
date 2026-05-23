@@ -1,4 +1,6 @@
 // vc_tifxyz2obj.cpp
+#include <opencv2/core.hpp>  // operator<<(ostream, cv::Size) for the debug prints below
+
 #include "vc/core/util/Geometry.hpp"
 #include "vc/core/util/InpaintSurface.hpp"
 #include "vc/core/util/Slicing.hpp"

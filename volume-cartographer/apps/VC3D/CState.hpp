@@ -7,7 +7,7 @@
 #include <unordered_map>
 #include <vector>
 
-#include <opencv2/core.hpp>
+#include <opencv2/core/mat.hpp>
 
 #include "vc/core/types/VolumePkg.hpp"
 #include "vc/core/types/Volume.hpp"

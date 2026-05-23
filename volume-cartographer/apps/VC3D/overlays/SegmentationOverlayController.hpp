@@ -12,7 +12,7 @@
 #include <optional>
 #include <vector>
 
-#include <opencv2/core.hpp>
+#include <opencv2/core/mat.hpp>
 
 class CState;
 class SegmentationEditManager;

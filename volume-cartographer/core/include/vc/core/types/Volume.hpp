@@ -11,7 +11,7 @@
 #include <string>
 #include <vector>
 #include "utils/Json.hpp"
-#include <opencv2/core.hpp>
+#include <opencv2/core/mat.hpp>
 
 #include "vc/core/types/Sampling.hpp"
 #include "vc/core/types/SampleParams.hpp"

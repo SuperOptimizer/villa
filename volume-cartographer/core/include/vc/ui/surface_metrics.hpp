@@ -3,7 +3,7 @@
 #include "vc/core/PointCollections.hpp"
 
 #include "utils/Json.hpp"
-#include <opencv2/core.hpp>
+#include <opencv2/core/mat.hpp>
 
 // Forward declarations
 class QuadSurface;

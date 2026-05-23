@@ -7,7 +7,7 @@
 #include "vc/core/types/Array3D.hpp"
 #include "vc/core/types/Volume.hpp"
 
-#include <opencv2/core.hpp>
+#include <opencv2/core/mat.hpp>
 
 #include "vc/core/types/VcDataset.hpp"
 
