@@ -5,6 +5,7 @@
 #include <vc/core/util/Slicing.hpp>
 
 #include <filesystem>
+#include <optional>
 
 namespace boost::program_options { class variables_map; }
 namespace po = boost::program_options;
