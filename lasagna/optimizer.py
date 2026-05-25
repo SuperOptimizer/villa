@@ -23,6 +23,10 @@ import opt_loss_winding_volume
 import opt_loss_station
 import opt_loss_bend
 import opt_loss_cyl
+import opt_loss_snap_surf
+from snap_surf import map_global as snap_surf_map_global
+from progress_table import format_progress_value, print_progress_legend
+import opt_loss_flatten
 
 
 def _debug_cuda_sync(label: str) -> None:
@@ -59,9 +63,12 @@ class OptSettings:
 	params: list[str]
 	min_scaledown: int
 	default_mul: float | None
-	w_fac: dict | None
+	w_fac: dict | float | None
 	eff: dict[str, float]
+	base_eff: dict[str, float]
+	steps_auto: bool = False
 	args: dict | None = None
+	kind: str = "model"
 
 
 @dataclass(frozen=True)
@@ -96,6 +103,40 @@ CYLINDER_LOSS_NAMES = (
 	"cyl_z_center", "cyl_step_push", "cyl_radial_mean", "cyl_bend", "cyl_conn_mesh", "cyl_conn_gt",
 	"cyl_base_mesh", "cyl_base_gt", "cyl_outside",
 )
+MODEL_OPT_PARAMS = {"mesh_ms", "amp", "bias", "cyl_params", "map_flatten_ms"}
+MAP_OPT_PARAMS = {"map_surf_affine", "map_surf_ms"}
+PARAM_REPLACEMENTS = {
+	"flatten_map_ms": "map_flatten_ms",
+	"map_affine": "map_surf_affine",
+	"affine": "map_surf_affine",
+	"map_uv_ms": "map_surf_ms",
+}
+MODEL_INTERNAL_PARAM = {
+	"map_flatten_ms": "flatten_map_ms",
+}
+MAP_LOSS_NAMES = (
+	"map_dist",
+	"map_vec_normal",
+	"map_surface_normal",
+	"map_smooth",
+	"map_bend",
+	"map_jac",
+	"map_metric_smooth",
+	"map_area_smooth",
+	"map_dense_prior",
+	"map_station_t",
+)
+MAP_STAGE_LOSS_TO_GLOBAL = {
+	"dist": "map_dist",
+	"vec": "map_vec_normal",
+	"norm": "map_surface_normal",
+	"smooth": "map_smooth",
+	"bend": "map_bend",
+	"jac": "map_jac",
+	"metric_smooth": "map_metric_smooth",
+	"area_smooth": "map_area_smooth",
+	"prior": "map_dense_prior",
+}
 
 
 def normalize_cylinder_grow_direction(raw: object = "outward") -> int:
@@ -158,14 +199,19 @@ def _cyl_outside_mode_for_direction(direction: int) -> str:
 def _stage_to_modifiers(
 	base: dict[str, float],
 	default_mul: float | None,
-	w_fac: dict | None,
+	w_fac: dict | float | None,
+	scalar_terms: set[str] | None = None,
 ) -> tuple[dict[str, float], dict[str, float]]:
 	eff = {k: float(v) for k, v in base.items()}
 	if default_mul is not None:
 		for name in base.keys():
-			if w_fac is None or name not in w_fac:
-				eff[name] = float(base[name]) * float(default_mul)
-	if w_fac is not None:
+			eff[name] = float(base[name]) * float(default_mul)
+	if isinstance(w_fac, (int, float)):
+		terms = scalar_terms if scalar_terms is not None else set(base.keys())
+		for name in terms:
+			if name in base:
+				eff[name] = float(base[name]) * float(w_fac)
+	elif isinstance(w_fac, dict):
 		for k, v in w_fac.items():
 			if v is None:
 				continue
@@ -189,7 +235,7 @@ def _parse_opt_settings(
 	base: dict[str, float],
 ) -> OptSettings:
 	opt_cfg = dict(opt_cfg)
-	steps = max(0, int(opt_cfg.get("steps", 0)))
+	steps_raw = opt_cfg.get("steps", 0)
 	lr_raw = opt_cfg.get("lr", 1e-3)
 	if isinstance(lr_raw, list):
 		if not lr_raw:
@@ -201,10 +247,20 @@ def _parse_opt_settings(
 	if not isinstance(params, list):
 		params = []
 	params = [str(p) for p in params]
-	valid = {"mesh_ms", "amp", "bias", "cyl_params"}
-	bad_params = sorted(set(params) - valid)
+	for old, new in PARAM_REPLACEMENTS.items():
+		if old in params:
+			raise ValueError(f"stages_json: stage '{stage_name}' opt.params: use '{new}' instead of '{old}'")
+	model_params = set(params) & MODEL_OPT_PARAMS
+	map_params = set(params) & MAP_OPT_PARAMS
+	bad_params = sorted(set(params) - MODEL_OPT_PARAMS - MAP_OPT_PARAMS)
 	if bad_params:
 		raise ValueError(f"stages_json: stage '{stage_name}' opt.params: unknown name(s): {bad_params}")
+	if model_params and map_params:
+		raise ValueError(
+			f"stages_json: stage '{stage_name}' opt.params: cannot mix model params {sorted(model_params)} "
+			f"with map params {sorted(map_params)}; put concurrent map optimization under args.snap_surf_map.map_opt"
+		)
+	kind = "map" if map_params else "model"
 	min_scaledown = max(0, int(opt_cfg.get("min_scaledown", 0)))
 	default_mul = opt_cfg.get("default_mul", None)
 	w_fac = opt_cfg.get("w_fac", None)
@@ -215,6 +271,18 @@ def _parse_opt_settings(
 	if args_raw is not None and not isinstance(args_raw, dict):
 		raise ValueError(f"stages_json: stage '{stage_name}' opt 'args' must be an object or null")
 	args = dict(args_raw) if args_raw else {}
+	steps_auto = isinstance(steps_raw, str) and steps_raw.strip().lower() == "auto"
+	if steps_auto:
+		steps = max(1, int(args.get("auto_steps_max", 10000)))
+	elif isinstance(steps_raw, str):
+		try:
+			steps = max(0, int(steps_raw))
+		except ValueError as exc:
+			raise ValueError(
+				f"stages_json: stage '{stage_name}' opt.steps: expected an integer or 'auto'"
+			) from exc
+	else:
+		steps = max(0, int(steps_raw))
 	opt_cfg.pop("steps", None)
 	opt_cfg.pop("lr", None)
 	opt_cfg.pop("params", None)
@@ -226,13 +294,25 @@ def _parse_opt_settings(
 	_require_consumed_dict(where=f"stage '{stage_name}' opt", cfg=opt_cfg)
 	if default_mul is not None:
 		default_mul = float(default_mul)
-	if w_fac is not None and not isinstance(w_fac, dict):
-		raise ValueError(f"stages_json: stage '{stage_name}' opt 'w_fac' must be an object or null")
+	if kind == "map" and w_fac is not None and not isinstance(w_fac, (dict, int, float)):
+		raise ValueError(f"stages_json: stage '{stage_name}' opt 'w_fac' must be an object, number, or null for map stages")
+	if kind == "model" and w_fac is not None and not isinstance(w_fac, (dict, int, float)):
+		raise ValueError(f"stages_json: stage '{stage_name}' opt 'w_fac' must be an object, number, or null")
 	if isinstance(w_fac, dict):
 		bad_terms = sorted(set(str(k) for k in w_fac.keys()) - set(base.keys()))
 		if bad_terms:
 			raise ValueError(f"stages_json: stage '{stage_name}' opt.w_fac: unknown term(s): {bad_terms}")
-	eff, _mods = _stage_to_modifiers(base, default_mul, w_fac)
+		if kind == "map":
+			bad_map_terms = sorted(set(str(k) for k in w_fac.keys()) - set(MAP_LOSS_NAMES))
+			if bad_map_terms:
+				raise ValueError(
+					f"stages_json: stage '{stage_name}' opt.w_fac: map stages may only override map loss term(s); "
+					f"got {bad_map_terms}"
+				)
+	scalar_terms = set(MAP_LOSS_NAMES) if kind == "map" else (set(base.keys()) - set(MAP_LOSS_NAMES))
+	eff, _mods = _stage_to_modifiers(base, default_mul, w_fac, scalar_terms=scalar_terms)
+	if steps_auto and "cyl_params" in params:
+		raise ValueError(f"stages_json: stage '{stage_name}' opt.steps='auto' is not supported for cyl_params stages")
 	if "cyl_params" in params:
 		if params != ["cyl_params"]:
 			raise ValueError(f"stages_json: stage '{stage_name}' opt.params: cyl_params must be optimized alone")
@@ -248,6 +328,11 @@ def _parse_opt_settings(
 			)
 		if not any(float(eff.get(name, 0.0)) != 0.0 for name in CYLINDER_LOSS_NAMES):
 			raise ValueError(f"stages_json: stage '{stage_name}' with cyl_params requires a nonzero cylinder loss")
+	if "map_flatten_ms" in params and not any(
+		float(eff.get(name, 0.0)) != 0.0
+		for name in ("flatten_sdir", "flatten_map_step", "flatten_avg_offset", "flatten_orient")
+	):
+		raise ValueError(f"stages_json: stage '{stage_name}' with map_flatten_ms requires a nonzero flatten loss")
 	return OptSettings(
 		steps=steps,
 		lr=lr,
@@ -256,7 +341,10 @@ def _parse_opt_settings(
 		default_mul=default_mul,
 		w_fac=w_fac,
 		eff=eff,
+		base_eff={k: float(v) for k, v in base.items()},
+		steps_auto=steps_auto,
 		args=args,
+		kind=kind,
 	)
 
 
@@ -274,6 +362,18 @@ lambda_global: dict[str, float] = {
 	"station_t": 0.0,
 	"bend": 0.0,
 	"ext_offset": 0.0,
+	"snap_surf": 0.0,
+	"snap_surf_map": 0.0,
+	"map_dist": 1.0,
+	"map_vec_normal": 1.0,
+	"map_surface_normal": 1.0,
+	"map_smooth": 0.05,
+	"map_bend": 0.01,
+	"map_jac": 1.0,
+	"map_metric_smooth": 0.05,
+	"map_area_smooth": 0.02,
+	"map_dense_prior": 0.001,
+	"map_station_t": 0.0,
 	"cyl_normal": 0.0,
 	"cyl_center": 0.0,
 	"cyl_smooth": 0.0,
@@ -288,6 +388,10 @@ lambda_global: dict[str, float] = {
 	"cyl_base_mesh": 0.0,
 	"cyl_base_gt": 0.0,
 	"cyl_outside": 0.0,
+	"flatten_sdir": 0.0,
+	"flatten_map_step": 0.0,
+	"flatten_avg_offset": 0.0,
+	"flatten_orient": 0.0,
 }
 
 
@@ -299,6 +403,12 @@ def _init_mode_from_args(args_cfg: object) -> str | None:
 		return None
 	init_mode = args_cfg.get("init-mode", args_cfg.get("init_mode", None))
 	return None if init_mode is None else str(init_mode).strip().lower()
+
+
+def _model_init_from_args(args_cfg: object) -> str | None:
+	if not isinstance(args_cfg, dict):
+		return None
+	return str(args_cfg.get("model-init", args_cfg.get("model_init", "seed"))).strip().lower()
 
 
 def _validate_cylinder_seed_stage_roles(stages: list[Stage]) -> None:
@@ -359,11 +469,14 @@ def _validate_cylinder_seed_stage_roles(stages: list[Stage]) -> None:
 def load_stages_cfg(cfg: dict, *, init_mode: str | None = None) -> list[Stage]:
 	cfg = dict(cfg)
 	args_cfg = cfg.pop("args", None)
+	model_init = _model_init_from_args(args_cfg)
 	if init_mode is None:
 		init_mode = _init_mode_from_args(args_cfg)
 	else:
 		init_mode = str(init_mode).strip().lower()
 	base = dict(lambda_global)
+	if model_init == "flatten":
+		base = {k: 0.0 for k in base.keys()}
 	base_cfg = cfg.pop("base", None)
 	if isinstance(base_cfg, dict):
 		bad_base = sorted(set(str(k) for k in base_cfg.keys()) - set(base.keys()))
@@ -429,6 +542,48 @@ def _lr_last(lr: float | list[float]) -> float:
 	return float(lr)
 
 
+def _global_map_w_fac_from_eff(*, base: dict[str, float], eff: dict[str, float]) -> dict[str, float]:
+	out: dict[str, float] = {}
+	for stage_name, global_name in MAP_STAGE_LOSS_TO_GLOBAL.items():
+		base_val = float(base.get(global_name, 0.0))
+		eff_val = float(eff.get(global_name, 0.0))
+		out[stage_name] = (eff_val / base_val) if base_val != 0.0 else 0.0
+	return out
+
+
+def _global_map_args_from_eff(args: dict, *, base: dict[str, float], eff: dict[str, float]) -> dict:
+	out = dict(args)
+	map_init = dict(out.get("map_init", {})) if isinstance(out.get("map_init", {}), dict) else {}
+	map_init.update({
+		"w_dist": float(base.get("map_dist", 0.0)),
+		"w_vec_normal": float(base.get("map_vec_normal", 0.0)),
+		"w_surface_normal": float(base.get("map_surface_normal", 0.0)),
+		"w_smooth": float(base.get("map_smooth", 0.0)),
+		"w_bend": float(base.get("map_bend", 0.0)),
+		"w_jac": float(base.get("map_jac", 0.0)),
+		"w_metric_smooth": float(base.get("map_metric_smooth", 0.0)),
+		"w_area_smooth": float(base.get("map_area_smooth", 0.0)),
+		"w_dense_prior": float(base.get("map_dense_prior", 0.0)),
+	})
+	out["map_init"] = map_init
+	out["map_station_t"] = float(eff.get("map_station_t", 0.0))
+	return out
+
+
+def _global_map_stage_from_opt_settings(*, name: str, opt_cfg: OptSettings, args: dict) -> snap_surf_map_global.GlobalMapStageConfig:
+	if opt_cfg.kind != "map":
+		raise ValueError(f"stage '{name}' is not a map optimization stage")
+	return snap_surf_map_global.GlobalMapStageConfig(
+		name=name,
+		steps=int(opt_cfg.steps),
+		lr=float(_lr_last(opt_cfg.lr)),
+		params=tuple({"map_surf_affine": "affine", "map_surf_ms": "map_uv_ms"}.get(p, p) for p in opt_cfg.params),
+		min_scaledown=int(opt_cfg.min_scaledown),
+		w_fac=_global_map_w_fac_from_eff(base=opt_cfg.base_eff, eff=opt_cfg.eff),
+		args=_global_map_args_from_eff(args, base=opt_cfg.base_eff, eff=opt_cfg.eff),
+	)
+
+
 def _lr_scalespace(*, lr: float | list[float], scale_i: int) -> float:
 	if not isinstance(lr, list):
 		return float(lr)
@@ -438,6 +593,73 @@ def _lr_scalespace(*, lr: float | list[float], scale_i: int) -> float:
 	if -len(lr) <= idx < 0:
 		return float(lr[idx])
 	return float(lr[0])
+
+
+def _steps_label(opt_cfg: OptSettings) -> str:
+	if opt_cfg.steps_auto:
+		return f"auto:{int(opt_cfg.steps)}"
+	return str(int(opt_cfg.steps))
+
+
+def _auto_steps_window(args: dict | None) -> int:
+	args = args or {}
+	return max(1, int(args.get("auto_steps_window", 100)))
+
+
+def _auto_steps_min(args: dict | None, *, window: int) -> int:
+	args = args or {}
+	return max(1, int(args.get("auto_steps_min", int(window))))
+
+
+def _auto_steps_rel_threshold(args: dict | None) -> float:
+	args = args or {}
+	raw = args.get("auto_steps_rel_threshold", args.get("auto_steps_rel_tol", 1.0e-4))
+	return max(0.0, float(raw))
+
+
+def _auto_steps_relative_improvement(history: list[float], *, window: int) -> float:
+	if len(history) <= int(window):
+		return math.inf
+	before = history[:-int(window)]
+	recent = history[-int(window):]
+	if not before or not recent:
+		return math.inf
+	best_before = min(float(v) for v in before)
+	best_recent = min(float(v) for v in recent)
+	return (best_before - best_recent) / max(abs(best_before), 1.0e-12)
+
+
+def _auto_steps_should_stop(history: list[float], *, window: int, rel_threshold: float) -> bool:
+	return _auto_steps_relative_improvement(history, window=window) < float(rel_threshold)
+
+
+def _flatten_max_update_base(args: dict | None) -> float:
+	if args is None:
+		return 0.1
+	return float(args.get("flatten_max_update", 0.1))
+
+
+def _clamp_flatten_map_ms_update(
+	params: list[torch.nn.Parameter],
+	before: list[torch.Tensor],
+	*,
+	base_step: float,
+) -> None:
+	base = float(base_step)
+	if base <= 0.0:
+		return
+	with torch.no_grad():
+		for scale_i, (p, prev) in enumerate(zip(params, before)):
+			if p.shape != prev.shape:
+				continue
+			max_step = base * (2.0 ** int(scale_i))
+			delta = p - prev
+			if delta.ndim >= 1 and int(delta.shape[0]) == 2:
+				norm = torch.linalg.vector_norm(delta, dim=0, keepdim=True)
+				scale = (float(max_step) / norm.clamp_min(1.0e-12)).clamp_max(1.0)
+				p.copy_(prev + delta * scale)
+			else:
+				p.copy_(prev + delta.clamp(min=-float(max_step), max=float(max_step)))
 
 
 def check_data_bounds(model, data: fit_data.FitData3D, margin: float = 100.0,
@@ -491,6 +713,76 @@ def optimize(
 ) -> fit_data.FitData3D:
 	_optimize_t0 = time.perf_counter()
 	opt_loss_corr.reset_state()
+	opt_loss_snap_surf.reset_state()
+	_snap_global_runtime: snap_surf_map_global.GlobalMapRuntime | None = None
+	_map_forward_needs = fit_model.ModelForwardNeeds(mesh_normals=True, ext_surfaces=True)
+
+	def _snap_global_runtime_for(stage_args: dict | None = None) -> snap_surf_map_global.GlobalMapRuntime:
+		nonlocal _snap_global_runtime
+		if _snap_global_runtime is None:
+			base = {}
+			if isinstance(stage_args, dict):
+				if isinstance(stage_args.get("map_global"), dict):
+					base = dict(stage_args.get("map_global"))
+				snap_args = stage_args.get("snap_surf")
+				if isinstance(snap_args, dict) and isinstance(snap_args.get("map_global"), dict):
+					base = dict(snap_args.get("map_global", {})) if isinstance(snap_args.get("map_global"), dict) else {}
+			_snap_global_runtime = snap_surf_map_global.GlobalMapRuntime(base=base, seed_xyz=seed_xyz)
+		return _snap_global_runtime
+
+	def _run_snap_global_map_stage(
+		*,
+		stage: snap_surf_map_global.GlobalMapStageConfig,
+		res,
+		stage_args: dict | None,
+		persistent_optimizer: bool,
+		status_fn=None,
+	) -> dict[str, float]:
+		records = getattr(res, "ext_surfaces", None)
+		if not records:
+			raise RuntimeError("snap_surf global map optimizer requires external_surfaces")
+		if res.normals is None:
+			raise RuntimeError("snap_surf global map optimizer requires model normals")
+		ext_xyz, ext_valid, ext_normals, ext_quad_valid = records[0]
+		runtime = _snap_global_runtime_for(stage_args)
+		return runtime.run_stage(
+			stage=stage,
+			model_xyz=res.xyz_lr,
+			model_normals=res.normals,
+			model_valid=torch.isfinite(res.xyz_lr).all(dim=-1),
+			ext_xyz=ext_xyz,
+			ext_valid=ext_valid,
+			ext_normals=ext_normals,
+			ext_quad_valid=ext_quad_valid,
+			persistent_optimizer=persistent_optimizer,
+			status_fn=status_fn,
+		)
+
+	def _compact_snap_global_map_stats(stats: dict[str, float]) -> dict[str, float]:
+		return {
+			k: float(stats[k])
+			for k in ("snaps_map_loss", "snaps_map_dist", "snaps_map_vec", "snaps_map_norm")
+			if k in stats
+		}
+
+	def _snap_global_map_loss(*, res) -> tuple[torch.Tensor, tuple[torch.Tensor, ...], tuple[torch.Tensor, ...]]:
+		records = getattr(res, "ext_surfaces", None)
+		if not records:
+			raise RuntimeError("snap_surf_map requires external_surfaces")
+		if res.normals is None:
+			raise RuntimeError("snap_surf_map requires model normals")
+		ext_xyz, ext_valid, ext_normals, ext_quad_valid = records[0]
+		loss, lms, masks, stats = _snap_global_runtime_for().snap_loss(
+			model_xyz=res.xyz_lr,
+			model_normals=res.normals,
+			model_valid=torch.isfinite(res.xyz_lr).all(dim=-1),
+			ext_xyz=ext_xyz,
+			ext_valid=ext_valid,
+			ext_normals=ext_normals,
+			ext_quad_valid=ext_quad_valid,
+		)
+		opt_loss_snap_surf.update_last_stats(stats)
+		return loss, lms, masks
 
 	def _stage_start(name: str) -> float:
 		return 0.0
@@ -928,6 +1220,14 @@ def optimize(
 			"loss": opt_loss_winding_density.ext_offset_loss,
 			"needs": Needs(ext_conn=True, prefetch_ext_offset=True),
 		},
+			"snap_surf": {
+				"loss": opt_loss_snap_surf.snap_surf_loss,
+				"needs": Needs(mesh_normals=True, ext_surfaces=True),
+			},
+			"snap_surf_map": {
+				"loss": _snap_global_map_loss,
+				"needs": Needs(mesh_normals=True, ext_surfaces=True),
+			},
 		"cyl_normal": {
 			"loss": opt_loss_cyl.cyl_normal_loss,
 			"needs": Needs(
@@ -978,6 +1278,22 @@ def optimize(
 		"cyl_outside": {
 			"loss": opt_loss_cyl.cyl_outside_loss,
 			"needs": Needs(cyl_samples=True, cyl_shell_fields=True, prefetch_cyl_grad_mask=True),
+		},
+		"flatten_sdir": {
+			"loss": opt_loss_flatten.flatten_sdir_loss,
+			"needs": Needs(flatten=True),
+		},
+		"flatten_map_step": {
+			"loss": opt_loss_flatten.flatten_map_step_loss,
+			"needs": Needs(flatten=True),
+		},
+		"flatten_avg_offset": {
+			"loss": opt_loss_flatten.flatten_avg_offset_loss,
+			"needs": Needs(flatten=True),
+		},
+		"flatten_orient": {
+			"loss": opt_loss_flatten.flatten_orient_loss,
+			"needs": Needs(flatten=True),
 		},
 	}
 
@@ -1060,6 +1376,17 @@ def optimize(
 			missing.append("normals")
 		if required.ext_conn and res_.ext_conn is None:
 			missing.append("ext_conn")
+		if required.ext_surfaces and res_.ext_surfaces is None:
+			missing.append("ext_surfaces")
+		if required.flatten:
+			if res_.flatten_map is None:
+				missing.append("flatten_map")
+			if res_.flatten_xyz is None:
+				missing.append("flatten_xyz")
+			if res_.flatten_point_mask is None:
+				missing.append("flatten_point_mask")
+			if res_.flatten_quad_mask is None:
+				missing.append("flatten_quad_mask")
 		cyl_active = bool(getattr(model, "cylinder_enabled", False))
 		if cyl_active:
 			if required.cyl_samples and (res_.cyl_xyz is None or res_.cyl_count <= 0):
@@ -1121,7 +1448,7 @@ def optimize(
 			_stage_done(f"{label}.total", _t_stage_total)
 			return data
 		if not is_cyl_shelling_stage:
-			print(f"[optimizer] {label}: params={opt_cfg.params} steps={opt_cfg.steps} "
+			print(f"[optimizer] {label}: params={opt_cfg.params} steps={_steps_label(opt_cfg)} "
 				  f"lr={opt_cfg.lr} min_scaledown={opt_cfg.min_scaledown}", flush=True)
 		if opt_cfg.steps <= 0 and not is_cyl_stage:
 			return data
@@ -1147,15 +1474,106 @@ def optimize(
 		stage_args = opt_cfg.args or {}
 		status_interval_raw = stage_args.get("status_interval", stage_args.get("debug_print_interval", 100))
 		status_interval = max(0, int(status_interval_raw))
+		steps_label = _steps_label(opt_cfg)
+		auto_window = _auto_steps_window(stage_args) if opt_cfg.steps_auto else 0
+		auto_min = _auto_steps_min(stage_args, window=auto_window) if opt_cfg.steps_auto else 0
+		auto_rel_threshold = _auto_steps_rel_threshold(stage_args) if opt_cfg.steps_auto else 0.0
 		opt_timing_enabled = _opt_timing_enabled(stage_args)
 		opt_timing_interval = _opt_timing_interval(stage_args, fallback=max(1, status_interval or 100))
 		opt_timing_sync = _opt_timing_sync_cuda(stage_args)
+		flatten_max_update = (
+			_flatten_max_update_base(stage_args)
+			if "map_flatten_ms" in opt_cfg.params and bool(getattr(model, "flatten_enabled", False))
+			else 0.0
+		)
 		if opt_timing_enabled and not is_cyl_shelling_stage:
 			print(
 				f"[optimizer] {label}: opt timing enabled interval={opt_timing_interval} "
 				f"sync_cuda={int(opt_timing_sync)}",
 				flush=True,
 			)
+		if opt_cfg.steps_auto and not is_cyl_shelling_stage:
+			print(
+				f"[optimizer] {label}: auto steps max={opt_cfg.steps} window={auto_window} "
+				f"min={auto_min} rel_threshold={auto_rel_threshold:g}",
+				flush=True,
+			)
+
+		if opt_cfg.kind == "map":
+			if not getattr(model, "_ext_surfaces", None):
+				raise ValueError("snap_surf global map stages require external_surfaces")
+			map_stage = _global_map_stage_from_opt_settings(name=stage.name, opt_cfg=opt_cfg, args=stage_args)
+			_map_status_rows = 0
+			_map_status_width = max(16, len(f"{label} {max(0, opt_cfg.steps)}/{max(0, opt_cfg.steps)}") + 2)
+			_map_wall = time.perf_counter()
+			_map_last_step = 0
+
+			def _print_map_status(*, step: int, total: int, stats: dict[str, float]) -> None:
+				nonlocal _map_status_rows, _map_wall, _map_last_step
+				if _map_status_rows % 20 == 0:
+					print_progress_legend(
+						prefix="[optimizer]",
+						items=[
+							("step", "stage step"),
+							("sm_los", "map objective loss"),
+							("sm_dst", "map distance loss"),
+							("sm_vec", "map vector-normal loss"),
+							("sm_nrm", "map normal alignment loss"),
+							("sm_smp", "valid map samples"),
+							("it/s", "optimizer it/s"),
+						],
+					)
+					print(
+						f"{'step':>{_map_status_width}s} {'sm_los':>8s} {'sm_dst':>8s} "
+						f"{'sm_vec':>8s} {'sm_nrm':>8s} {'sm_smp':>8s} {'it/s':>5s}",
+						flush=True,
+					)
+				now = time.perf_counter()
+				its = None
+				if int(step) > int(_map_last_step):
+					its = (int(step) - int(_map_last_step)) / max(1.0e-9, now - _map_wall)
+					_map_wall = now
+					_map_last_step = int(step)
+				its_str = f"{its:5.1f}" if its is not None else f"{'':>5s}"
+				print(
+					f"{f'{label} {int(step)}/{int(total)}':>{_map_status_width}s} "
+					f"{format_progress_value(float(stats.get('snaps_map_loss', 0.0))):>8s} "
+					f"{format_progress_value(float(stats.get('snaps_map_dist', 0.0))):>8s} "
+					f"{format_progress_value(float(stats.get('snaps_map_vec', 0.0))):>8s} "
+					f"{format_progress_value(float(stats.get('snaps_map_norm', 0.0))):>8s} "
+					f"{format_progress_value(float(stats.get('snaps_map_samples', 0.0))):>8s} "
+					f"{its_str}",
+					flush=True,
+				)
+				_map_status_rows += 1
+
+			res_map = model(data, needs=_map_forward_needs)
+			stats = _run_snap_global_map_stage(
+				stage=map_stage,
+				res=res_map,
+				stage_args=stage_args,
+				persistent_optimizer=False,
+				status_fn=_print_map_status,
+			)
+			opt_loss_snap_surf.update_last_stats(stats)
+			_done_steps[0] += max(0, int(opt_cfg.steps))
+			if progress_fn is not None:
+				progress_fn(
+					step=_done_steps[0],
+					total=_total_steps,
+					loss=float(stats.get("snaps_map_loss", 0.0)),
+					stage_progress=1.0,
+					overall_progress=(si + 1) / _num_stages if _num_stages > 0 else 1.0,
+					stage_name=stage.name,
+				)
+			print(
+				f"[optimizer] {label}: snap_surf_global_map "
+				f"loss={stats.get('snaps_map_loss', 0.0):.6g} "
+				f"samples={stats.get('snaps_map_samples', 0.0):.0f}",
+				flush=True,
+			)
+			_stage_done(f"{label}.total", _t_stage_total)
+			return data
 
 		# Configure corr Phase D Gaussian-splat σ (default 1.0; 7×7 vertex neighborhood).
 		_t = _stage_start(f"{label}.configure_losses")
@@ -1171,6 +1589,82 @@ def optimize(
 			stage_name=stage.name or label,
 			seed_xyz=seed_xyz,
 			out_dir=out_dir,
+		)
+		snap_surf_args = stage_args.get("snap_surf")
+		if snap_surf_args is not None and not isinstance(snap_surf_args, dict):
+			raise ValueError(f"stage '{stage.name}' opt.args.snap_surf must be an object")
+		if isinstance(snap_surf_args, dict):
+			snap_surf_args = dict(snap_surf_args)
+			if snap_surf_args.get("debug_obj_dir") and "debug_obj_interval" not in snap_surf_args:
+				snap_surf_args["debug_obj_interval"] = max(1, int(status_interval or opt_cfg.steps or 1))
+		snap_surf_map_args = stage_args.get("snap_surf_map")
+		if snap_surf_map_args is not None and not isinstance(snap_surf_map_args, dict):
+			raise ValueError(f"stage '{stage.name}' opt.args.snap_surf_map must be an object")
+		if isinstance(snap_surf_map_args, dict):
+			snap_surf_map_args = dict(snap_surf_map_args)
+		snap_surf_map_opt_stage: snap_surf_map_global.GlobalMapStageConfig | None = None
+		raw_map_opt = None
+		if isinstance(snap_surf_map_args, dict) and "map_opt" in snap_surf_map_args:
+			raw_map_opt = snap_surf_map_args.get("map_opt")
+		if isinstance(snap_surf_args, dict) and "map_opt" in snap_surf_args:
+			if raw_map_opt is not None:
+				raise ValueError(
+					f"stage '{stage.name}' configures both opt.args.snap_surf.map_opt and "
+					"opt.args.snap_surf_map.map_opt; use snap_surf_map.map_opt"
+				)
+			raw_map_opt = snap_surf_args.pop("map_opt")
+		if raw_map_opt is not None:
+			if not isinstance(raw_map_opt, dict):
+				raise ValueError(f"stage '{stage.name}' opt.args.snap_surf_map.map_opt must be an object or null")
+			raw_map_opt_cfg = dict(raw_map_opt)
+			raw_map_name = str(raw_map_opt_cfg.pop("name", raw_map_opt_cfg.pop("kind", "snap_surf_map.map_opt")))
+			map_opt_cfg = _parse_opt_settings(
+				stage_name=f"{stage.name}.snap_surf_map.map_opt",
+				opt_cfg=raw_map_opt_cfg,
+				base=opt_cfg.base_eff,
+			)
+			if map_opt_cfg.kind != "map":
+				raise ValueError(f"stage '{stage.name}' opt.args.snap_surf_map.map_opt params must be map params")
+			snap_surf_map_opt_stage = _global_map_stage_from_opt_settings(
+				name=raw_map_name,
+				opt_cfg=map_opt_cfg,
+				args=map_opt_cfg.args or {},
+			)
+		if isinstance(snap_surf_args, dict) and "map_global" in snap_surf_args:
+			snap_surf_args.pop("map_global")
+		snap_surf_legacy_weight = _need_term("snap_surf", stage_eff)
+		snap_surf_map_weight = _need_term("snap_surf_map", stage_eff)
+		snap_surf_global_map_mode = snap_surf_map_opt_stage is not None or snap_surf_map_weight > 0.0
+		if snap_surf_global_map_mode and snap_surf_legacy_weight > 0.0:
+			raise ValueError(
+				f"stage '{stage.name}' enables global snap-surf mapping but also has snap_surf weight "
+				f"{snap_surf_legacy_weight:.6g}; set snap_surf to 0 and use snap_surf_map for the model loss"
+			)
+		if snap_surf_global_map_mode:
+			snap_surf_legacy_cfg = None
+			snap_surf_legacy_active = False
+		else:
+			snap_surf_legacy_cfg = snap_surf_args
+			snap_surf_legacy_active = snap_surf_legacy_weight > 0.0
+		print(
+			f"[optimizer] {label}: snap_surf_weight={snap_surf_legacy_weight:.6g} "
+			f"snap_surf_map_weight={snap_surf_map_weight:.6g} "
+			f"snap_surf_legacy_active={snap_surf_legacy_active} "
+			f"snap_surf_args={snap_surf_legacy_cfg}",
+			flush=True,
+		)
+		opt_loss_snap_surf.configure_snap_surf(
+			cfg=snap_surf_legacy_cfg,
+			seed_xyz=seed_xyz,
+			active=snap_surf_legacy_active,
+			stage_label=f"{label}:{stage.name}",
+			stage_steps=opt_cfg.steps,
+		)
+		if snap_surf_legacy_active and not getattr(model, "_ext_surfaces", None):
+			raise ValueError("snap_surf requires external_surfaces")
+		opt_loss_flatten.configure(
+			sdir_eps=float(stage_args.get("flatten_sdir_eps", 1.0e-8)),
+			orient_min_det=float(stage_args.get("flatten_orient_min_det", 0.0)),
 		)
 		_compile_cyl_normal_raw = os.environ.get(
 			"LASAGNA_COMPILE_CYL_NORMAL",
@@ -1245,8 +1739,9 @@ def optimize(
 			all_params_ = model.opt_params()
 			param_groups_: list[dict] = []
 			for name in settings.params:
-				group = all_params_.get(name, [])
-				if name in {"mesh_ms"}:
+				internal_name = MODEL_INTERNAL_PARAM.get(name, name)
+				group = all_params_.get(internal_name, [])
+				if name in {"mesh_ms", "map_flatten_ms"}:
 					k0 = max(0, int(settings.min_scaledown))
 					for pi, p in enumerate(group):
 						if pi < k0:
@@ -1275,6 +1770,12 @@ def optimize(
 		if not param_groups:
 			return data
 		opt = torch.optim.Adam(param_groups)
+		if flatten_max_update > 0.0 and not is_cyl_shelling_stage:
+			print(
+				f"[optimizer] {label}: flatten_max_update={flatten_max_update:g} "
+				f"(per-scale cap doubles at each coarser level)",
+				flush=True,
+			)
 		_stage_done(f"{label}.build_optimizer", _t)
 
 		# winding_offset_autocrop: compute offset/direction then crop invalid depth layers
@@ -1301,12 +1802,13 @@ def optimize(
 		_stage_done(f"{label}.winding_offset_autocrop", _t)
 
 		_status_rows = 0
-		_status_step_width = max(16, len(f"{label} {max(0, opt_cfg.steps)}/{max(0, opt_cfg.steps)}") + 2)
+		_status_legend_cols: tuple[str, ...] | None = None
+		_status_step_width = max(16, len(f"{label} {max(0, opt_cfg.steps)}/{steps_label}") + 2)
 
 		def _print_status(*, step_label: str, loss_val: float, tv: dict[str, float], pv: dict[str, float],
 						  its: float | None = None, force_header: bool = False,
 						  shell_no: int | None = None) -> None:
-			nonlocal _status_rows
+			nonlocal _status_rows, _status_legend_cols
 			label_map = {
 				"cyl_bend": "c_bend",
 				"cyl_normal": "c_norm",
@@ -1334,15 +1836,215 @@ def optimize(
 				"pred_dt_pull_samples_m": "psampM",
 				"pred_dt_pull_prefix_mean": "pullpre",
 				"pred_dt_pull_weight_mean": "pullw",
+				"snap_surf": "snaps",
+				"snap_surf_map": "smap",
+				"snaps_map_snap": "sms_los",
+				"snaps_map_snap_abs": "sms_abs",
+				"snaps_map_snap_max": "sms_max",
+				"snaps_map_snap_samples": "sms_smp",
+				"snaps_m2e": "s_m2e",
+				"snaps_seed": "s_seed",
+				"snaps_sdist": "s_mod",
+				"snaps_sext": "s_ext",
+				"snaps_local": "s_loc",
+				"snaps_brute": "s_brt",
+				"snaps_front": "s_frt",
+				"snaps_brute_on": "s_bon",
+				"snaps_pairs_m": "s_prM",
+				"snaps_gerr_avg": "s_gav",
+				"snaps_gerr_max": "s_gmx",
+				"snaps_ravg": "s_rav",
+				"snaps_rabs": "s_rab",
+				"snaps_rmax": "s_rmx",
+				"snaps_tow": "s_tow",
+				"snaps_dbg_iter": "sd_it",
+				"snaps_dbg_ring": "sd_rng",
+				"snaps_dbg_grid": "sd_grd",
+				"snaps_dbg_ori": "sd_ori",
+				"snaps_dbg_new": "sd_new",
+				"snaps_map_active": "sm_act",
+				"snaps_map_init": "sm_ini",
+				"snaps_map_added": "sm_add",
+				"snaps_map_blocked": "sm_bq",
+				"snaps_map_sparse": "sm_spr",
+				"snaps_map_iters": "sm_it",
+				"snaps_map_blocks": "sm_blk",
+				"snaps_map_grow": "sm_grw",
+				"snaps_map_add_loss": "sm_alos",
+				"snaps_map_add_bad_frac": "sm_abf",
+				"snaps_map_add_success_frac": "sm_asf",
+				"snaps_map_fringe_loss": "sm_flos",
+				"snaps_map_fringe_bad_frac": "sm_fbf",
+				"snaps_map_fringe_success_frac": "sm_fsf",
+				"snaps_map_loss": "sm_los",
+				"snaps_map_avg": "sm_avg",
+				"snaps_map_max": "sm_max",
+				"snaps_map_dist": "sm_dst",
+				"snaps_map_vec": "sm_vec",
+				"snaps_map_norm": "sm_nrm",
+				"snaps_map_smooth": "sm_smo",
+				"snaps_map_bend": "sm_bnd",
+				"snaps_map_jac": "sm_jac",
+				"snaps_map_smooth_fwd": "sm_sf",
+				"snaps_map_bend_fwd": "sm_bf",
+				"snaps_map_jac_fwd": "sm_jf",
+				"snaps_map_metric_smooth": "sm_met",
+				"snaps_map_area_smooth": "sm_ar",
+				"snaps_map_smooth_rev": "sm_sr",
+				"snaps_map_bend_rev": "sm_br",
+				"snaps_map_jac_rev": "sm_jr",
+				"snaps_map_jinv_min": "sm_rmn",
+				"snaps_map_jinv_bad": "sm_rbd",
+				"snaps_map_jmin": "sm_jmn",
+				"snaps_map_prior": "sm_pri",
+				"snaps_map_reg": "sm_reg",
+				"snaps_map_jbad": "sm_jbd",
+				"snaps_map_jbadf": "sm_jbf",
+				"snaps_map_samples": "sm_smp",
+				"snaps_map_runtime_steps": "sm_it",
+				"snaps_map_uvbad": "sm_bad",
+				"snaps_map_model_bad": "sm_mbd",
+				"snaps_map_surf": "sm_srf",
+				"snaps_map_surf_n": "sm_sn",
+				"snaps_map_surf_avg": "sm_sav",
+				"snaps_map_surf_abs": "sm_sab",
+				"snaps_map_surf_max": "sm_smx",
+				"snaps_map_nsign": "sm_sgn",
+				"snaps_map_scales": "sm_scl",
+				"snaps_map_repair": "sm_rep",
 				"cyl_outside_pen_frac": "out%",
 				"cyl_outside_depth_max": "outmax",
 				"cyl_outside_depth_avg": "outavg",
+				"flatten_point_valid": "f_pt",
+				"flatten_quad_valid": "f_quad",
+				"flatten_tgt_step": "f_tgt",
+				"flatten_valid_to_invalid": "f_v2i",
+				"flatten_invalid_to_valid": "f_i2v",
+				"flatten_map_step": "f_mstep",
+				"flatten_avg_offset": "f_avg",
+				"flatten_avg_offset_norm": "f_avgn",
+				"flatten_orient": "f_orient",
+				"flatten_orient_fold_frac": "f_fold",
+				"flatten_orient_lowdet_frac": "f_lowdet",
+				"flatten_orient_min_det": "f_mindet",
+				"flatten_orient_mean_det": "f_det",
+				"flatten_sdir_no_new": "f_noadd",
 				"p:wcirc_avg_vx": "cavg",
 				"p:wcirc_tgt_vx": "ctgt",
 				"p:wstep_invalid_avg_vx": "iavg",
 				"p:wstep_invalid_frac": "ifrac",
 				"p:wstep_avg_vx": "wavg",
 				"p:wstep_tgt_vx": "wtgt",
+			}
+			desc_map = {
+				"cyl_bend": "cyl bend",
+				"cyl_normal": "cyl normal",
+				"cyl_outside": "cyl outside",
+				"cyl_radial_mean": "cyl radius",
+				"cyl_smooth": "cyl smooth",
+				"cyl_step": "cyl step",
+				"cyl_step_push": "cyl push",
+				"cyl_z_center": "cyl z center",
+				"cyl_z_smooth": "cyl z smooth",
+				"pred_dt_gate_gt0": "gate >0",
+				"pred_dt_gate_gt01": "gate >.1",
+				"pred_dt_gate_gt05": "gate >.5",
+				"pred_dt_gate_eq1": "gate =1",
+				"pred_dt_gate_n_gt0": "n gate >0",
+				"pred_dt_gate_n_gt01": "n gate >.1",
+				"pred_dt_gate_n_gt05": "n gate >.5",
+				"pred_dt_pull_gate_frac": "pull candidates",
+				"pred_dt_pull_scored_frac": "pull scored",
+				"pred_dt_pull_active_frac": "pull active",
+				"pred_dt_pull_batches": "pull batches",
+				"pred_dt_pull_samples_m": "pull samples M",
+				"pred_dt_pull_prefix_mean": "pull prefix",
+				"pred_dt_pull_weight_mean": "pull weight",
+				"snap_surf": "snap loss",
+				"snap_surf_map": "map-projected snap loss",
+				"snaps_map_snap": "map-projected snap loss",
+				"snaps_map_snap_abs": "map-projected snap abs residual",
+				"snaps_map_snap_max": "map-projected snap max residual",
+				"snaps_map_snap_samples": "map-projected snap samples",
+				"snaps_seed": "seed ok",
+				"snaps_sdist": "seed model dist",
+				"snaps_sext": "seed ext dist",
+				"snaps_m2e": "model->ext loss",
+				"snaps_local": "local hits",
+				"snaps_brute": "brute hits",
+				"snaps_front": "brute frontier",
+				"snaps_brute_on": "brute enabled",
+				"snaps_pairs_m": "pairs M",
+				"snaps_gerr_avg": "grid err avg",
+				"snaps_gerr_max": "grid err max",
+				"snaps_ravg": "residual avg",
+				"snaps_rabs": "residual abs",
+				"snaps_rmax": "residual max",
+				"snaps_tow": "toward loss",
+				"snaps_dbg_iter": "debug iter",
+				"snaps_dbg_ring": "debug ring",
+				"snaps_dbg_grid": "debug grid",
+				"snaps_dbg_ori": "debug orient",
+				"snaps_dbg_new": "debug new",
+				"snaps_map_active": "map active",
+				"snaps_map_init": "seeded quads",
+				"snaps_map_added": "grown quads",
+				"snaps_map_blocked": "blocked quads",
+				"snaps_map_sparse": "sparse pruned",
+				"snaps_map_iters": "map iters",
+				"snaps_map_blocks": "opt blocks",
+				"snaps_map_grow": "grow steps",
+				"snaps_map_add_loss": "add sample loss",
+				"snaps_map_add_bad_frac": "add bad sample frac",
+				"snaps_map_add_success_frac": "add usable quad frac",
+				"snaps_map_fringe_loss": "fringe sample loss",
+				"snaps_map_fringe_bad_frac": "fringe bad sample frac",
+				"snaps_map_fringe_success_frac": "fringe usable quad frac",
+				"snaps_map_loss": "map objective",
+				"snaps_map_avg": "avg model quad mapping distance",
+				"snaps_map_max": "max model quad mapping distance",
+				"snaps_map_dist": "map distance",
+				"snaps_map_vec": "vector normal",
+				"snaps_map_norm": "normal align",
+				"snaps_map_smooth": "smooth reg",
+				"snaps_map_bend": "bend reg",
+				"snaps_map_jac": "jac reg",
+					"snaps_map_smooth_fwd": "uv+model smooth",
+					"snaps_map_bend_fwd": "uv+model bend",
+					"snaps_map_jac_fwd": "forward jac",
+					"snaps_map_metric_smooth": "model edge scale",
+					"snaps_map_area_smooth": "model area scale",
+				"snaps_map_smooth_rev": "reverse smooth",
+				"snaps_map_bend_rev": "reverse bend",
+				"snaps_map_jac_rev": "reverse jac",
+				"snaps_map_jinv_min": "min rev jac",
+				"snaps_map_jinv_bad": "bad rev jac",
+				"snaps_map_jmin": "min jac",
+				"snaps_map_prior": "dense prior",
+				"snaps_map_reg": "reg vertices",
+				"snaps_map_jbad": "bad jac",
+				"snaps_map_jbadf": "bad jac frac",
+				"snaps_map_samples": "valid samples",
+				"snaps_map_runtime_steps": "persistent map optimizer steps",
+				"snaps_map_uvbad": "bad uv quads",
+				"snaps_map_model_bad": "bad model quads",
+				"snaps_map_surf": "surface normal loss",
+				"snaps_map_surf_n": "surface samples",
+				"snaps_map_surf_avg": "surface signed avg",
+				"snaps_map_surf_abs": "surface abs avg",
+				"snaps_map_surf_max": "surface abs max",
+				"snaps_map_nsign": "normal sign",
+				"snaps_map_scales": "scale levels",
+				"snaps_map_repair": "repair blocks",
+				"cyl_outside_pen_frac": "outside frac",
+				"cyl_outside_depth_max": "outside max",
+				"cyl_outside_depth_avg": "outside avg",
+				"p:wcirc_avg_vx": "param circ avg",
+				"p:wcirc_tgt_vx": "param circ target",
+				"p:wstep_invalid_avg_vx": "param invalid avg",
+				"p:wstep_invalid_frac": "param invalid frac",
+				"p:wstep_avg_vx": "param step avg",
+				"p:wstep_tgt_vx": "param step target",
 			}
 			key_order = {
 				"pred_dt_gate_gt0": 100,
@@ -1359,23 +2061,105 @@ def optimize(
 				"pred_dt_pull_samples_m": 111,
 				"pred_dt_pull_prefix_mean": 112,
 				"pred_dt_pull_weight_mean": 113,
-				"cyl_outside_pen_frac": 120,
-				"cyl_outside_depth_max": 121,
-				"cyl_outside_depth_avg": 122,
+				"snap_surf": 114,
+				"snap_surf_map": 115,
+				"snaps_map_snap": 116,
+				"snaps_map_snap_abs": 117,
+				"snaps_map_snap_max": 118,
+				"snaps_map_snap_samples": 119,
+				"snaps_seed": 120,
+				"snaps_sext": 121,
+				"snaps_sdist": 122,
+				"snaps_m2e": 123,
+				"snaps_local": 124,
+				"snaps_brute": 125,
+				"snaps_front": 126,
+				"snaps_brute_on": 127,
+				"snaps_pairs_m": 128,
+				"snaps_gerr_avg": 129,
+				"snaps_gerr_max": 130,
+				"snaps_ravg": 131,
+				"snaps_rabs": 132,
+				"snaps_rmax": 133,
+				"snaps_tow": 134,
+				"snaps_dbg_iter": 135,
+				"snaps_dbg_ring": 136,
+				"snaps_dbg_grid": 137,
+				"snaps_dbg_ori": 138,
+				"snaps_dbg_new": 139,
+				"snaps_map_active": 140,
+				"snaps_map_init": 141,
+				"snaps_map_added": 142,
+				"snaps_map_blocked": 143,
+				"snaps_map_sparse": 144,
+				"snaps_map_iters": 145,
+				"snaps_map_blocks": 146,
+				"snaps_map_grow": 147,
+				"snaps_map_add_loss": 148,
+				"snaps_map_add_bad_frac": 149,
+				"snaps_map_add_success_frac": 150,
+				"snaps_map_fringe_loss": 151,
+				"snaps_map_fringe_bad_frac": 152,
+				"snaps_map_fringe_success_frac": 153,
+				"snaps_map_loss": 154,
+				"snaps_map_dist": 155,
+				"snaps_map_vec": 156,
+				"snaps_map_norm": 157,
+				"snaps_map_smooth": 158,
+				"snaps_map_bend": 159,
+				"snaps_map_jac": 160,
+				"snaps_map_avg": 161,
+				"snaps_map_max": 162,
+				"snaps_map_smooth_fwd": 163,
+				"snaps_map_bend_fwd": 164,
+				"snaps_map_jac_fwd": 165,
+				"snaps_map_metric_smooth": 166,
+				"snaps_map_area_smooth": 167,
+				"snaps_map_smooth_rev": 168,
+				"snaps_map_bend_rev": 169,
+				"snaps_map_jac_rev": 170,
+				"snaps_map_jmin": 164,
+				"snaps_map_jinv_min": 165,
+				"snaps_map_jinv_bad": 166,
+				"snaps_map_prior": 167,
+				"snaps_map_reg": 168,
+				"snaps_map_jbad": 169,
+				"snaps_map_jbadf": 170,
+				"snaps_map_samples": 171,
+				"snaps_map_runtime_steps": 172,
+				"snaps_map_uvbad": 172,
+				"snaps_map_model_bad": 173,
+				"snaps_map_surf": 174,
+				"snaps_map_surf_n": 175,
+				"snaps_map_surf_avg": 176,
+				"snaps_map_surf_abs": 177,
+				"snaps_map_surf_max": 178,
+				"snaps_map_nsign": 179,
+				"snaps_map_scales": 180,
+				"snaps_map_repair": 181,
+				"cyl_outside_pen_frac": 190,
+				"cyl_outside_depth_max": 191,
+				"cyl_outside_depth_avg": 192,
 			}
 			def _sort_key(k: str) -> tuple[int, str]:
 				return (key_order.get(k, 0), k)
 			def _display_key(k: str) -> str:
 				return label_map.get(k, k)
+			def _desc_key(k: str) -> str:
+				if k in desc_map:
+					return desc_map[k]
+				if k.startswith("p:"):
+					return f"param {k[2:]}"
+				return k
+			def _print_status_legend(cols: list[str]) -> None:
+				items = []
+				if shell_no is not None:
+					items.append(("shell", "shell index"))
+				items.extend((("step", "stage step"), ("loss", "total loss"), ("it/s", "optimizer it/s")))
+				items.extend((_display_key(c), _desc_key(c)) for c in cols)
+				print_progress_legend(prefix="[optimizer]", items=items)
 			def _fmt_val(k: str, v: float) -> str:
-				av = abs(v)
-				if av != 0.0 and (av >= 1000.0 or av < 1.0e-3):
-					return f"{v:.1e}"
-				if av < 10.0:
-					return f"{v:.4f}"
-				if av < 100.0:
-					return f"{v:.3f}"
-				return f"{v:.1f}"
+				return format_progress_value(v)
 			tv_keys = sorted(tv.keys(), key=_sort_key)
 			pv_keys = sorted(pv.keys())
 			cols = tv_keys + [f"p:{k}" for k in pv_keys]
@@ -1383,6 +2167,10 @@ def optimize(
 			values.update({f"p:{k}": _fmt_val(f"p:{k}", pv[k]) for k in pv_keys})
 			widths = {k: max(len(_display_key(k)), len(values[k]), 5) for k in cols}
 			if force_header or (shell_no is not None and _status_rows == 0) or (shell_no is None and _status_rows % 20 == 0):
+				legend_cols = tuple(cols)
+				if _status_legend_cols != legend_cols:
+					_print_status_legend(cols)
+					_status_legend_cols = legend_cols
 				hdr = ""
 				if shell_no is not None:
 					hdr += f"{'shell':>5s} "
@@ -1618,6 +2406,12 @@ def optimize(
 						tv.update(opt_loss_pred_dt.flow_gate_last_stats())
 					if name == "cyl_outside":
 						tv.update(opt_loss_cyl.last_stats())
+					if name == "snap_surf":
+						tv.update(opt_loss_snap_surf.last_stats())
+					if name == "snap_surf_map":
+						tv.update(opt_loss_snap_surf.last_stats())
+					if name in ("flatten_sdir", "flatten_avg_offset", "flatten_orient"):
+						tv.update(opt_loss_flatten.last_stats())
 					total = total + w * lv
 			display_loss: float | None = None
 			if stage_uses_cyl_loss and not bool(getattr(res_, "cyl_shell_mode", False)):
@@ -2328,9 +3122,27 @@ def optimize(
 			_debug_cuda_sync(f"{label}.initial_eval.loss_prefetch")
 			_stage_done(f"{label}.initial_eval.loss_prefetch", _t_loss_prefetch)
 			_t_terms = _stage_start(f"{label}.initial_eval.loss_terms")
+			opt_loss_snap_surf.set_debug_step(0, label=f"{label}_initial")
 			loss0, term_vals0, display_loss0 = _eval_terms(
 				res0, stage_eff, profile_label=f"{label}.initial_eval.loss")
 			_stage_done(f"{label}.initial_eval.loss_terms", _t_terms)
+			if snap_surf_map_opt_stage is not None:
+				map_initial_stage = snap_surf_map_global.GlobalMapStageConfig(
+					name=f"{snap_surf_map_opt_stage.name or 'map_opt'}_initial",
+					steps=0,
+					lr=snap_surf_map_opt_stage.lr,
+					params=snap_surf_map_opt_stage.params,
+					min_scaledown=snap_surf_map_opt_stage.min_scaledown,
+					w_fac=snap_surf_map_opt_stage.w_fac,
+					args=dict(snap_surf_map_opt_stage.args),
+				)
+				map_initial_stats = _run_snap_global_map_stage(
+					stage=map_initial_stage,
+					res=res0,
+					stage_args=stage_args,
+					persistent_optimizer=True,
+				)
+				term_vals0.update(_compact_snap_global_map_stats(map_initial_stats))
 			_t_prune = _stage_start(f"{label}.initial_eval.cylinder_prune")
 			if _prune_cylinder_candidates_after_initial_eval():
 				all_params, param_groups = _make_param_groups()
@@ -2348,7 +3160,7 @@ def optimize(
 			term_vals0 = {k: round(v, 4) for k, v in term_vals0.items()}
 			param_vals0 = {k: round(v, 4) for k, v in param_vals0.items()}
 			_print_status(
-				step_label=f"{label} 0/{opt_cfg.steps}",
+				step_label=f"{label} 0/{steps_label}",
 				loss_val=float(display_loss0) if display_loss0 is not None else loss0.item(),
 				tv=term_vals0,
 				pv=param_vals0,
@@ -2365,6 +3177,8 @@ def optimize(
 		_stage_done(f"{label}.initial_snapshot", _t)
 
 		max_steps = opt_cfg.steps
+		final_step = 0
+		auto_loss_history = [float(loss0.detach().cpu())] if opt_cfg.steps_auto else []
 		_t_wall_start = time.perf_counter()
 		_t_steps_acc = 0
 		loss = loss0
@@ -2385,6 +3199,7 @@ def optimize(
 
 		for step in range(max_steps):
 			_t_iter = time.perf_counter()
+			auto_stop = False
 			# Sync: wait for chunks loaded by last prefetch
 			_t_io = time.perf_counter()
 			if _active_caches:
@@ -2421,6 +3236,7 @@ def optimize(
 				_opt_timing.add("loss_prefetch", time.perf_counter() - _t_io)
 
 			_t_loss_eval = time.perf_counter()
+			opt_loss_snap_surf.set_debug_step(step + 1, label=label)
 			loss, term_vals, display_loss = _eval_terms(res, stage_eff, timing=_opt_timing)
 			if _flow_timing is not None:
 				_timing_cuda_sync()
@@ -2449,13 +3265,47 @@ def optimize(
 				_opt_timing.sync()
 				_opt_timing.add("backward", time.perf_counter() - _t_part)
 			_t_part = time.perf_counter()
+			_flatten_update_before = None
+			_flatten_update_params = all_params.get("flatten_map_ms", [])
+			if flatten_max_update > 0.0 and _flatten_update_params:
+				_flatten_update_before = [p.detach().clone() for p in _flatten_update_params]
 			opt.step()
+			if _flatten_update_before is not None:
+				_clamp_flatten_map_ms_update(
+					_flatten_update_params,
+					_flatten_update_before,
+					base_step=flatten_max_update,
+				)
 			if _opt_timing is not None:
 				_opt_timing.sync()
 				_opt_timing.add("optimizer_step", time.perf_counter() - _t_part)
 			_t_part = time.perf_counter()
 			model.update_conn_offsets()
 			model.update_ext_conn_offsets()
+			if snap_surf_map_opt_stage is not None:
+				with torch.no_grad():
+					res_map_after = model(data, needs=_map_forward_needs)
+				map_stage_for_step = snap_surf_map_opt_stage
+				if step + 1 != max_steps:
+					map_args = dict(snap_surf_map_opt_stage.args)
+					map_args.pop("debug_obj_dir", None)
+					map_stage_for_step = snap_surf_map_global.GlobalMapStageConfig(
+						name=snap_surf_map_opt_stage.name,
+						steps=snap_surf_map_opt_stage.steps,
+						lr=snap_surf_map_opt_stage.lr,
+						params=snap_surf_map_opt_stage.params,
+						min_scaledown=snap_surf_map_opt_stage.min_scaledown,
+						w_fac=snap_surf_map_opt_stage.w_fac,
+						args=map_args,
+					)
+				map_stats = _run_snap_global_map_stage(
+					stage=map_stage_for_step,
+					res=res_map_after,
+					stage_args=stage_args,
+					persistent_optimizer=True,
+				)
+				opt_loss_snap_surf.update_last_stats(map_stats)
+				term_vals.update(_compact_snap_global_map_stats(map_stats))
 			if _flow_timing is not None:
 				_timing_cuda_sync()
 				_flow_timing.add("opt_step", time.perf_counter() - _t_opt)
@@ -2477,6 +3327,7 @@ def optimize(
 			_t_steps_acc += 1
 			_done_steps[0] += 1
 			step1 = step + 1
+			final_step = step1
 			_stage_progress = step1 / max_steps if max_steps > 0 else 1.0
 			_overall_progress = (si + _stage_progress) / _num_stages if _num_stages > 0 else 1.0
 
@@ -2491,8 +3342,17 @@ def optimize(
 			if _opt_timing is not None:
 				_opt_timing.add("progress", time.perf_counter() - _t_part)
 
+			if opt_cfg.steps_auto:
+				auto_loss_history.append(float(loss.detach().cpu()))
+				if step1 >= auto_min and _auto_steps_should_stop(
+					auto_loss_history,
+					window=auto_window,
+					rel_threshold=auto_rel_threshold,
+				):
+					auto_stop = True
+
 			_t_part = time.perf_counter()
-			if step == 0 or step1 == max_steps or (status_interval > 0 and (step1 % status_interval) == 0):
+			if step == 0 or step1 == max_steps or auto_stop or (status_interval > 0 and (step1 % status_interval) == 0):
 				param_vals: dict[str, float] = {}
 				for k, vs in all_params.items():
 					if len(vs) == 1 and vs[0].numel() == 1:
@@ -2502,7 +3362,7 @@ def optimize(
 				_t_wall_now = time.perf_counter()
 				_t_wall_elapsed = _t_wall_now - _t_wall_start
 				_its = _t_steps_acc / _t_wall_elapsed if _t_wall_elapsed > 0 else None
-				_print_status(step_label=f"{label} {step1}/{opt_cfg.steps}",
+				_print_status(step_label=f"{label} {step1}/{steps_label}",
 							  loss_val=float(display_loss) if display_loss is not None else loss.item(),
 							  tv=term_vals, pv=param_vals, its=_its)
 				_t_steps_acc = 0
@@ -2530,9 +3390,18 @@ def optimize(
 			if _opt_timing is not None:
 				_opt_timing.add("total", time.perf_counter() - _t_iter)
 				_opt_timing.finish_iter(label=label, step1=step1, max_steps=max_steps)
+			if auto_stop:
+				rel_improvement = _auto_steps_relative_improvement(auto_loss_history, window=auto_window)
+				print(
+					f"[optimizer] {label}: auto steps stopped at {step1}/{max_steps} "
+					f"rel_improvement_{auto_window}={rel_improvement:.6g} "
+					f"< {auto_rel_threshold:g}",
+					flush=True,
+				)
+				break
 
 		_t = _stage_start(f"{label}.final_snapshot")
-		snapshot_fn(stage=label, step=max_steps, loss=float(loss.detach().cpu()), data=data, res=res)
+		snapshot_fn(stage=label, step=final_step, loss=float(loss.detach().cpu()), data=data, res=res)
 		_stage_done(f"{label}.final_snapshot", _t)
 		_stage_done(f"{label}.total", _t_stage_total)
 		return data

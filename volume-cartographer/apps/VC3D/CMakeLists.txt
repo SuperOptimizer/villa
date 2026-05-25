@@ -20,6 +20,10 @@ set(srcs
     FileWatcherService.hpp
     AxisAlignedSliceController.cpp
     AxisAlignedSliceController.hpp
+    LineAnnotationController.cpp
+    LineAnnotationController.hpp
+    LineAnnotationDialog.cpp
+    LineAnnotationDialog.hpp
     SurfaceAffineTransformController.cpp
     SurfaceAffineTransformController.hpp
     SurfaceAreaCalculator.cpp
@@ -131,6 +135,8 @@ set(srcs
     NeuralTraceServiceManager.hpp
     LasagnaServiceManager.cpp
     LasagnaServiceManager.hpp
+    LasagnaBatchWindow.cpp
+    LasagnaBatchWindow.hpp
     segmentation/panels/SegmentationLasagnaPanel.cpp
     segmentation/panels/SegmentationLasagnaPanel.hpp
     ViewerManager.cpp
@@ -211,6 +217,7 @@ target_link_libraries(VC3D
     # mimalloc first so its symbols win malloc/free resolution.
     $<$<BOOL:${mimalloc_FOUND}>:mimalloc>
     vc_core
+    vc_lasagna
     vc_tracer
     vc_flattening
     Ceres::ceres
