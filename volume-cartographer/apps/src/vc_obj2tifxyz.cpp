@@ -57,12 +57,17 @@ private:
     // Approval resampling: original mask (BGR or 1-ch) + output accumulator.
     cv::Mat src_approval;                  // empty if not resampling approval
     cv::Mat_<cv::Vec3b> out_approval;      // sized to grid_size when active
+    // Source scale (cells-per-OBJ-unit, from the original tifxyz meta.json).
+    // When set, the output grid is sized to the source sampling density so the
+    // flattened tifxyz keeps the input's scale instead of metric mode's 1.0.
+    cv::Vec2f src_scale = cv::Vec2f(0.f, 0.f);  // <=0 = unset
 
 public:
     void setUVMetric(bool v) { uv_is_metric = v; }
     void setUVToObj(float r) { uv_to_obj = r; }
     void setUVDownsample(float f) { uv_downsample = std::max(1.0f, f); }
     void setGridCapPixels(uint64_t cap) { grid_cap_pixels = cap; }
+    void setSrcScale(const cv::Vec2f& s) { src_scale = s; }
     void setSrcApproval(const cv::Mat& m) { src_approval = m; }
     bool hasApproval() const { return !src_approval.empty() && !grid_uv.empty(); }
     const cv::Mat_<cv::Vec3b>& outApproval() const { return out_approval; }
@@ -206,7 +211,27 @@ public:
         const double eff_decim_x = (gw_dec > 1) ? (double)(gw_raw - 1) / (double)(gw_dec - 1) : 1.0;
         const double eff_decim_y = (gh_dec > 1) ? (double)(gh_raw - 1) / (double)(gh_dec - 1) : 1.0;
 
-        if (uv_is_metric) {
+        // When the source tifxyz scale is known, size the output grid to the
+        // source sampling density and adopt its scale verbatim. vc_tifxyz2obj
+        // wrote UVs as grid_idx*(1/src_scale), so the source cell count per axis
+        // is ~uv_range*src_scale + 1. This keeps the flattened tifxyz at the
+        // input's resolution/scale instead of metric mode's 1 cell / UV unit
+        // (which inflated the grid by ~1/src_scale per axis). Decimation/caps
+        // still apply on top, never finer than source.
+        if (src_scale[0] > 0.f && src_scale[1] > 0.f) {
+            int gw_src = std::max(2, static_cast<int>(std::lround(uv_range[0] * src_scale[0])) + 1);
+            int gh_src = std::max(2, static_cast<int>(std::lround(uv_range[1] * src_scale[1])) + 1);
+            // Honor any further user decimation / pixel cap on top of source density.
+            gw_src = apply_decimation(gw_src, decim);
+            gh_src = apply_decimation(gh_src, decim);
+            grid_size[0] = gw_src;
+            grid_size[1] = gh_src;
+            scale[0] = src_scale[0];
+            scale[1] = src_scale[1];
+            std::cout << "Source-scale mode: grid " << grid_size[0] << " x " << grid_size[1]
+                      << "  scale: " << scale[0] << ", " << scale[1]
+                      << "  (matched to input tifxyz)" << std::endl;
+        } else if (uv_is_metric) {
             // --- Preserve physical pixel size (scale) from the RAW grid ---
             // du_raw/dv_raw are UV units per pixel *before* decimation.
             const float du_raw = (gw_raw > 1) ? uv_range[0] / float(gw_raw - 1) : 0.f;
@@ -279,7 +304,11 @@ public:
         if (valid_count == 0) {
             std::cerr << "Warning: no valid grid points were rasterized." << std::endl;
         }
-        if (uv_is_metric) {
+        const bool src_scale_mode = (src_scale[0] > 0.f && src_scale[1] > 0.f);
+        if (src_scale_mode) {
+            // Scale was adopted verbatim from the source tifxyz; do not rescale.
+            std::cout << "Scale (from source tifxyz): " << scale[0] << ", " << scale[1] << std::endl;
+        } else if (uv_is_metric) {
             scale[0] *= mesh_units;
             scale[1] *= mesh_units;
             std::cout << "Scale from UV (micrometers): " << scale[0] << ", " << scale[1] << std::endl;
@@ -481,8 +510,10 @@ int main(int argc, char *argv[])
         std::cout << "  --uv-to-obj=<ratio> : OBJ units per 1 UV unit (default: 1.0). Only used with --uv-metric." << std::endl;
         std::cout << "  --uv-downsample=<f> : Uniform UV decimation factor (>=1.0). Reduces grid by ~f^2." << std::endl;
         std::cout << "  --grid-cap=<pixels> : Upper bound on total grid pixels. Implies extra decimation if needed." << std::endl;
-        std::cout << "  --approval-src=<dir>: Resample approval.tif from this original tifxyz onto the new grid" << std::endl;
-        std::cout << "                        (requires a <input.obj>.griduv sidecar; otherwise ignored)." << std::endl;
+        std::cout << "  --tifxyz-source=<dir>: Original tifxyz being flattened. Its meta.json scale sizes the" << std::endl;
+        std::cout << "                        output grid to the input sampling density (output scale == input" << std::endl;
+        std::cout << "                        scale). If <dir>/approval.tif exists, it is resampled onto the new" << std::endl;
+        std::cout << "                        grid via the <input.obj>.griduv sidecar. Absent: legacy metric sizing." << std::endl;
         std::cout << std::endl;
         std::cout << "Note: Scale factors are automatically calculated from the mesh grid structure." << std::endl;
         std::cout << "Examples:" << std::endl;
@@ -500,7 +531,7 @@ int main(int argc, char *argv[])
     float uv_to_obj = 1.0f;       // OBJ units per UV unit (only when uv_metric)
     float uv_downsample = 1.0f;
     uint64_t grid_cap = 0;
-    std::string approval_src;  // original tifxyz dir to resample approval from
+    std::string tifxyz_source;  // original tifxyz dir: provides scale + approval mask
 
     // Backward-compatible parsing:
     // positional numbers: stretch_factor, mesh_units
@@ -544,8 +575,8 @@ int main(int argc, char *argv[])
                 return EXIT_FAILURE;
             }
         }
-        if (starts_with(a, "--approval-src=")) {
-            approval_src = a.substr(std::string("--approval-src=").size());
+        if (starts_with(a, "--tifxyz-source=")) {
+            tifxyz_source = a.substr(std::string("--tifxyz-source=").size());
             continue;
         }
         // numbers (legacy positional)
@@ -602,27 +633,35 @@ int main(int argc, char *argv[])
         return EXIT_FAILURE;
     }
 
-    // Approval resampling (optional): needs the grid-UV sidecar (per-vertex
-    // original col,row) and the source mask. Both must be present; otherwise
-    // we just skip and write a tifxyz with no approval channel.
-    if (!approval_src.empty()) {
-        if (!converter.loadGridUV(obj_path.string())) {
-            std::cerr << "note: no usable grid-UV sidecar; approval will not be resampled\n";
-        } else {
-            try {
-                std::unique_ptr<QuadSurface> src(load_quad_from_tifxyz(approval_src));
-                cv::Mat ap = src->channel("approval", SURF_CHANNEL_NORESIZE);
-                if (ap.empty()) {
-                    std::cerr << "note: source has no approval channel; nothing to resample\n";
-                } else {
-                    converter.setSrcApproval(ap);
-                    std::cout << "Resampling approval from " << approval_src
-                              << " (" << ap.cols << "x" << ap.rows
-                              << ", " << ap.channels() << "ch)\n";
-                }
-            } catch (...) {
-                std::cerr << "warning: could not load approval source: " << approval_src << "\n";
+    // Source tifxyz (optional): provides the scale that sizes the output grid
+    // to the input sampling density, and (if present) the approval mask to
+    // resample. Absent -> legacy metric sizing, no approval channel.
+    if (!tifxyz_source.empty()) {
+        try {
+            std::unique_ptr<QuadSurface> src(load_quad_from_tifxyz(tifxyz_source));
+            const cv::Vec2f s = src->scale();
+            if (s[0] > 0.f && s[1] > 0.f) {
+                converter.setSrcScale(s);
+                std::cout << "Source tifxyz scale: " << s[0] << ", " << s[1]
+                          << " (sizing output grid to input density)\n";
+            } else {
+                std::cerr << "warning: source scale invalid; falling back to metric sizing\n";
             }
+            // Approval resample: needs both the source mask and the per-vertex
+            // grid-UV sidecar emitted by vc_tifxyz2obj. Skip cleanly if either
+            // is missing.
+            cv::Mat ap = src->channel("approval", SURF_CHANNEL_NORESIZE);
+            if (ap.empty()) {
+                std::cout << "note: source has no approval channel; nothing to resample\n";
+            } else if (!converter.loadGridUV(obj_path.string())) {
+                std::cerr << "note: no usable grid-UV sidecar; approval will not be resampled\n";
+            } else {
+                converter.setSrcApproval(ap);
+                std::cout << "Resampling approval (" << ap.cols << "x" << ap.rows
+                          << ", " << ap.channels() << "ch)\n";
+            }
+        } catch (...) {
+            std::cerr << "warning: could not load tifxyz source: " << tifxyz_source << "\n";
         }
     }
 

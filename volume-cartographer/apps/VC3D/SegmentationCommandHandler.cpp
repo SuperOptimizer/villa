@@ -916,11 +916,11 @@ private:
         QStringList args;
         args << srcObj
              << outTemp_
-             // Downsample UV grid by 20x per axis to reduce compute/memory.
-             << QStringLiteral("--uv-downsample=20")
-             // Resample the original approval mask onto the flattened grid via
-             // the grid-UV sidecar carried alongside srcObj. No-op if absent.
-             << QStringLiteral("--approval-src=%1").arg(segDir_);
+             // The original tifxyz: its meta scale sizes the output grid to the
+             // input sampling density (so the flattened tifxyz keeps the input
+             // scale, no 1/scale blowup), and its approval.tif is resampled onto
+             // the new grid via the grid-UV sidecar carried alongside srcObj.
+             << QStringLiteral("--tifxyz-source=%1").arg(segDir_);
         ioLog_ += QStringLiteral("Running: %1 %2\n").arg(obj2tifxyzExe_, args.join(' '));
         proc_->start(obj2tifxyzExe_, args);
     }
