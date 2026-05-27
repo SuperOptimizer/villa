@@ -1240,6 +1240,27 @@ void QuadSurface::invalidateMask()
     }
 }
 
+// Single-channel 8U/16U/32F -> untiled uncompressed TIFF; else cv::imwrite.
+void QuadSurface::writeChannelFile(const std::filesystem::path& dir, const std::string& name, const cv::Mat& mat)
+{
+    bool wrote = false;
+    if (mat.channels() == 1 &&
+        (mat.type() == CV_8UC1 || mat.type() == CV_16UC1 || mat.type() == CV_32FC1))
+    {
+        try {
+            writeTiff(dir / (name + ".tif"), mat, -1, 0, 0, -1.0f, COMPRESSION_NONE, dpi_);
+            wrote = true;
+        } catch (...) {
+            wrote = false; // Fall back to OpenCV
+        }
+    }
+
+    if (!wrote) {
+        std::vector<int> compression_params = { cv::IMWRITE_TIFF_COMPRESSION, COMPRESSION_NONE };
+        cv::imwrite((dir / (name + ".tif")).string(), mat, compression_params);
+    }
+}
+
 void QuadSurface::writeDataToDirectory(const std::filesystem::path& dir, const std::string& skipChannel)
 {
     // Split the points matrix into x, y, z channels
@@ -1251,32 +1272,29 @@ void QuadSurface::writeDataToDirectory(const std::filesystem::path& dir, const s
     writeTiff(dir / "y.tif", xyz[1], -1, 0, 0, -1.0f, COMPRESSION_NONE, dpi_);
     writeTiff(dir / "z.tif", xyz[2], -1, 0, 0, -1.0f, COMPRESSION_NONE, dpi_);
 
-    // OpenCV compression params for fallback
-    std::vector<int> compression_params = { cv::IMWRITE_TIFF_COMPRESSION, COMPRESSION_NONE };
-
     // Save additional channels
     for (auto const& [name, mat] : _channels) {
         if (!mat.empty() && (skipChannel.empty() || name != skipChannel)) {
-            bool wrote = false;
-
-            // Try untiled, uncompressed TIFF for single-channel ancillary data (8U/16U/32F)
-            if (mat.channels() == 1 &&
-                (mat.type() == CV_8UC1 || mat.type() == CV_16UC1 || mat.type() == CV_32FC1))
-            {
-                try {
-                    writeTiff(dir / (name + ".tif"), mat, -1, 0, 0, -1.0f, COMPRESSION_NONE, dpi_);
-                    wrote = true;
-                } catch (...) {
-                    wrote = false; // Fall back to OpenCV
-                }
-            }
-
-            // Fallback to OpenCV for multi-channel or other formats
-            if (!wrote) {
-                cv::imwrite((dir / (name + ".tif")).string(), mat, compression_params);
-            }
+            writeChannelFile(dir, name, mat);
         }
     }
+}
+
+void QuadSurface::saveChannel(const std::string& name)
+{
+    if (path.empty()) {
+        throw std::runtime_error("QuadSurface::saveChannel() requires a valid path");
+    }
+    auto it = _channels.find(name);
+    if (it == _channels.end() || it->second.empty()) {
+        return;
+    }
+
+    // Write only <name>.tif, no snapshot or x/y/z rewrite. tmp+rename so a
+    // crash mid-write can't tear the existing file.
+    const std::string tmpStem = "." + name + ".tmp" + std::to_string(::getpid());
+    writeChannelFile(path, tmpStem, it->second);
+    std::filesystem::rename(path / (tmpStem + ".tif"), path / (name + ".tif"));
 }
 
 void QuadSurface::saveSnapshot(int maxBackups)
