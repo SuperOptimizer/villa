@@ -583,6 +583,15 @@ void SegmentationOverlayController::saveApprovalMaskToSurface(QuadSurface* surfa
     surface->setChannel("approval", approvalMask);
     surface->saveChannel("approval");
 
+    // Also take a rotating backup so approval edits are recoverable. This is
+    // throttled to ~one snapshot per segment every couple minutes, so frequent
+    // approval writes coalesce instead of copying the whole segment each time.
+    try {
+        surface->saveSnapshot();
+    } catch (const std::exception& e) {
+        qWarning() << "saveApprovalMaskToSurface: backup snapshot failed:" << e.what();
+    }
+
     // Update saved image to match what we just wrote and clear pending
     for (int row = 0; row < height; ++row) {
         QRgb* savedRow = reinterpret_cast<QRgb*>(_savedApprovalMaskImage.scanLine(row));
