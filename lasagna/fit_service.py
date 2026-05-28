@@ -40,6 +40,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote, urlparse
 
+import volume_scale
+
 
 # ---------------------------------------------------------------------------
 # Global config
@@ -214,6 +216,19 @@ def _truthy_config_bool(value: Any) -> bool:
     return False
 
 
+def _request_volume_shape_zyx(body: dict[str, Any]) -> tuple[int, int, int] | None:
+    shape = volume_scale.parse_shape_zyx(body.get("volume_shape_zyx"), name="volume_shape_zyx")
+    spec = body.get("job_spec")
+    if isinstance(spec, dict):
+        spec_shape = volume_scale.parse_shape_zyx(
+            spec.get("volume_shape_zyx"), name="job_spec.volume_shape_zyx")
+        if shape is not None and spec_shape is not None and tuple(shape) != tuple(spec_shape):
+            raise ValueError("volume_shape_zyx and job_spec.volume_shape_zyx must match")
+        if shape is None:
+            shape = spec_shape
+    return shape
+
+
 def _approval_inpaint_enabled(args_section: dict[str, Any]) -> bool:
     return _truthy_config_bool(args_section.get("approval-inpaint", False))
 
@@ -255,29 +270,6 @@ def _set_pred_dt_flow_gate_debug_out_dir(cfg: dict[str, Any], out_dir: str) -> N
             gate.setdefault("debug_out_dir", out_dir)
 
 
-def _set_snap_surf_debug_obj_dir(cfg: dict[str, Any], out_dir: str) -> None:
-    stages = cfg.get("stages")
-    if not isinstance(stages, list):
-        return
-    for stage in stages:
-        if not isinstance(stage, dict):
-            continue
-        opt_cfg = stage.get("global_opt")
-        if not isinstance(opt_cfg, dict):
-            opt_cfg = stage
-        args = opt_cfg.get("args")
-        if not isinstance(args, dict):
-            args = {}
-            opt_cfg["args"] = args
-        snap = args.get("snap_surf")
-        if snap is None:
-            snap = {}
-            args["snap_surf"] = snap
-        if isinstance(snap, dict):
-            snap["debug_obj_dir"] = out_dir
-            snap.pop("debug_obj_per_iteration", None)
-
-
 def _set_snap_surf_map_debug_obj_dir(cfg: dict[str, Any], out_dir: str) -> None:
     stages = cfg.get("stages")
     if not isinstance(stages, list):
@@ -309,55 +301,46 @@ def _set_snap_surf_map_debug_obj_dir(cfg: dict[str, Any], out_dir: str) -> None:
                     map_args["debug_obj_dir"] = out_dir
 
 
-def _decode_tifxyz_for_request(
+def _single_external_surface_path(cfg: dict[str, Any], *, consumer: str) -> str:
+    external_surfaces = cfg.get("external_surfaces")
+    if not isinstance(external_surfaces, list) or len(external_surfaces) != 1:
+        count = len(external_surfaces) if isinstance(external_surfaces, list) else 0
+        raise ValueError(f"{consumer} requires exactly one external_surfaces entry, got {count}")
+    surface = external_surfaces[0]
+    if not isinstance(surface, dict) or not surface.get("path"):
+        raise ValueError(f"{consumer} external_surfaces[0] requires path")
+    return str(surface["path"])
+
+
+def _wire_external_surface_for_request(
     *,
-    body: dict[str, Any],
     cfg: dict[str, Any],
     args_section: dict[str, Any],
-    tmp_dir: str,
     model_init: str,
     ext_offset_enabled: bool,
-    snap_surf_enabled: bool = False,
     global_map_enabled: bool = False,
 ) -> str | None:
-    """Decode generic request tifxyz for consumers that still use raw tifxyz transport."""
-    import base64
-
+    """Wire external_surfaces[0] into fit.py args for consumers."""
     approval_enabled = _approval_inpaint_enabled(args_section)
     if approval_enabled and model_init != "seed":
         raise ValueError("args.approval-inpaint is only valid with args.model-init=seed")
 
-    tifxyz_payload = body.get("tifxyz")
-    if "tifxyz" in body and not isinstance(tifxyz_payload, dict):
-        raise ValueError("request tifxyz must be an object mapping filenames to base64 data")
-
     tifxyz_dir: str | None = None
-    if isinstance(tifxyz_payload, dict):
-        tifxyz_dir = str(Path(tmp_dir) / "tifxyz_input")
-        Path(tifxyz_dir).mkdir(parents=True, exist_ok=True)
-        for fname, b64 in tifxyz_payload.items():
-            (Path(tifxyz_dir) / fname).write_bytes(base64.b64decode(b64))
-        print(f"[fit-service] decoded tifxyz ({len(tifxyz_payload)} files) to {tifxyz_dir}", flush=True)
-        if model_init == "ext":
-            args_section["tifxyz-init"] = tifxyz_dir
-        if approval_enabled:
-            args_section["approval-inpaint-tifxyz"] = tifxyz_dir
-    elif model_init == "ext":
-        raise ValueError("model-init=ext requires request tifxyz")
-    elif approval_enabled:
-        raise ValueError("approval-inpaint requires request tifxyz")
-    elif model_init == "flatten" and "external_surfaces" not in cfg:
-        raise ValueError("model-init=flatten requires config external_surfaces")
-
-    if (ext_offset_enabled or snap_surf_enabled or global_map_enabled) and "external_surfaces" not in cfg:
+    if model_init == "ext":
+        tifxyz_dir = _single_external_surface_path(cfg, consumer="model-init=ext")
+        args_section["tifxyz-init"] = tifxyz_dir
+    if approval_enabled:
+        tifxyz_dir = _single_external_surface_path(cfg, consumer="approval-inpaint")
+        args_section["approval-inpaint-tifxyz"] = tifxyz_dir
+    if model_init == "flatten":
+        _single_external_surface_path(cfg, consumer="model-init=flatten")
+    if ext_offset_enabled or global_map_enabled:
         loss_names = []
         if ext_offset_enabled:
             loss_names.append("ext_offset")
-        if snap_surf_enabled:
-            loss_names.append("snap_surf")
         if global_map_enabled:
             loss_names.append("snap_surf_map/global_map")
-        raise ValueError(f"{'/'.join(loss_names)} is enabled but config has no external_surfaces")
+        _single_external_surface_path(cfg, consumer="/".join(loss_names))
 
     return tifxyz_dir
 
@@ -393,7 +376,7 @@ def _decode_model_for_request(
 
 
 def _body_with_resolved_job_spec(body: dict[str, Any]) -> dict[str, Any]:
-    """Resolve a Lasagna job spec into the legacy runner transport fields."""
+    """Resolve a Lasagna job spec into local runner transport fields."""
     spec = body.get("job_spec")
     if not isinstance(spec, dict):
         return body
@@ -424,6 +407,8 @@ def _body_with_resolved_job_spec(body: dict[str, Any]) -> dict[str, Any]:
         "linked_surfaces": spec.get("linked_surfaces", []),
         "config": cfg,
     }
+    if "volume_shape_zyx" in spec:
+        resolved["_job_spec_"]["volume_shape_zyx"] = spec.get("volume_shape_zyx")
 
     model_ref = spec.get("model")
     if model_ref not in (None, {}, ""):
@@ -436,38 +421,6 @@ def _body_with_resolved_job_spec(body: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("job_spec.linked_surfaces must be a list")
 
     return resolved
-
-
-def _apply_window_transport_args(
-    *,
-    body: dict[str, Any],
-    args_section: dict[str, Any],
-    model_init: str,
-) -> None:
-    window_size = body.get("window_size", body.get("window-size"))
-    window_overlap = body.get("window_overlap", body.get("window-overlap"))
-
-    if model_init != "ext":
-        if window_size is not None or window_overlap is not None:
-            print("[fit-service] ignoring surplus window transport data", flush=True)
-        return
-
-    if window_size is None:
-        return
-
-    try:
-        size = int(window_size)
-    except (TypeError, ValueError) as exc:
-        raise ValueError("request window_size must be an integer") from exc
-    if size <= 0:
-        return
-
-    args_section["window-size"] = size
-    if window_overlap is not None:
-        try:
-            args_section["window-overlap"] = int(window_overlap)
-        except (TypeError, ValueError) as exc:
-            raise ValueError("request window_overlap must be an integer") from exc
 
 
 def _config_effective_loss_enabled(cfg: dict[str, Any], term_name: str) -> bool:
@@ -543,10 +496,6 @@ def _config_effective_ext_offset_enabled(cfg: dict[str, Any]) -> bool:
     return _config_effective_loss_enabled(cfg, "ext_offset")
 
 
-def _config_effective_snap_surf_enabled(cfg: dict[str, Any]) -> bool:
-    return _config_effective_loss_enabled(cfg, "snap_surf")
-
-
 def _stage_params_list(opt_cfg: dict[str, Any]) -> list[str]:
     params = opt_cfg.get("params", [])
     if isinstance(params, str):
@@ -576,9 +525,6 @@ def _config_global_map_enabled(cfg: dict[str, Any]) -> bool:
             continue
         snap_map = args.get("snap_surf_map")
         if isinstance(snap_map, dict) and snap_map.get("map_opt") is not None:
-            return True
-        legacy_snap = args.get("snap_surf")
-        if isinstance(legacy_snap, dict) and legacy_snap.get("map_opt") is not None:
             return True
     return False
 
@@ -1105,6 +1051,11 @@ def _run_optimization(job: _JobState, body: dict[str, Any]) -> None:
     if not isinstance(config, dict):
         job.set_error("request config must be an object")
         return
+    try:
+        request_volume_shape_zyx = _request_volume_shape_zyx(body)
+    except Exception as exc:
+        job.set_error(str(exc))
+        return
     args_section_initial = config.get("args", {})
     if not isinstance(args_section_initial, dict):
         args_section_initial = {}
@@ -1142,6 +1093,8 @@ def _run_optimization(job: _JobState, body: dict[str, Any]) -> None:
 
         # Build argv for fit.py from the config dict.
         cfg = dict(config)
+        if request_volume_shape_zyx is not None:
+            cfg["vc3d_volume_shape_zyx"] = [int(v) for v in request_volume_shape_zyx]
         args_section_pre = cfg.get("args", {})
         if not isinstance(args_section_pre, dict):
             args_section_pre = {}
@@ -1150,9 +1103,7 @@ def _run_optimization(job: _JobState, body: dict[str, Any]) -> None:
         args_section_pre["model-init"] = model_init
         cfg["args"] = args_section_pre
         ext_offset_enabled = _config_effective_ext_offset_enabled(cfg)
-        snap_surf_enabled = _config_effective_snap_surf_enabled(cfg)
         global_map_enabled = _config_global_map_enabled(cfg)
-        external_surface_enabled = ext_offset_enabled or snap_surf_enabled or global_map_enabled
         if model_init == "flatten" and ext_offset_enabled:
             raise ValueError("model-init=flatten does not support ext_offset")
         model_input = _decode_model_for_request(
@@ -1160,20 +1111,11 @@ def _run_optimization(job: _JobState, body: dict[str, Any]) -> None:
             tmp_dir=tmp_dir,
             model_init=model_init,
         )
-        _apply_window_transport_args(
-            body=body,
-            args_section=args_section_pre,
-            model_init=model_init,
-        )
-
-        tifxyz_dir = _decode_tifxyz_for_request(
-            body=body,
+        tifxyz_dir = _wire_external_surface_for_request(
             cfg=cfg,
             args_section=args_section_pre,
-            tmp_dir=tmp_dir,
             model_init=model_init,
             ext_offset_enabled=ext_offset_enabled,
-            snap_surf_enabled=snap_surf_enabled,
             global_map_enabled=global_map_enabled,
         )
 
@@ -1194,9 +1136,6 @@ def _run_optimization(job: _JobState, body: dict[str, Any]) -> None:
             args_section["out-dir"] = str(body["out_dir"])
         elif _config_enables_pred_dt_flow_gate(cfg):
             _set_pred_dt_flow_gate_debug_out_dir(cfg, str(service_workdir))
-        if snap_surf_enabled:
-            snap_debug_dir = Path(service_workdir) / "snap_surf_objs"
-            _set_snap_surf_debug_obj_dir(cfg, str(snap_debug_dir))
         if global_map_enabled:
             snap_debug_dir = Path(service_workdir) / "snap_surf_objs"
             _set_snap_surf_map_debug_obj_dir(cfg, str(snap_debug_dir))
@@ -1212,13 +1151,16 @@ def _run_optimization(job: _JobState, body: dict[str, Any]) -> None:
 
         _orig_optimize = opt_mod.optimize
 
+        def _check_cancel() -> None:
+            if job.cancelled:
+                raise KeyboardInterrupt("cancelled by user")
+
         def _patched_optimize(**kwargs: Any) -> Any:
             orig_snapshot = kwargs.get("snapshot_fn")
             orig_progress = kwargs.get("progress_fn")
 
             def _wrapped_snapshot(*, stage: str, step: int, loss: float, **kw: Any) -> None:
-                if job.cancelled:
-                    raise KeyboardInterrupt("cancelled by user")
+                _check_cancel()
                 if orig_snapshot is not None:
                     orig_snapshot(stage=stage, step=step, loss=loss, **kw)
 
@@ -1229,13 +1171,13 @@ def _run_optimization(job: _JobState, body: dict[str, Any]) -> None:
                     overall_progress=float(kw.get("overall_progress", 0.0)),
                     stage_name=str(kw.get("stage_name", "")),
                 )
-                if job.cancelled:
-                    raise KeyboardInterrupt("cancelled by user")
+                _check_cancel()
                 if orig_progress is not None:
                     orig_progress(step=step, total=total, loss=loss, **kw)
 
             kwargs["snapshot_fn"] = _wrapped_snapshot
             kwargs["progress_fn"] = _wrapped_progress
+            kwargs["cancel_fn"] = _check_cancel
             return _orig_optimize(**kwargs)
 
         from contextlib import nullcontext
@@ -1260,49 +1202,30 @@ def _run_optimization(job: _JobState, body: dict[str, Any]) -> None:
                 job.set_cancelled()
                 return
 
-            # Export to tifxyz — skip if windowed mode already exported.
-            # Windowed mode exports .tifxyz dirs into the parent of
-            # model_output (= tmp_dir). Move them to output_dir.
             save_t0 = time.perf_counter()
-            _window_tifxyz = [p for p in Path(tmp_dir).iterdir()
-                              if p.name.endswith(".tifxyz") and p.is_dir()]
-            if _window_tifxyz:
-                import shutil as _shutil
-                _win_base = body.get("output_name", "")
-                if _win_base.endswith(".tifxyz"):
-                    _win_base = _win_base[:-len(".tifxyz")]
-                for i, p in enumerate(sorted(_window_tifxyz, key=lambda x: x.name)):
-                    dst_name = f"{_win_base}_w{i}.tifxyz" if _win_base else p.name
-                    dst = Path(output_dir) / dst_name
-                    if dst.exists():
-                        _shutil.rmtree(dst)
-                    _shutil.move(str(p), str(dst))
-                    # Update UUID in meta.json to match the new directory name
-                    _meta_path = dst / "meta.json"
-                    if _meta_path.exists():
-                        import json as _json
-                        _meta = _json.loads(_meta_path.read_text(encoding="utf-8"))
-                        _meta["uuid"] = dst_name
-                        if isinstance(job_spec, dict):
-                            _meta["lasagna_job"] = job_spec
-                        _meta_path.write_text(_json.dumps(_meta, indent=2) + "\n", encoding="utf-8")
-                print(f"[fit-service] windowed mode: moved {len(_window_tifxyz)} "
-                      f"window tifxyz to {output_dir}", flush=True)
-            else:
-                job.set_running("exporting", 0, 0, 0.0)
-                import fit2tifxyz
-                export_argv = ["--input", str(model_output), "--output", str(output_dir)]
-                if body.get("single_segment"):
-                    export_argv.append("--single-segment")
-                if body.get("copy_model") or model_init == "flatten":
-                    export_argv.append("--copy-model")
-                output_name = body.get("output_name")
-                if output_name:
-                    export_argv.extend(["--output-name", str(output_name)])
-                voxel_size_um = config.get("voxel_size_um")
-                if voxel_size_um is not None:
-                    export_argv.extend(["--voxel-size-um", str(float(voxel_size_um))])
-                fit2tifxyz.main(export_argv)
+            job.set_running("exporting", 0, 0, 0.0)
+            import fit2tifxyz
+            export_argv = ["--input", str(model_output), "--output", str(output_dir)]
+            if body.get("single_segment"):
+                export_argv.append("--single-segment")
+            if body.get("copy_model") or model_init == "flatten":
+                export_argv.append("--copy-model")
+            output_name = body.get("output_name")
+            if output_name:
+                export_argv.extend(["--output-name", str(output_name)])
+            voxel_size_um = config.get("voxel_size_um")
+            if voxel_size_um is not None:
+                export_argv.extend(["--voxel-size-um", str(float(voxel_size_um))])
+            if request_volume_shape_zyx is not None:
+                export_argv.extend([
+                    "--target-volume-shape-zyx",
+                    str(int(request_volume_shape_zyx[0])),
+                    str(int(request_volume_shape_zyx[1])),
+                    str(int(request_volume_shape_zyx[2])),
+                ])
+            _check_cancel()
+            fit2tifxyz.main(export_argv, cancel_fn=_check_cancel)
+            _check_cancel()
             save_s = time.perf_counter() - save_t0
             try:
                 saved_bytes = _dir_size_bytes(Path(output_dir))

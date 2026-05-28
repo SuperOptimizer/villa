@@ -20,21 +20,72 @@
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 
+#include <algorithm>
+
 namespace
 {
+double jobProgressFraction(const QJsonObject& job)
+{
+    double progress = job[QStringLiteral("overall_progress")].toDouble();
+    const int step = job[QStringLiteral("step")].toInt();
+    const int total = job[QStringLiteral("total_steps")].toInt();
+    if ((!job.contains(QStringLiteral("overall_progress")) || progress <= 0.0)
+        && step > 0 && total > 0) {
+        progress = static_cast<double>(step) / static_cast<double>(total);
+    }
+    return std::clamp(progress, 0.0, 1.0);
+}
+
 QString jobStateText(const QJsonObject& job)
 {
     const QString state = job[QStringLiteral("state")].toString();
     if (state == QStringLiteral("upload")) {
-        return QObject::tr("Upload");
+        const QString uploadState = job[QStringLiteral("upload_state")].toString();
+        const QString label = job[QStringLiteral("upload_label")].toString().trimmed();
+        const int current = job[QStringLiteral("upload_current")].toInt();
+        const int total = job[QStringLiteral("upload_total")].toInt();
+        const double progress = job[QStringLiteral("upload_progress")].toDouble();
+        const QString prefix = uploadState == QStringLiteral("queued")
+            ? QObject::tr("Upload queued")
+            : uploadState == QStringLiteral("checking")
+                ? QObject::tr("Checking artifacts")
+                : uploadState == QStringLiteral("submitting")
+                    ? QObject::tr("Submitting job")
+                    : QObject::tr("Uploading artifacts");
+        const QString detail = !label.isEmpty() && label != prefix ? QStringLiteral(" - %1").arg(label) : QString();
+        if (total > 0) {
+            return QObject::tr("%1 %2/%3 (%4%)%5")
+                .arg(prefix)
+                .arg(current)
+                .arg(total)
+                .arg(progress * 100.0, 0, 'f', 1)
+                .arg(detail);
+        }
+        if (progress > 0.0) {
+            return QObject::tr("%1 (%2%)%3")
+                .arg(prefix)
+                .arg(progress * 100.0, 0, 'f', 1)
+                .arg(detail);
+        }
+        return prefix + detail;
     }
     if (state == QStringLiteral("waiting")) {
         const int pos = job[QStringLiteral("queue_position")].toInt();
         return pos > 0 ? QObject::tr("Waiting #%1").arg(pos) : QObject::tr("Waiting");
     }
     if (state == QStringLiteral("running")) {
-        const double progress = job[QStringLiteral("overall_progress")].toDouble();
-        return QObject::tr("Running %1%").arg(progress * 100.0, 0, 'f', 1);
+        const double progress = jobProgressFraction(job);
+        const int step = job[QStringLiteral("step")].toInt();
+        const int total = job[QStringLiteral("total_steps")].toInt();
+        const QString stageName = job[QStringLiteral("stage_name")].toString().trimmed();
+        QString text = QObject::tr("Running %1%").arg(progress * 100.0, 0, 'f', 1);
+        if (total > 0) {
+            text += QObject::tr(" (%1/%2)").arg(step).arg(total);
+        }
+        if (!stageName.isEmpty()) {
+            text += QStringLiteral(" - %1").arg(stageName);
+        }
+        return text;
     }
     if (state == QStringLiteral("finished")) {
         return QObject::tr("Finished");

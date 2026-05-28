@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 from pathlib import Path
 import sys
 import tempfile
 import unittest
 from contextlib import redirect_stdout
+from dataclasses import replace
 from io import StringIO
 from types import SimpleNamespace
 
@@ -18,18 +20,30 @@ TEST_DIR = os.path.dirname(__file__)
 if TEST_DIR not in sys.path:
 	sys.path.insert(0, TEST_DIR)
 
-from snap_surf.map_fixture_io import _float_tif, _mask_tif, _write_json, _write_vector_dir
+from snap_surf.map_fixture_io import _float_tif, _mask_tif, _write_json, _write_vector_dir, load_map_fixture
 from snap_surf.map_global import (
 	AffineMapModel,
 	GlobalMapModel,
 	GlobalMapRuntime,
 	GlobalMapStageConfig,
 	GlobalMapConfig,
+	_LrAutoscaleState,
 	_affine_from_seed_ext_quads,
 	_affine_multistart_candidates,
+	_affine_seed_quad_expansion_rows,
+	_affine_seed_grid_candidates,
+	_apply_external_quad_health_filter,
+	_apply_optimizer_lr_schedule,
 	_objective_for_uv,
+	_full_active_quad,
+	_lr_autoscale_config,
+	_run_affine_seed_quad_expansion_reopt,
+	_select_affine_seed_grid_candidate,
+	_seed_quad_affine_init_result,
+	_stage_objective_level,
 	_stage_loss_cfg,
 	_stage_station_weight,
+	_write_map_objs,
 	optimize_fixture,
 	parse_global_map_stage_item,
 	parse_global_map_config,
@@ -108,36 +122,44 @@ def _write_planar_global_fixture(root: str, *, h: int = 5, w: int = 5, offset_h:
 			"seed_xyz": [2.0, 2.0, 0.0],
 			"seed_ext_sample_hw": [2, 2],
 			"model_depth": 0,
-			"normal_sign": 1,
-			"orientation_sign": 1,
+			"sign": 1,
 			"snap_surf_config": {"map_init": {"subdiv": 1}},
 		},
 	)
 	return reference_uv
 
 
-def _write_config(root: str, *, affine_steps: int = 8, map_steps: int = 8) -> str:
+def _xy_normals_like(shape: tuple[int, ...]) -> torch.Tensor:
+	n = torch.zeros(*shape, 3, dtype=torch.float32)
+	n[..., 0] = 1.0
+	return n
+
+
+def _write_config(root: str, *, affine_steps: int = 8, map_steps: int = 8, write_objs: bool = False) -> str:
 	path = Path(root, "cfg.json")
+	base = {
+		"map_station_t": 0.001,
+		"map_init": {
+			"subdiv": 2,
+			"scale_levels": 4,
+			"w_dist": 1.0,
+			"w_vec_normal": 0.0,
+			"w_surface_normal": 0.0,
+			"w_smooth": 0.0,
+			"w_bend": 0.0,
+			"w_jac": 0.0,
+			"w_metric_smooth": 0.0,
+			"w_area_smooth": 0.0,
+			"max_sample_angle_deg": 180.0,
+			"max_step_neighbor_ratio": 0.0,
+		},
+	}
+	if bool(write_objs):
+		base["write_objs"] = True
 	_write_json(
 		path,
 		{
-			"base": {
-				"map_station_t": 0.001,
-				"map_init": {
-					"subdiv": 2,
-					"scale_levels": 4,
-					"w_dist": 1.0,
-					"w_vec_normal": 0.0,
-					"w_surface_normal": 0.0,
-					"w_smooth": 0.0,
-					"w_bend": 0.0,
-					"w_jac": 0.0,
-					"w_metric_smooth": 0.0,
-					"w_area_smooth": 0.0,
-					"max_sample_angle_deg": 180.0,
-					"max_step_neighbor_ratio": 0.0,
-				},
-			},
+			"base": base,
 			"stages": [
 				{"steps": affine_steps, "lr": 0.05, "params": ["map_surf_affine"], "args": {"subdiv": 2}},
 				{
@@ -163,9 +185,11 @@ class SnapSurfMapGlobalTest(unittest.TestCase):
 		data=None,
 		mutate_model_xyz=None,
 		mutate_ext_xyz=None,
+		runtime_sign: int = 1,
 	):
 		h, w = 5, 5
 		runtime = GlobalMapRuntime()
+		runtime.sign = int(runtime_sign)
 		model_xyz = _plane_xyz(h=h, w=w, z=model_z).unsqueeze(0)
 		model_normals = _normals_3d(1, h, w)
 		model_valid = torch.ones(1, h, w, dtype=torch.bool)
@@ -198,7 +222,7 @@ class SnapSurfMapGlobalTest(unittest.TestCase):
 
 	def test_lasagna_stage_parser_routes_model_and_map_params(self) -> None:
 		cfg = {
-			"base": {"snap_surf": 1.0},
+			"base": {"snap_surf_map": 1.0},
 			"stages": [
 				{"name": "model", "steps": 1, "lr": 0.1, "params": ["mesh_ms"]},
 				{"name": "map", "steps": 1, "lr": 0.01, "params": ["map_surf_affine"], "w_fac": 1.0},
@@ -209,6 +233,103 @@ class SnapSurfMapGlobalTest(unittest.TestCase):
 
 		self.assertEqual(stages[0].global_opt.kind, "model")
 		self.assertEqual(stages[1].global_opt.kind, "map")
+
+	def test_map_objective_can_use_min_scaledown_sampling_grid(self) -> None:
+		with tempfile.TemporaryDirectory() as tmp:
+			_write_planar_global_fixture(tmp, h=9, w=9)
+			fixture = load_map_fixture(tmp)
+			cfg = snap_surf_config_from_global_config(parse_global_map_config(_write_config(tmp, affine_steps=0, map_steps=0)))
+			affine = AffineMapModel(
+				ext_shape=tuple(int(v) for v in fixture.ext_xyz.shape[:2]),
+				device=torch.device("cpu"),
+				dtype=torch.float32,
+			)
+			full_uv = affine()
+			global_model = GlobalMapModel(full_uv.detach(), levels=4, factor=2)
+
+			_loss0, terms0 = _objective_for_uv(
+				uv=global_model(active_level=0),
+				fixture=fixture,
+				cfg=cfg,
+				level=0,
+				z_lift=None,
+			)
+			_loss3, terms3 = _objective_for_uv(
+				uv=global_model(active_level=3),
+				fixture=fixture,
+				cfg=cfg,
+				level=3,
+				z_lift=None,
+			)
+
+			self.assertEqual(int(terms0["sample_total"].detach().cpu()), 8 * 8 * 4)
+			self.assertEqual(int(terms3["sample_total"].detach().cpu()), 1 * 1 * 4)
+
+	def test_map_objective_sampling_defaults_to_full_resolution(self) -> None:
+		ext_shape = (9, 9)
+		stage = GlobalMapStageConfig(params=("map_uv_ms",), min_scaledown=3)
+		coarse = GlobalMapStageConfig(
+			params=("map_uv_ms",),
+			min_scaledown=3,
+			args={"use_min_scaledown_sampling": True},
+		)
+		explicit = GlobalMapStageConfig(
+			params=("map_uv_ms",),
+			min_scaledown=3,
+			args={"objective_min_scaledown": 2},
+		)
+
+		self.assertEqual(_stage_objective_level(stage, 3, ext_shape), 0)
+		self.assertEqual(_stage_objective_level(coarse, 3, ext_shape), 3)
+		self.assertEqual(_stage_objective_level(explicit, 3, ext_shape), 2)
+
+	def test_runtime_map_init_keeps_z_lift_unless_disabled(self) -> None:
+		h, w = 5, 5
+		angles = torch.linspace(0.0, math.pi, w)
+		ext_normals = torch.zeros(h, w, 3)
+		ext_normals[..., 0] = torch.cos(angles).view(1, w)
+		ext_normals[..., 1] = torch.sin(angles).view(1, w)
+		model_normals = torch.zeros(1, h, w, 3)
+		model_normals[..., 0] = 1.0
+		base = {
+			"map_init": {
+				"subdiv": 1,
+				"w_dist": 0.0,
+				"w_vec_normal": 0.0,
+				"w_surface_normal": 0.0,
+				"w_z_lift": 1.0,
+				"w_smooth": 0.0,
+				"w_bend": 0.0,
+				"w_jac": 0.0,
+				"w_metric_smooth": 0.0,
+				"w_area_smooth": 0.0,
+				"max_sample_angle_deg": 180.0,
+				"max_step_neighbor_ratio": 0.0,
+			},
+		}
+		common = dict(
+			model_xyz=_plane_xyz(h=h, w=w, z=0.0).unsqueeze(0),
+			model_normals=model_normals,
+			model_valid=torch.ones(1, h, w, dtype=torch.bool),
+			ext_xyz=_plane_xyz(h=h, w=w, z=0.0),
+			ext_valid=torch.ones(h, w, dtype=torch.bool),
+			ext_normals=ext_normals,
+			ext_quad_valid=torch.ones(h - 1, w - 1, dtype=torch.bool),
+		)
+		stage = GlobalMapStageConfig(steps=0, lr=0.01, params=("affine",), args={"startup_timing": False})
+		runtime = GlobalMapRuntime(base=base, seed_xyz=(0.5, 0.5, 0.0))
+		stats = runtime.run_stage(stage=stage, **common)
+
+		disabled = GlobalMapRuntime(base=base, seed_xyz=(0.5, 0.5, 0.0))
+		disabled_stats = disabled.run_stage(
+			stage=GlobalMapStageConfig(steps=0, lr=0.01, params=("affine",), args={"startup_timing": False, "disable_z_lift": True}),
+			**common,
+		)
+
+		self.assertGreater(stats["snaps_map_turn"], 0.0)
+		self.assertGreater(stats["snaps_map_turn_smp"], 0.0)
+		self.assertEqual(disabled_stats["snaps_map_turn"], 0.0)
+		self.assertEqual(disabled_stats["snaps_map_turn_smp"], 0.0)
 
 	def test_snap_loss_zero_offset_preserves_voxel_residual(self) -> None:
 		loss, stats, out = self._snap_loss_case(offset=0.0, model_z=2.0, grad_mag=0.5)
@@ -231,6 +352,47 @@ class SnapSurfMapGlobalTest(unittest.TestCase):
 		self.assertAlmostEqual(float(loss.detach()), 1.0, places=6)
 		self.assertAlmostEqual(stats["snaps_map_snap_abs"], 1.0, places=6)
 		self.assertAlmostEqual(stats["snaps_map_snap_max"], 1.0, places=6)
+
+	def test_snap_loss_prefetch_items_cover_winding_strip_query(self) -> None:
+		h, w = 5, 5
+		runtime = GlobalMapRuntime()
+		model_xyz = _plane_xyz(h=h, w=w, z=2.0).unsqueeze(0)
+		model_normals = _normals_3d(1, h, w)
+		model_valid = torch.ones(1, h, w, dtype=torch.bool)
+		ext_xyz = _plane_xyz(h=h, w=w, z=0.0)
+		ext_valid = torch.ones(h, w, dtype=torch.bool)
+		ext_normals = _normals_2d(h, w)
+		ext_quad = torch.ones(h - 1, w - 1, dtype=torch.bool)
+		data = _RejectNonFiniteGradData(value=0.5)
+
+		items = runtime.snap_loss_prefetch_items(
+			model_xyz=model_xyz,
+			model_normals=model_normals,
+			model_valid=model_valid,
+			ext_xyz=ext_xyz,
+			ext_valid=ext_valid,
+			ext_normals=ext_normals,
+			ext_quad_valid=ext_quad,
+			offset=1.0,
+			data=data,
+			strip_samples=3,
+		)
+		runtime.snap_loss(
+			model_xyz=model_xyz,
+			model_normals=model_normals,
+			model_valid=model_valid,
+			ext_xyz=ext_xyz,
+			ext_valid=ext_valid,
+			ext_normals=ext_normals,
+			ext_quad_valid=ext_quad,
+			offset=1.0,
+			data=data,
+			strip_samples=3,
+		)
+
+		self.assertIn("grad_mag", items)
+		self.assertEqual(int(items["grad_mag"].reshape(-1, 3).shape[0]), int(data.queries[0].reshape(-1, 3).shape[0]))
+		self.assertTrue(torch.allclose(items["grad_mag"].reshape(-1, 3), data.queries[0].reshape(-1, 3)))
 
 	def test_snap_loss_nonzero_offset_measures_tangential_segment_length(self) -> None:
 		h, w = 5, 5
@@ -301,6 +463,30 @@ class SnapSurfMapGlobalTest(unittest.TestCase):
 
 		self.assertAlmostEqual(float(loss.detach()), 0.0, places=6)
 		self.assertEqual(stats["snaps_map_snap_samples"], 0.0)
+
+	def test_snap_loss_nonzero_offset_positive_side_follows_aligned_model_normal(self) -> None:
+		loss_pos, stats_pos, _out = self._snap_loss_case(offset=1.0, model_z=2.0, grad_mag=0.5, runtime_sign=1)
+		above_ext = lambda ext_xyz: ext_xyz.__setitem__((slice(None), slice(None), 2), 4.0)
+		loss_neg, stats_neg, _out = self._snap_loss_case(
+			offset=1.0,
+			model_z=2.0,
+			grad_mag=0.5,
+			runtime_sign=-1,
+			mutate_ext_xyz=above_ext,
+		)
+		loss_wrong, stats_wrong, _out = self._snap_loss_case(
+			offset=1.0,
+			model_z=2.0,
+			grad_mag=0.5,
+			runtime_sign=1,
+			mutate_ext_xyz=above_ext,
+		)
+
+		self.assertAlmostEqual(float(loss_pos.detach()), 0.0, places=6)
+		self.assertAlmostEqual(float(loss_neg.detach()), 0.0, places=6)
+		self.assertAlmostEqual(stats_pos["snaps_map_snap_abs"], 0.0, places=6)
+		self.assertAlmostEqual(stats_neg["snaps_map_snap_abs"], 0.0, places=6)
+		self.assertGreater(stats_wrong["snaps_map_snap_abs"], 1.9)
 
 	def test_snap_loss_nonzero_offset_sanitizes_nan_external_samples(self) -> None:
 		data = _RejectNonFiniteGradData(0.5)
@@ -415,6 +601,54 @@ class SnapSurfMapGlobalTest(unittest.TestCase):
 				"w_fac": {"not_a_loss": 1.0},
 			})
 
+	def test_lr_autoscale_scales_inverse_to_recent_max_loss(self) -> None:
+		p = torch.nn.Parameter(torch.tensor([0.0]))
+		opt = torch.optim.Adam([p], lr=0.2)
+		cfg = _lr_autoscale_config({"lr_autoscale": True, "lr_autoscale_window": 2})
+		state = _LrAutoscaleState(cfg)
+
+		_apply_optimizer_lr_schedule(
+			opt,
+			step1=1,
+			warmup_steps=0,
+			autoscale=state,
+			loss=torch.tensor(2.0),
+		)
+		self.assertAlmostEqual(float(opt.param_groups[0]["lr"]), 0.1)
+
+		_apply_optimizer_lr_schedule(
+			opt,
+			step1=2,
+			warmup_steps=0,
+			autoscale=state,
+			loss=torch.tensor(0.5),
+		)
+		self.assertAlmostEqual(float(opt.param_groups[0]["lr"]), 0.1)
+
+		_apply_optimizer_lr_schedule(
+			opt,
+			step1=3,
+			warmup_steps=0,
+			autoscale=state,
+			loss=torch.tensor(0.5),
+		)
+		self.assertAlmostEqual(float(opt.param_groups[0]["lr"]), 0.4)
+
+	def test_lr_autoscale_combines_with_warmup(self) -> None:
+		p = torch.nn.Parameter(torch.tensor([0.0]))
+		opt = torch.optim.Adam([p], lr=0.2)
+		state = _LrAutoscaleState(_lr_autoscale_config({"lr_autoscale": {"enabled": True, "window": 10}}))
+
+		_apply_optimizer_lr_schedule(
+			opt,
+			step1=2,
+			warmup_steps=4,
+			autoscale=state,
+			loss=torch.tensor(0.5),
+		)
+
+		self.assertAlmostEqual(float(opt.param_groups[0]["lr"]), 0.2)
+
 	def test_lasagna_stage_parser_rejects_plain_affine_and_mixed_params(self) -> None:
 		with self.assertRaisesRegex(ValueError, "map_surf_affine"):
 			optimizer.load_stages_cfg({"stages": [{"name": "bad", "params": ["affine"]}]})
@@ -466,6 +700,166 @@ class SnapSurfMapGlobalTest(unittest.TestCase):
 			self.assertNotIn("snaps_map_avg", stats)
 			self.assertNotIn("snaps_map_max", stats)
 
+	def test_live_runtime_disables_z_lift_when_requested(self) -> None:
+		runtime = GlobalMapRuntime(base={}, seed_xyz=(2.0, 2.0, 0.0))
+		h, w = 5, 5
+		model_xyz = _plane_xyz(h=h + 2, w=w + 2, z=0.0).unsqueeze(0)
+		ext_xyz = _plane_xyz(h=h, w=w, z=0.0, offset_h=0.25, offset_w=0.5)
+		model_valid = torch.ones(1, h + 2, w + 2, dtype=torch.bool)
+		ext_valid = torch.ones(h, w, dtype=torch.bool)
+		ext_quad = torch.ones(h - 1, w - 1, dtype=torch.bool)
+		model_normals = _xy_normals_like((1, h + 2, w + 2))
+		ext_normals = _xy_normals_like((h, w))
+
+		stats = runtime.run_stage(
+			stage=GlobalMapStageConfig(
+				steps=0,
+				lr=0.0,
+				params=("affine",),
+				args={"subdiv": 1, "z_lift_norm_xy_min": 0.01, "w_z_lift": 1.0, "disable_z_lift": True},
+			),
+			model_xyz=model_xyz,
+			model_normals=model_normals,
+			model_valid=model_valid,
+			ext_xyz=ext_xyz,
+			ext_valid=ext_valid,
+			ext_normals=ext_normals,
+			ext_quad_valid=ext_quad,
+			external_surface_index=0,
+			mesh_epoch=0,
+		)
+
+		self.assertEqual(stats["snaps_map_turn"], 0.0)
+		self.assertEqual(stats["snaps_map_turn_smp"], 0.0)
+		self.assertEqual(stats["snaps_map_zext_cache_miss"], 0.0)
+		self.assertEqual(stats["snaps_map_zmdl_cache_miss"], 0.0)
+		self.assertEqual(stats["snaps_map_startup_turn_model_ms"], 0.0)
+
+	def test_live_runtime_auto_stop_callback_stops_map_stage(self) -> None:
+		with tempfile.TemporaryDirectory() as tmp:
+			cfg = parse_global_map_config(_write_config(tmp, affine_steps=0, map_steps=0))
+			runtime = GlobalMapRuntime(base=cfg.base)
+			h, w = 5, 5
+			model_xyz = _plane_xyz(h=h + 2, w=w + 2, z=0.0).unsqueeze(0)
+			ext_xyz = _plane_xyz(h=h, w=w, z=0.0, offset_h=0.25, offset_w=0.5)
+			model_valid = torch.ones(1, h + 2, w + 2, dtype=torch.bool)
+			ext_valid = torch.ones(h, w, dtype=torch.bool)
+			ext_quad = torch.ones(h - 1, w - 1, dtype=torch.bool)
+			model_normals = _normals_3d(1, h + 2, w + 2)
+			ext_normals = _normals_2d(h, w)
+			status_steps: list[int] = []
+
+			def auto_stop(*, history: list[float], step: int) -> bool:
+				return int(step) >= 3 and optimizer._auto_steps_should_stop(
+					history,
+					window=2,
+					rel_threshold=1.0e-6,
+				)
+
+			stats = runtime.run_stage(
+				stage=GlobalMapStageConfig(
+					steps=10,
+					lr=0.0,
+					params=("map_uv_ms",),
+					args={"subdiv": 2, "status_interval": 0},
+				),
+				model_xyz=model_xyz,
+				model_normals=model_normals,
+				model_valid=model_valid,
+				ext_xyz=ext_xyz,
+				ext_valid=ext_valid,
+				ext_normals=ext_normals,
+				ext_quad_valid=ext_quad,
+				status_fn=lambda **kw: status_steps.append(int(kw["step"])),
+				auto_stop_fn=auto_stop,
+			)
+
+			self.assertEqual(stats["snaps_map_stage_steps"], 3.0)
+			self.assertEqual(stats["snaps_map_auto_stopped"], 1.0)
+			self.assertEqual(status_steps, [0])
+			self.assertNotIn(10, status_steps)
+
+	def test_live_runtime_status_zero_reports_current_autoscaled_warmup_lr(self) -> None:
+		with tempfile.TemporaryDirectory() as tmp:
+			cfg = parse_global_map_config(_write_config(tmp, affine_steps=0, map_steps=0))
+			runtime = GlobalMapRuntime(base=cfg.base)
+			h, w = 5, 5
+			model_xyz = _plane_xyz(h=h + 2, w=w + 2, z=0.0).unsqueeze(0)
+			ext_xyz = _plane_xyz(h=h, w=w, z=0.0, offset_h=0.25, offset_w=0.5)
+			model_valid = torch.ones(1, h + 2, w + 2, dtype=torch.bool)
+			ext_valid = torch.ones(h, w, dtype=torch.bool)
+			ext_quad = torch.ones(h - 1, w - 1, dtype=torch.bool)
+			model_normals = _normals_3d(1, h + 2, w + 2)
+			ext_normals = _normals_2d(h, w)
+			rows: list[dict[str, float]] = []
+
+			runtime.run_stage(
+				stage=GlobalMapStageConfig(
+					steps=1,
+					lr=1.0,
+					params=("map_uv_ms",),
+					args={"subdiv": 2, "status_interval": 0, "lr_autoscale": True, "lr_warmup_steps": 2},
+				),
+				model_xyz=model_xyz,
+				model_normals=model_normals,
+				model_valid=model_valid,
+				ext_xyz=ext_xyz,
+				ext_valid=ext_valid,
+				ext_normals=ext_normals,
+				ext_quad_valid=ext_quad,
+				status_fn=lambda **kw: rows.append(dict(kw["stats"])),
+			)
+
+			self.assertEqual(len(rows), 1)
+			loss = rows[0]["snaps_map_loss"]
+			expected_scale = 1.0 / loss
+			self.assertGreater(loss, 0.0)
+			self.assertAlmostEqual(rows[0]["snaps_map_lr_autoscale"], expected_scale, places=6)
+			self.assertAlmostEqual(rows[0]["snaps_map_lr"], 0.5 * expected_scale, places=6)
+
+	def test_live_runtime_auto_stop_counts_after_lr_warmup(self) -> None:
+		with tempfile.TemporaryDirectory() as tmp:
+			cfg = parse_global_map_config(_write_config(tmp, affine_steps=0, map_steps=0))
+			runtime = GlobalMapRuntime(base=cfg.base)
+			h, w = 5, 5
+			model_xyz = _plane_xyz(h=h + 2, w=w + 2, z=0.0).unsqueeze(0)
+			ext_xyz = _plane_xyz(h=h, w=w, z=0.0, offset_h=0.25, offset_w=0.5)
+			model_valid = torch.ones(1, h + 2, w + 2, dtype=torch.bool)
+			ext_valid = torch.ones(h, w, dtype=torch.bool)
+			ext_quad = torch.ones(h - 1, w - 1, dtype=torch.bool)
+			model_normals = _normals_3d(1, h + 2, w + 2)
+			ext_normals = _normals_2d(h, w)
+			auto_steps: list[int] = []
+
+			def auto_stop(*, history: list[float], step: int) -> bool:
+				auto_steps.append(int(step))
+				return int(step) >= 3 and optimizer._auto_steps_should_stop(
+					history,
+					window=2,
+					rel_threshold=1.0e-6,
+				)
+
+			stats = runtime.run_stage(
+				stage=GlobalMapStageConfig(
+					steps=10,
+					lr=0.0,
+					params=("map_uv_ms",),
+					args={"subdiv": 2, "status_interval": 0, "lr_warmup_steps": 2},
+				),
+				model_xyz=model_xyz,
+				model_normals=model_normals,
+				model_valid=model_valid,
+				ext_xyz=ext_xyz,
+				ext_valid=ext_valid,
+				ext_normals=ext_normals,
+				ext_quad_valid=ext_quad,
+				auto_stop_fn=auto_stop,
+			)
+
+			self.assertEqual(auto_steps, [1, 2, 3])
+			self.assertEqual(stats["snaps_map_stage_steps"], 5.0)
+			self.assertEqual(stats["snaps_map_auto_stopped"], 1.0)
+
 	def test_cli_default_device_is_auto(self) -> None:
 		parser = map_global_cli._build_parser()
 		args = parser.parse_args(["optimize-fixture", "fixture", "cfg.json", "--out", "out"])
@@ -506,6 +900,71 @@ class SnapSurfMapGlobalTest(unittest.TestCase):
 			mapped = affine[:, :2] @ seed_ext + affine[:, 2]
 			self.assertTrue(torch.allclose(mapped, seed_uv, atol=1.0e-6))
 
+	def test_affine_seed_grid_candidates_perturb_seed_affine_and_keep_anchor(self) -> None:
+		seed_ext = torch.tensor([2.0, 3.0])
+		base = torch.tensor([[2.0, 0.0, 5.0], [0.0, 0.5, -1.0]])
+		seed_uv = base[:, :2] @ seed_ext + base[:, 2]
+
+		candidates = _affine_seed_grid_candidates(
+			base_affine=base,
+			seed_ext_hw=seed_ext,
+			rot_deg=[0.0, 90.0],
+			scales=[1.0, 2.0],
+		)
+
+		self.assertEqual(len(candidates), 4)
+		for _idx, _rot, _scale, affine in candidates:
+			mapped = affine[:, :2] @ seed_ext + affine[:, 2]
+			self.assertTrue(torch.allclose(mapped, seed_uv, atol=1.0e-6))
+		_idx, rot, scale, affine = candidates[2]
+		self.assertEqual(rot, 0.0)
+		self.assertEqual(scale, 2.0)
+		self.assertTrue(torch.allclose(affine[:, :2], 2.0 * base[:, :2], atol=1.0e-6))
+
+	def test_affine_seed_grid_selects_best_raw_candidate(self) -> None:
+		with tempfile.TemporaryDirectory() as tmp:
+			fixture_dir = os.path.join(tmp, "fixture")
+			_write_planar_global_fixture(fixture_dir)
+			fixture = load_map_fixture(fixture_dir, device=torch.device("cpu"))
+			cfg_global = parse_global_map_config(_write_config(tmp, affine_steps=0, map_steps=0))
+			stage = GlobalMapStageConfig(
+				name="affine_seed_quad_init",
+				steps=0,
+				lr=0.0,
+				params=("affine",),
+				args={"affine_seed_quad_init": {"grid_search": {"enabled": True, "rot_deg": [0.0], "scales": [1.0, 2.0]}}},
+			)
+			stage_cfg = _stage_loss_cfg(snap_surf_config_from_global_config(cfg_global, stage), stage)
+			seed_hw = torch.tensor([2.0, 2.0])
+			seed_uv = torch.tensor([2.25, 2.5])
+			linear = torch.eye(2) * 0.5
+			base_affine = torch.cat([linear, (seed_uv - linear @ seed_hw).view(2, 1)], dim=1)
+			affine_model = AffineMapModel(
+				ext_shape=tuple(int(v) for v in fixture.ext_xyz.shape[:2]),
+				device=torch.device("cpu"),
+				dtype=torch.float32,
+				initial=base_affine,
+			)
+			stdout = StringIO()
+
+			with redirect_stdout(stdout):
+				best, best_loss = _select_affine_seed_grid_candidate(
+					base_affine=base_affine,
+					stage=stage,
+					affine_model=affine_model,
+					fixture=fixture,
+					stage_cfg=stage_cfg,
+					seed_hw=seed_hw,
+					station_target=seed_uv,
+					w_station=0.0,
+				)
+
+			text = stdout.getvalue()
+			self.assertIn("affine seed quad grid candidates=2", text)
+			self.assertIn("best_idx=0", text)
+			self.assertLess(best_loss, 1.0e-6)
+			self.assertTrue(torch.allclose(best[:, :2], torch.eye(2), atol=1.0e-5))
+
 	def test_seed_quad_affine_uses_local_fixture_geometry(self) -> None:
 		with tempfile.TemporaryDirectory() as tmp:
 			_write_planar_global_fixture(tmp)
@@ -531,6 +990,348 @@ class SnapSurfMapGlobalTest(unittest.TestCase):
 			assert affine is not None
 			pred = torch.tensor([0.0, 0.0, 1.0]) @ affine.transpose(0, 1)
 			self.assertTrue(torch.allclose(pred, torch.tensor([0.25, 0.5]), atol=1.0e-4))
+
+	def test_seed_quad_affine_sign_ignores_which_side_model_is_on(self) -> None:
+		with tempfile.TemporaryDirectory() as tmp:
+			_write_planar_global_fixture(tmp)
+			fixture_json = Path(tmp, "fixture.json")
+			meta = json.loads(fixture_json.read_text(encoding="utf-8"))
+			meta["seed_model_quad"] = [0, 1, 1]
+			fixture_json.write_text(json.dumps(meta), encoding="utf-8")
+			fixture = load_map_fixture(tmp)
+			model_xyz = fixture.model_xyz.clone()
+			model_xyz[..., 2] = -1.0
+			fixture = replace(fixture, model_xyz=model_xyz)
+			cfg = snap_surf_config_from_global_config(parse_global_map_config(_write_config(tmp, affine_steps=0, map_steps=0)))
+
+			result = _seed_quad_affine_init_result(
+				fixture=fixture,
+				stage_cfg=cfg,
+				seed_hw=torch.tensor([2.0, 2.0]),
+				seed_model_uv=torch.tensor([4.0, 2.0]),
+				raw={"grid_search": False},
+			)
+
+			self.assertIsNotNone(result)
+			assert result is not None
+			self.assertEqual(result.sign, 1)
+			self.assertEqual(result.sampled_count, 256)
+			self.assertGreaterEqual(result.kept_count, 3)
+			self.assertLess(result.seed_vec, 1.0e-4)
+
+	def test_seed_quad_affine_sign_aligns_model_normal_convention(self) -> None:
+		with tempfile.TemporaryDirectory() as tmp:
+			_write_planar_global_fixture(tmp)
+			fixture_json = Path(tmp, "fixture.json")
+			meta = json.loads(fixture_json.read_text(encoding="utf-8"))
+			meta["seed_model_quad"] = [0, 1, 1]
+			fixture_json.write_text(json.dumps(meta), encoding="utf-8")
+			fixture = load_map_fixture(tmp)
+			model_xyz = fixture.model_xyz.clone()
+			model_xyz[..., 2] = 1.0
+			fixture = replace(fixture, model_xyz=model_xyz, model_normals=-fixture.model_normals)
+			cfg = snap_surf_config_from_global_config(parse_global_map_config(_write_config(tmp, affine_steps=0, map_steps=0)))
+
+			result = _seed_quad_affine_init_result(
+				fixture=fixture,
+				stage_cfg=cfg,
+				seed_hw=torch.tensor([2.0, 2.0]),
+				seed_model_uv=torch.tensor([4.0, 2.0]),
+				raw={"grid_search": False},
+			)
+
+			self.assertIsNotNone(result)
+			assert result is not None
+			self.assertEqual(result.sign, -1)
+			self.assertLess(result.seed_norm, 1.0e-4)
+			self.assertLess(result.seed_vec, 1.0e-4)
+
+	def test_seed_quad_affine_expansion_rows_grow_to_full_ext_model(self) -> None:
+		with tempfile.TemporaryDirectory() as tmp:
+			_write_planar_global_fixture(tmp, h=20, w=20)
+			fixture = load_map_fixture(tmp)
+			cfg = snap_surf_config_from_global_config(parse_global_map_config(_write_config(tmp, affine_steps=0, map_steps=0)))
+			affine = torch.tensor([[1.0, 0.0, 0.25], [0.0, 1.0, 0.5]], dtype=fixture.model_xyz.dtype)
+
+			rows = _affine_seed_quad_expansion_rows(
+				affine=affine,
+				seed_ext_quad=(9, 9),
+				fixture=fixture,
+				stage_cfg=cfg,
+				sign=1,
+			)
+
+			self.assertEqual([int(row["radius"]) for row in rows], [0, 8, 16])
+			self.assertEqual([int(row["quads"]) for row in rows], [1, 197, 19 * 19])
+			self.assertTrue(all(math.isfinite(float(row["loss"])) for row in rows))
+			self.assertTrue(all(int(row["samples"]) > 0 for row in rows))
+
+	def test_seed_quad_affine_expansion_reopt_runs_each_radius(self) -> None:
+		with tempfile.TemporaryDirectory() as tmp:
+			_write_planar_global_fixture(tmp, h=12, w=12)
+			fixture = load_map_fixture(tmp)
+			cfg = snap_surf_config_from_global_config(parse_global_map_config(_write_config(tmp, affine_steps=0, map_steps=0)))
+			affine = AffineMapModel(
+				ext_shape=tuple(int(v) for v in fixture.ext_xyz.shape[:2]),
+				device=fixture.model_xyz.device,
+				dtype=fixture.model_xyz.dtype,
+				initial=torch.tensor([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], dtype=fixture.model_xyz.dtype),
+			)
+			initial = _affine_seed_quad_expansion_rows(
+				affine=affine.affine.detach(),
+				seed_ext_quad=(5, 5),
+				fixture=fixture,
+				stage_cfg=cfg,
+				sign=1,
+			)
+
+			rows, progress_rows = _run_affine_seed_quad_expansion_reopt(
+				affine=affine,
+				fixture=fixture,
+				stage_cfg=cfg,
+				seed_ext_quad=(5, 5),
+				seed_hw=torch.tensor([5.0, 5.0]),
+				station_target=torch.tensor([5.25, 5.5]),
+				w_station=0.0,
+				steps=2,
+				lr=0.05,
+				status_interval=1,
+				lr_warmup_steps=0,
+				stage_idx=0,
+				progress_widths_run=None,
+				debug_obj_root=Path(tmp, "grow_debug"),
+			)
+
+			self.assertEqual([int(row["radius"]) for row in rows], [8, 8, 8])
+			self.assertEqual(progress_rows, 0)
+			self.assertEqual([int(row["iters"]) for row in rows], [0, 1, 2])
+			self.assertAlmostEqual(float(rows[0]["loss"]), float(initial[1]["loss"]), places=5)
+			self.assertEqual(float(rows[0]["loss_gain"]), 0.0)
+			self.assertEqual(float(rows[0]["lr"]), 0.05)
+			self.assertEqual(float(rows[1]["lr"]), 0.05)
+			self.assertLess(float(rows[2]["loss"]), float(initial[1]["loss"]))
+			self.assertGreater(float(rows[2]["loss_gain"]), 0.0)
+			self.assertTrue(torch.isfinite(affine.affine).all())
+			self.assertTrue(Path(tmp, "grow_debug", "rad_000008_init", "map_ext_to_model.obj").exists())
+			self.assertTrue(Path(tmp, "grow_debug", "rad_000008_final", "map_ext_to_model.obj").exists())
+			meta = json.loads(Path(tmp, "grow_debug", "rad_000008_final", "meta.json").read_text(encoding="utf-8"))
+			self.assertEqual(meta["phase"], "final")
+			self.assertEqual(meta["radius"], 8)
+
+	def test_seed_quad_affine_expansion_reopt_uses_stage_lr_warmup(self) -> None:
+		with tempfile.TemporaryDirectory() as tmp:
+			_write_planar_global_fixture(tmp, h=12, w=12)
+			fixture = load_map_fixture(tmp)
+			cfg = snap_surf_config_from_global_config(parse_global_map_config(_write_config(tmp, affine_steps=0, map_steps=0)))
+			initial = torch.tensor([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], dtype=fixture.model_xyz.dtype)
+			warm = AffineMapModel(
+				ext_shape=tuple(int(v) for v in fixture.ext_xyz.shape[:2]),
+				device=fixture.model_xyz.device,
+				dtype=fixture.model_xyz.dtype,
+				initial=initial,
+			)
+			half_lr = AffineMapModel(
+				ext_shape=tuple(int(v) for v in fixture.ext_xyz.shape[:2]),
+				device=fixture.model_xyz.device,
+				dtype=fixture.model_xyz.dtype,
+				initial=initial,
+			)
+			common = dict(
+				fixture=fixture,
+				stage_cfg=cfg,
+				seed_ext_quad=(5, 5),
+				seed_hw=torch.tensor([5.0, 5.0]),
+				station_target=torch.tensor([5.25, 5.5]),
+				w_station=0.0,
+				steps=1,
+				status_interval=1,
+				stage_idx=0,
+				progress_widths_run=None,
+			)
+
+			_run_affine_seed_quad_expansion_reopt(
+				affine=warm,
+				lr=0.05,
+				lr_warmup_steps=2,
+				**common,
+			)
+			rows, _progress_rows = _run_affine_seed_quad_expansion_reopt(
+				affine=half_lr,
+				lr=0.025,
+				lr_warmup_steps=0,
+				**common,
+			)
+
+			self.assertEqual(float(rows[1]["lr"]), 0.025)
+			self.assertTrue(torch.allclose(warm.affine, half_lr.affine, atol=1.0e-6, rtol=1.0e-6))
+
+	def test_live_runtime_seed_quad_init_uses_shared_expansion_reopt(self) -> None:
+		with tempfile.TemporaryDirectory() as tmp:
+			_write_planar_global_fixture(tmp)
+			fixture = load_map_fixture(tmp)
+			runtime = GlobalMapRuntime(seed_xyz=(2.0, 2.0, 0.0))
+			stage = GlobalMapStageConfig(
+				name="affine_seed_quad_init",
+				steps=0,
+				lr=0.05,
+				params=("affine",),
+				args={
+					"debug_obj_dir": str(Path(tmp, "runtime_debug")),
+					"lr_warmup_steps": 4,
+					"affine_seed_quad_init": {"expansion_reopt": True, "expansion_reopt_steps": 1, "grid_search": False},
+				},
+			)
+			stdout = StringIO()
+
+			with redirect_stdout(stdout):
+				stats = runtime.run_stage(
+					stage=stage,
+					model_xyz=fixture.model_xyz,
+					model_normals=fixture.model_normals,
+					model_valid=fixture.model_valid,
+					ext_xyz=fixture.ext_xyz,
+					ext_valid=fixture.ext_valid,
+					ext_normals=fixture.ext_normals,
+					ext_quad_valid=fixture.ext_quad_valid,
+				)
+
+			text = stdout.getvalue()
+			self.assertIn("affine seed quad expansion reopt opts", text)
+			self.assertIn("stage_lr=0.05", text)
+			self.assertIn("lr=0.05", text)
+			self.assertIn("steps_per_radius=1", text)
+			self.assertIn("lr_warmup_steps=4", text)
+			self.assertIn("grow-r8:1/1", text)
+			self.assertIn("  0.0125", text)
+			self.assertIn("start_radius=8", text)
+			self.assertIn("weights=", text)
+			self.assertIn("grow-r", text)
+			self.assertIn("affine seed quad expansion debug objs dir=", text)
+			self.assertIn("affine seed quad initial debug objs radius=128", text)
+			self.assertTrue(Path(tmp, "runtime_debug", "map_global_affine_seed_quad_init", "expansion_reopt", "rad_000128_initial_filtered", "map_ext_to_model.obj").exists())
+			self.assertTrue(Path(tmp, "runtime_debug", "map_global_affine_seed_quad_init", "expansion_reopt", "rad_000008_init", "map_ext_to_model.obj").exists())
+			self.assertIn("snaps_map_loss", stats)
+			self.assertEqual(runtime.sign, 1)
+
+	def test_live_runtime_seed_quad_init_skips_expansion_reopt_by_default(self) -> None:
+		with tempfile.TemporaryDirectory() as tmp:
+			_write_planar_global_fixture(tmp)
+			fixture = load_map_fixture(tmp)
+			runtime = GlobalMapRuntime(seed_xyz=(2.0, 2.0, 0.0))
+			stage = GlobalMapStageConfig(
+				name="affine_seed_quad_init",
+				steps=0,
+				lr=0.05,
+				params=("affine",),
+				args={
+					"debug_obj_dir": str(Path(tmp, "runtime_debug")),
+					"affine_seed_quad_init": {"grid_search": False},
+				},
+			)
+			stdout = StringIO()
+
+			with redirect_stdout(stdout):
+				runtime.run_stage(
+					stage=stage,
+					model_xyz=fixture.model_xyz,
+					model_normals=fixture.model_normals,
+					model_valid=fixture.model_valid,
+					ext_xyz=fixture.ext_xyz,
+					ext_valid=fixture.ext_valid,
+					ext_normals=fixture.ext_normals,
+					ext_quad_valid=fixture.ext_quad_valid,
+				)
+
+			text = stdout.getvalue()
+			root = Path(tmp, "runtime_debug", "map_global_affine_seed_quad_init", "expansion_reopt")
+			self.assertIn("affine seed quad initial debug objs radius=128", text)
+			self.assertNotIn("affine seed quad expansion reopt opts", text)
+			self.assertNotIn("grow-r", text)
+			self.assertTrue((root / "rad_000128_initial_filtered" / "map_ext_to_model.obj").exists())
+			self.assertFalse((root / "rad_000008_init").exists())
+
+	def test_expansion_debug_objs_are_scoped_to_active_radius(self) -> None:
+		with tempfile.TemporaryDirectory() as tmp:
+			uv = _write_planar_global_fixture(tmp, h=5, w=5)
+			fixture = load_map_fixture(tmp)
+			active = torch.zeros(4, 4, dtype=torch.bool)
+			active[1, 1] = True
+			out = Path(tmp, "objs")
+
+			_write_map_objs(
+				out,
+				uv=uv,
+				fixture=fixture,
+				meta={"phase": "test"},
+				active_quad=active,
+			)
+
+			def count_prefix(path: Path, prefix: str) -> int:
+				return sum(1 for line in path.read_text(encoding="utf-8").splitlines() if line.startswith(prefix))
+
+			self.assertEqual(count_prefix(out / "ext_surface.obj", "v "), 4)
+			self.assertEqual(count_prefix(out / "ext_surface.obj", "f "), 1)
+			self.assertEqual(count_prefix(out / "map_ext_to_model.obj", "l "), 4)
+			self.assertLess(count_prefix(out / "model_surface.obj", "v "), int(fixture.model_valid.sum()))
+			meta = json.loads((out / "meta.json").read_text(encoding="utf-8"))
+			self.assertEqual(meta["valid_vectors"], 4)
+
+	def test_external_quad_health_filter_rejects_spike_artifact(self) -> None:
+		with tempfile.TemporaryDirectory() as tmp:
+			_write_planar_global_fixture(tmp, h=6, w=6)
+			fixture = load_map_fixture(tmp)
+			ext_xyz = fixture.ext_xyz.clone()
+			ext_xyz[2, 2, 2] = 1000.0
+			fixture = replace(fixture, ext_xyz=ext_xyz)
+			cfg = snap_surf_config_from_global_config(
+				GlobalMapConfig(
+					base={
+						"map_init": {
+							"ext_mesh_health_filter": True,
+							"ext_mesh_health_max_edge_ratio": 10.0,
+						}
+					}
+				)
+			)
+			stdout = StringIO()
+
+			with redirect_stdout(stdout):
+				filtered = _apply_external_quad_health_filter(fixture, cfg, label="test")
+
+			active = _full_active_quad(filtered)
+			self.assertLess(int(active.sum()), int(_full_active_quad(fixture).sum()))
+			self.assertFalse(bool(active[1, 1]))
+			self.assertFalse(bool(active[1, 2]))
+			self.assertFalse(bool(active[2, 1]))
+			self.assertFalse(bool(active[2, 2]))
+			self.assertGreater(filtered.metadata["ext_mesh_health"]["quads_rejected"], 0.0)
+			self.assertGreater(filtered.metadata["ext_mesh_health"]["quads_rejected_padding"], 0.0)
+			self.assertIn("external quad health filter test", stdout.getvalue())
+
+	def test_external_quad_health_filter_rejects_twisted_quad(self) -> None:
+		with tempfile.TemporaryDirectory() as tmp:
+			_write_planar_global_fixture(tmp, h=3, w=3)
+			fixture = load_map_fixture(tmp)
+			ext_xyz = fixture.ext_xyz.clone()
+			ext_xyz[1, 1] = ext_xyz[0, 0]
+			fixture = replace(fixture, ext_xyz=ext_xyz)
+			cfg = snap_surf_config_from_global_config(
+				GlobalMapConfig(
+					base={
+						"map_init": {
+							"ext_mesh_health_filter": True,
+							"ext_mesh_health_min_triangle_normal_dot": 0.5,
+						}
+					}
+				)
+			)
+
+			filtered = _apply_external_quad_health_filter(fixture, cfg, label="test")
+
+			active = _full_active_quad(filtered)
+			self.assertFalse(bool(active[0, 0]))
+			self.assertGreater(filtered.metadata["ext_mesh_health"]["quads_rejected"], 0.0)
+			self.assertIn("min_triangle_normal_dot", filtered.metadata["ext_mesh_health"])
 
 	def test_config_parses_stage_args(self) -> None:
 		with tempfile.TemporaryDirectory() as tmp:
@@ -559,7 +1360,7 @@ class SnapSurfMapGlobalTest(unittest.TestCase):
 			self.assertEqual(float(terms["samples"]), 0.0)
 			self.assertTrue(torch.equal(uv, torch.full((5, 5, 2), -10.0)))
 
-	def test_fixture_cli_writes_global_outputs_without_growth_masks(self) -> None:
+	def test_fixture_cli_writes_final_outputs_without_debug_objs_by_default(self) -> None:
 		with tempfile.TemporaryDirectory() as tmp:
 			fixture_dir = os.path.join(tmp, "fixture")
 			out_dir = os.path.join(tmp, "out")
@@ -573,6 +1374,23 @@ class SnapSurfMapGlobalTest(unittest.TestCase):
 			self.assertTrue(os.path.exists(os.path.join(out_dir, "model_y.tif")))
 			self.assertTrue(os.path.exists(os.path.join(out_dir, "meta.json")))
 			self.assertTrue(os.path.exists(os.path.join(out_dir, "metrics.json")))
+			self.assertFalse(os.path.exists(os.path.join(out_dir, "objs")))
+			self.assertFalse(os.path.exists(os.path.join(out_dir, "active_quad.tif")))
+			self.assertFalse(os.path.exists(os.path.join(out_dir, "blocked_quad.tif")))
+			metrics = json.loads(Path(out_dir, "metrics.json").read_text(encoding="utf-8"))
+			self.assertEqual(metrics["common_vertices"], 25)
+			self.assertIn("avg_model_quad_distance", metrics)
+
+	def test_fixture_cli_writes_debug_objs_when_enabled(self) -> None:
+		with tempfile.TemporaryDirectory() as tmp:
+			fixture_dir = os.path.join(tmp, "fixture")
+			out_dir = os.path.join(tmp, "out")
+			_write_planar_global_fixture(fixture_dir)
+			cfg_path = _write_config(tmp, write_objs=True)
+
+			rc = map_global_cli.main(["optimize-fixture", fixture_dir, cfg_path, "--out", out_dir, "--device", "cpu"])
+
+			self.assertEqual(rc, 0)
 			self.assertTrue(os.path.exists(os.path.join(out_dir, "objs", "stage_000_map_surf_affine", "map_ext_to_model.obj")))
 			self.assertTrue(os.path.exists(os.path.join(out_dir, "objs", "stage_001_map_surf_ms", "map_ext_to_model.obj")))
 			self.assertTrue(os.path.exists(os.path.join(out_dir, "objs", "final", "map_ext_to_model.obj")))
@@ -580,11 +1398,7 @@ class SnapSurfMapGlobalTest(unittest.TestCase):
 			final_meta = json.loads(Path(out_dir, "objs", "final", "meta.json").read_text(encoding="utf-8"))
 			self.assertEqual(final_meta["name"], "final")
 			self.assertIn("worst_1pct_vectors", final_meta)
-			self.assertFalse(os.path.exists(os.path.join(out_dir, "active_quad.tif")))
-			self.assertFalse(os.path.exists(os.path.join(out_dir, "blocked_quad.tif")))
 			metrics = json.loads(Path(out_dir, "metrics.json").read_text(encoding="utf-8"))
-			self.assertEqual(metrics["common_vertices"], 25)
-			self.assertIn("avg_model_quad_distance", metrics)
 			self.assertIn("avg_model_quad_distance", metrics["history"][-1])
 			self.assertLess(metrics["model_l2_max_delta"], 1.0)
 
@@ -617,7 +1431,7 @@ class SnapSurfMapGlobalTest(unittest.TestCase):
 			self.assertIn("1/3", text)
 			self.assertIn("3/3", text)
 			self.assertNotIn("2/3", text)
-			self.assertRegex(text, r"0/2\s+map_surf_ms")
+			self.assertRegex(text, r"0/2\s+0\.0200\s+2")
 			self.assertIn("stat", text)
 			self.assertIn("station loss", text)
 			self.assertIn("dst", text)
@@ -659,6 +1473,7 @@ class SnapSurfMapGlobalTest(unittest.TestCase):
 				cfg_path,
 				{
 					"base": {
+						"write_objs": True,
 						"map_station_t": 0.001,
 						"map_init": {
 							"subdiv": 2,
@@ -714,6 +1529,7 @@ class SnapSurfMapGlobalTest(unittest.TestCase):
 				cfg_path,
 				{
 					"base": {
+						"write_objs": True,
 						"map_station_t": 0.001,
 						"map_init": {
 							"subdiv": 2,

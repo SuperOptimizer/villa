@@ -16,7 +16,12 @@ import fit_data
 import model
 import opt_loss_corr
 import opt_loss_dir
+import opt_loss_step
 import optimizer
+import volume_scale
+
+
+_SHELL_STEP_ANALYSIS_ENABLED = False
 
 
 def _stage_start(label: str) -> float:
@@ -195,10 +200,6 @@ def _build_parser() -> argparse.ArgumentParser:
 		help="Initial model source: seed creates a new model, ext uses --tifxyz-init, model uses --model-input, flatten optimizes one external tifxyz inverse map")
 	p.add_argument("--flatten-solver", choices=("torch", "inverse", "forward"), default="torch",
 		help="Flatten solver variant for model-init=flatten: torch/inverse keeps the existing inverse-map Adam path; forward optimizes source-vertex UVs and inverts at export")
-	p.add_argument("--window-size", type=int, default=None,
-		help="Window size in fullres voxels for windowed tifxyz optimization (0 or omit = no windowing)")
-	p.add_argument("--window-overlap", type=int, default=0,
-		help="Overlap between windows in fullres voxels")
 	p.add_argument("--approval-inpaint", action=argparse.BooleanOptionalAction, default=False,
 		help="Use selected approval mask/tifxyz data to inpaint the seed-region setup")
 	p.add_argument("--approval-inpaint-corr-spacing", type=float, default=None,
@@ -213,36 +214,6 @@ def _build_parser() -> argparse.ArgumentParser:
 	p.add_argument("--progress", action="store_true", default=False,
 		help="Print machine-readable PROGRESS lines to stdout")
 	return p
-
-
-def _compute_window_grid(
-	H: int, W: int, mesh_step: int, window_size: int, overlap: int,
-) -> list[tuple[int, int, int, int]]:
-	"""Compute window tiles over a (H, W) vertex grid.
-
-	window_size and overlap are in fullres voxels.
-	Returns list of (h0, h1, w0, w1) in vertex indices.
-	"""
-	if overlap >= window_size:
-		raise ValueError(f"overlap ({overlap}) must be less than window_size ({window_size})")
-	win_verts = window_size // mesh_step + 1
-	overlap_verts = overlap // mesh_step
-	stride = max(1, win_verts - overlap_verts)
-	windows = []
-	h = 0
-	while h < H:
-		h1 = min(h + win_verts, H)
-		w = 0
-		while w < W:
-			w1 = min(w + win_verts, W)
-			windows.append((h, h1, w, w1))
-			if w1 == W:
-				break
-			w += stride
-		if h1 == H:
-			break
-		h += stride
-	return windows
 
 
 def _dummy_flatten_data() -> fit_data.FitData3D:
@@ -276,6 +247,90 @@ def _scale_from_tifxyz_meta(meta: dict, mesh_step: int) -> float:
 	return 1.0 / float(max(1, int(mesh_step)))
 
 
+def _shape_list(shape: tuple[int, int, int] | None) -> list[int] | None:
+	return None if shape is None else [int(v) for v in shape]
+
+
+def _source_shape_from_tifxyz_meta(meta: dict, fallback_shape_zyx: tuple[int, int, int] | None) -> tuple[int, int, int] | None:
+	return volume_scale.tifxyz_source_shape(meta, fallback_shape_zyx)
+
+
+def _tifxyz_scale_to_base(
+	meta: dict,
+	*,
+	base_shape_zyx: tuple[int, int, int] | None,
+	request_shape_zyx: tuple[int, int, int] | None,
+	path_label: str,
+) -> volume_scale.CoordinateScale:
+	source_shape = _source_shape_from_tifxyz_meta(meta, request_shape_zyx)
+	return volume_scale.coordinate_scale_to_base(
+		base_shape_zyx=base_shape_zyx,
+		source_shape_zyx=source_shape,
+		source_name=f"{path_label}.base_shape_zyx",
+	)
+
+
+def _load_scaled_tifxyz(
+	path: str,
+	*,
+	device: torch.device,
+	base_shape_zyx: tuple[int, int, int] | None,
+	request_shape_zyx: tuple[int, int, int] | None,
+	path_label: str,
+):
+	from tifxyz_io import load_tifxyz
+	xyz, valid, meta = load_tifxyz(path, device=device)
+	scale = _tifxyz_scale_to_base(
+		meta,
+		base_shape_zyx=base_shape_zyx,
+		request_shape_zyx=request_shape_zyx,
+		path_label=path_label,
+	)
+	xyz = volume_scale.scale_tifxyz_tensor(xyz, valid, scale.factor)
+	if not scale.is_identity:
+		print(
+			f"[fit] scaled {path_label} coordinates by {scale.factor:.9g} "
+			f"from source_shape={_shape_list(scale.source_shape_zyx)} "
+			f"to base_shape={_shape_list(scale.base_shape_zyx)}",
+			flush=True,
+		)
+	return xyz, valid, meta, scale
+
+
+def _scaled_approval_tifxyz_path(
+	path: str,
+	*,
+	tmp_parent: Path | None,
+	base_shape_zyx: tuple[int, int, int] | None,
+	request_shape_zyx: tuple[int, int, int] | None,
+) -> str:
+	meta = volume_scale.read_tifxyz_meta(path)
+	scale = _tifxyz_scale_to_base(
+		meta,
+		base_shape_zyx=base_shape_zyx,
+		request_shape_zyx=request_shape_zyx,
+		path_label="approval-inpaint tifxyz",
+	)
+	if scale.is_identity:
+		return path
+	parent = tmp_parent if tmp_parent is not None else Path(path).parent
+	parent.mkdir(parents=True, exist_ok=True)
+	dst = parent / "approval_inpaint_base_scale.tifxyz"
+	volume_scale.copy_scaled_tifxyz_dir(
+		path,
+		dst,
+		factor=scale.factor,
+		base_shape_zyx=base_shape_zyx,
+	)
+	print(
+		f"[fit] approval-inpaint tifxyz scaled by {scale.factor:.9g} "
+		f"from source_shape={_shape_list(scale.source_shape_zyx)} "
+		f"to base_shape={_shape_list(scale.base_shape_zyx)}",
+		flush=True,
+	)
+	return str(dst)
+
+
 def _save_flatten_model(path: str, *, mdl: model.Model3D, data: fit_data.FitData3D, fit_config: dict) -> None:
 	st = dict(mdl.state_dict())
 	for k in [k for k in st if k.startswith("mesh_ms.")]:
@@ -287,7 +342,10 @@ def _save_flatten_model(path: str, *, mdl: model.Model3D, data: fit_data.FitData
 		st["mesh_flat"] = xyz.permute(3, 0, 1, 2).detach().cpu()
 		st["flatten_map_flat"] = map_yx.detach().cpu()
 		st["flatten_point_mask"] = point_mask.detach().cpu()
-	st["_model_params_"] = asdict(mdl.params)
+	params = asdict(mdl.params)
+	if fit_config.get("lasagna_base_shape_zyx") is not None:
+		params["lasagna_base_shape_zyx"] = list(fit_config["lasagna_base_shape_zyx"])
+	st["_model_params_"] = params
 	st["_fit_config_"] = fit_config
 	torch.save(st, path)
 
@@ -324,6 +382,10 @@ def _export_flatten_result(
 		model_source=model_source,
 		fit_config=fit_config,
 		area=area,
+		base_shape_zyx=volume_scale.parse_shape_zyx(
+			fit_config.get("lasagna_base_shape_zyx"), name="lasagna_base_shape_zyx"),
+		lasagna_base_shape_zyx=volume_scale.parse_shape_zyx(
+			fit_config.get("lasagna_base_shape_zyx"), name="lasagna_base_shape_zyx"),
 	)
 	fit2tifxyz._print_area(area)
 
@@ -528,6 +590,33 @@ def main(argv: list[str] | None = None) -> int:
 	_t = _stage_start("probe_preprocessed_data")
 	prep_params = fit_data.get_preprocessed_params(str(data_cfg.input))
 	source_to_base = float(prep_params.get("source_to_base", 1.0))
+	lasagna_base_shape_zyx = volume_scale.parse_shape_zyx(
+		prep_params.get("base_shape_zyx"), name="lasagna_base_shape_zyx")
+	vc3d_volume_shape_zyx = volume_scale.parse_shape_zyx(
+		cfg.get("vc3d_volume_shape_zyx"), name="vc3d_volume_shape_zyx")
+	request_scale = volume_scale.coordinate_scale_to_base(
+		base_shape_zyx=lasagna_base_shape_zyx,
+		source_shape_zyx=vc3d_volume_shape_zyx,
+		source_name="vc3d_volume_shape_zyx",
+	)
+	fit_config["lasagna_base_shape_zyx"] = _shape_list(lasagna_base_shape_zyx)
+	if vc3d_volume_shape_zyx is not None:
+		fit_config["vc3d_volume_shape_zyx"] = _shape_list(vc3d_volume_shape_zyx)
+	if not request_scale.is_identity:
+		print(
+			f"[fit] VC3D coordinate import scale={request_scale.factor:.9g} "
+			f"vc3d_shape={_shape_list(vc3d_volume_shape_zyx)} "
+			f"lasagna_base_shape={_shape_list(lasagna_base_shape_zyx)}",
+			flush=True,
+		)
+	if data_cfg.seed is not None:
+		scaled_seed = tuple(float(v) for v in volume_scale.scale_xyz_point(data_cfg.seed, request_scale.factor)[:3])
+		data_cfg = dataclasses.replace(data_cfg, seed=scaled_seed)
+		fit_config.setdefault("args", {})["seed"] = [float(v) for v in scaled_seed]
+	if isinstance(cfg.get("corr_points"), dict):
+		scaled_corr = volume_scale.scale_corr_points_json(cfg["corr_points"], request_scale.factor)
+		cfg["corr_points"] = scaled_corr
+		fit_config["corr_points"] = copy.deepcopy(scaled_corr)
 	# Model scaledown in base coords = channel_scaledown * source_to_base
 	scaledown = float(prep_params["scaledown"]) * source_to_base
 	volume_extent_fullres = prep_params.get("volume_extent_fullres")
@@ -553,6 +642,12 @@ def main(argv: list[str] | None = None) -> int:
 		if not approval_tifxyz:
 			raise ValueError("approval-inpaint requires service arg approval-inpaint-tifxyz")
 		from approval_inpaint import build_approval_inpaint
+		approval_tifxyz = _scaled_approval_tifxyz_path(
+			str(approval_tifxyz),
+			tmp_parent=None,
+			base_shape_zyx=lasagna_base_shape_zyx,
+			request_shape_zyx=vc3d_volume_shape_zyx,
+		)
 
 		result = build_approval_inpaint(
 			tifxyz_path=str(approval_tifxyz),
@@ -569,6 +664,7 @@ def main(argv: list[str] | None = None) -> int:
 			data_cfg,
 			seed=result.seed,
 			model_w=result.model_w,
+			model_w_unit="voxels",
 			model_h=result.model_h,
 		)
 		cfg["corr_points"] = result.corr_points
@@ -576,6 +672,7 @@ def main(argv: list[str] | None = None) -> int:
 		fit_config.setdefault("args", {}).update({
 			"seed": [float(v) for v in result.seed],
 			"model-w": int(result.model_w),
+			"model-w-unit": "voxels",
 			"model-h": int(result.model_h),
 			"approval-inpaint": True,
 			"approval-inpaint-output-mask": bool(approval_inpaint_output_mask_enabled),
@@ -644,221 +741,28 @@ def main(argv: list[str] | None = None) -> int:
 			  f"(umbilicus tube search grid; final mesh bake uses model-w/model-h/mesh-step)", flush=True)
 	_stage_done("derive_initial_model_params", _t)
 
-	# --- Windowed tifxyz mode ---
 	tifxyz_init = getattr(args, "tifxyz_init", None)
-	window_size = getattr(args, "window_size", None) or 0
-	window_overlap = getattr(args, "window_overlap", 0)
-	if model_init != "ext" and window_size > 0:
-		raise ValueError("windowed optimization currently requires model-init=ext")
-
-	if model_init == "ext" and tifxyz_init and window_size > 0:
-		from tifxyz_io import load_tifxyz, surface_step_stats
-		import fit2tifxyz as _f2t
-		import json as _json
-
-		# Load full tifxyz to CPU (save GPU mem)
-		full_xyz, full_valid, _full_meta = load_tifxyz(tifxyz_init, device="cpu")
-		H_full, W_full, _ = full_xyz.shape
-		mesh_step = model_cfg.mesh_step
-		_step_h, _step_w, _step_diag, step_avg = surface_step_stats(full_xyz, full_valid)
-		if math.isfinite(step_avg) and step_avg > 0.0:
-			mesh_step = max(1, int(round(step_avg)))
-
-		# Get offset from external_surfaces config
-		ext_surfaces_cfg = cfg.pop("external_surfaces", None)
-		offset_val = 1.0
-		if isinstance(ext_surfaces_cfg, list) and ext_surfaces_cfg:
-			offset_val = float(ext_surfaces_cfg[0].get("offset", 1.0))
-		ext_margin = max(4, int(2 * abs(offset_val) / mesh_step) + 2)
-
-		# Parse stages and channel skipping (shared across windows)
-		cfg.pop("corr_points", None)
-		cfg.pop("args", None)
-		cfg.pop("voxel_size_um", None)
-		cfg.pop("external_surfaces", None)
-		cfg.pop("tifxyz", None)
-		stages = optimizer.load_stages_cfg(
-			cfg,
-			init_mode=model_cfg.init_mode if model_init == "seed" else None,
-		)
-		print("[fit] optimizer stages:", flush=True)
-		for i, st in enumerate(stages):
-			args_snap = st.global_opt.args.get("snap_surf") if isinstance(st.global_opt.args, dict) else None
-			print(
-				f"[fit]   stage{i} name={st.name!r} steps={st.global_opt.steps} "
-				f"snap_surf_eff={st.global_opt.eff.get('snap_surf', 0.0):.6g} "
-				f"snap_surf_args={args_snap}",
-				flush=True,
-			)
-
-		windows = _compute_window_grid(H_full, W_full, mesh_step, window_size, window_overlap)
-		n_windows = len(windows)
-		overlap_verts = window_overlap // mesh_step
-		print(f"[fit] windowed mode: {n_windows} windows, window_size={window_size} "
-			  f"overlap={window_overlap} mesh_step={mesh_step} grid={H_full}x{W_full}",
-			  flush=True)
-
-		# Output directory for window tifxyz exports
-		output_dir = model_cfg.model_output
-		if output_dir is not None:
-			output_dir = str(Path(output_dir).parent)
-		elif _out_dir is not None:
-			output_dir = _out_dir
-		else:
-			raise ValueError("windowed mode requires --model-output or --out-dir")
-		Path(output_dir).mkdir(parents=True, exist_ok=True)
-
-		voxel_size_um = fit_config.get("voxel_size_um")
-
-		for wi, (h0, h1, w0, w1) in enumerate(windows):
-			print(f"\n[fit] === window {wi+1}/{n_windows}: rows [{h0}:{h1}], cols [{w0}:{w1}] "
-				  f"({h1-h0}x{w1-w0} verts) ===", flush=True)
-
-			# Crop tifxyz to window
-			crop_xyz = full_xyz[h0:h1, w0:w1].to(device)
-			crop_valid = full_valid[h0:h1, w0:w1].to(device)
-
-			# Create model from crop
-			mdl = model.Model3D.from_tifxyz_crop(
-				crop_xyz, crop_valid, device=device, mesh_step=mesh_step,
-				winding_step=model_cfg.winding_step,
-				subsample_mesh=model_cfg.subsample_mesh,
-				subsample_winding=model_cfg.subsample_winding,
-			)
-
-			# Crop external surface with margin for ray intersection at boundaries
-			eh0 = max(0, h0 - ext_margin)
-			eh1 = min(H_full, h1 + ext_margin)
-			ew0 = max(0, w0 - ext_margin)
-			ew1 = min(W_full, w1 + ext_margin)
-			ext_xyz = full_xyz[eh0:eh1, ew0:ew1].to(device)
-			ext_valid = full_valid[eh0:eh1, ew0:ew1].to(device)
-			ext_idx = mdl.add_external_surface(ext_xyz, valid=ext_valid, offset=offset_val)
-			# ext→model mapping: ext corner r → model grid r + h_off
-			# ext grid 0 = fullres eh0, model grid 0 = fullres h0
-			# so model_h = r + (eh0 - h0)
-			mdl._ext_conn_offsets[ext_idx][0] = float(eh0 - h0)
-			mdl._ext_conn_offsets[ext_idx][1] = float(ew0 - w0)
-
-			# Streaming data loader for this window
-			def _streaming_skip_channels(needed_channels: set[str]) -> set[str]:
-				optional = {"cos", "pred_dt"}
-				return optional - set(needed_channels)
-
-			def _streaming_loaded_channels(d: fit_data.FitData3D) -> set[str]:
-				if not d.sparse_caches:
-					return set()
-				return {
-					ch
-					for cache in d.sparse_caches.values()
-					for ch in cache.channels
-				}
-
-			def _load_streaming_win(needed_channels: set[str]) -> fit_data.FitData3D:
-				d = fit_data.load_3d_streaming(
-					path=str(data_cfg.input),
-					device=device,
-					sparse_prefetch_backend=data_cfg.sparse_prefetch_backend,
-					skip_channels=_streaming_skip_channels(needed_channels),
-				)
-				Z, Y, X = d.size
-				sx, sy, sz = d.spacing
-				volume_extent = (
-					d.origin_fullres[0], d.origin_fullres[1], d.origin_fullres[2],
-					d.origin_fullres[0] + (X - 1) * sx,
-					d.origin_fullres[1] + (Y - 1) * sy,
-					d.origin_fullres[2] + (Z - 1) * sz,
-				)
-				mdl.params = dataclasses.replace(mdl.params, volume_extent=volume_extent)
-				return d
-
-			def _ensure_data_win(data: fit_data.FitData3D | None, needed_channels: set[str]) -> fit_data.FitData3D:
-				if data is None:
-					return _load_streaming_win(needed_channels)
-				loaded = _streaming_loaded_channels(data)
-				required = {"grad_mag", "nx", "ny"} | set(needed_channels)
-				if not required.issubset(loaded) or (loaded & {"cos", "pred_dt"}) != (required & {"cos", "pred_dt"}):
-					return _load_streaming_win(needed_channels)
-				return data
-
-			data = _ensure_data_win(None, set())
-
-			# Progress wrapper: prefix window index, scale overall progress
-			def _make_progress(wi_=wi, n_=n_windows):
-				def _progress_win(*, step: int, total: int, loss: float, **kw: object) -> None:
-					if progress_enabled:
-						inner = float(kw.get("overall_progress", 0.0))
-						overall = (wi_ + inner) / n_
-						stage_name = kw.get("stage_name", "")
-						print(f"PROGRESS {step} {total} {loss:.6f} win={wi_+1}/{n_} "
-							  f"overall={overall:.3f} {stage_name}", flush=True)
-				return _progress_win
-
-			opt_loss_dir.set_mask_zero_normals(opt_cfg.normal_mask_zero)
-
-			# Seed from center of model grid (matches h_mid/w_mid in station loss)
-			center_pt = _grid_center(mdl)
-			win_seed = (float(center_pt[0]), float(center_pt[1]), float(center_pt[2]))
-			print(f"[fit] window seed: ({win_seed[0]:.0f}, {win_seed[1]:.0f}, {win_seed[2]:.0f})",
-				  flush=True)
-
-			optimizer.optimize(
-				model=mdl,
-				data=data,
-				stages=stages,
-				snapshot_interval=0,
-				snapshot_fn=lambda **kw: None,
-				progress_fn=_make_progress(),
-				ensure_data_fn=_ensure_data_win,
-				seed_xyz=win_seed,
-				out_dir=str(Path(output_dir) / f"window_{wi:04d}"),
-			)
-
-			# Export this window's tifxyz
-			mesh = mdl.mesh_coarse()  # (3, 1, Hm, Wm)
-			mesh_np = mesh.detach().cpu().numpy()
-			Hm, Wm = mesh_np.shape[2], mesh_np.shape[3]
-			x_out = mesh_np[0, 0]  # (Hm, Wm)
-			y_out = mesh_np[1, 0]
-			z_out = mesh_np[2, 0]
-			meta_scale = 1.0 / float(mesh_step)
-
-			win_name = f"window_{wi:04d}.tifxyz"
-			win_dir = Path(output_dir) / win_name
-			area = _f2t._get_area(x_out, y_out, z_out, float(mesh_step),
-								  float(voxel_size_um) if voxel_size_um else None)
-			_f2t._write_tifxyz(
-				out_dir=win_dir, x=x_out, y=y_out, z=z_out,
-				scale=meta_scale, area=area,
-			)
-			# Add window metadata to meta.json
-			meta_path = win_dir / "meta.json"
-			meta = _json.loads(meta_path.read_text(encoding="utf-8"))
-			meta["window_index"] = wi
-			meta["window_origin_verts"] = [h0, w0]
-			meta["window_size_verts"] = [h1 - h0, w1 - w0]
-			meta["source_grid_size_verts"] = [H_full, W_full]
-			meta["overlap_verts"] = overlap_verts
-			meta_path.write_text(_json.dumps(meta, indent=2) + "\n", encoding="utf-8")
-
-			_f2t._print_area(area)
-			print(f"[fit] exported {win_name}", flush=True)
-
-			# Free GPU memory before next window
-			del mdl, data, crop_xyz, crop_valid, ext_xyz, ext_valid, mesh, mesh_np
-			if device.type == "cuda":
-				torch.cuda.empty_cache()
-
-		print(f"\n[fit] windowed mode complete: {n_windows} windows exported to {output_dir}",
-			  flush=True)
-		return 0
 
 	# --- Construct / load model (before data, so we can compute bbox) ---
 	_t = _stage_start("construct_model")
 	if model_init == "ext":
-		mdl = model.Model3D.from_tifxyz(
-			tifxyz_init, device=device,
-			mesh_step=model_cfg.mesh_step,
+		from tifxyz_io import surface_step_stats
+		xyz_init, valid_init, _meta_init, _scale_init = _load_scaled_tifxyz(
+			str(tifxyz_init),
+			device=device,
+			base_shape_zyx=lasagna_base_shape_zyx,
+			request_shape_zyx=vc3d_volume_shape_zyx,
+			path_label="tifxyz-init",
+		)
+		_step_h, _step_w, _step_diag, step_avg = surface_step_stats(xyz_init, valid_init)
+		mesh_step_init = model_cfg.mesh_step
+		if math.isfinite(step_avg) and step_avg > 0.0:
+			mesh_step_init = max(1, int(round(step_avg)))
+		mdl = model.Model3D.from_tifxyz_crop(
+			xyz_init,
+			valid_init,
+			device=device,
+			mesh_step=mesh_step_init,
 			winding_step=model_cfg.winding_step,
 			subsample_mesh=model_cfg.subsample_mesh,
 			subsample_winding=model_cfg.subsample_winding,
@@ -867,20 +771,111 @@ def main(argv: list[str] | None = None) -> int:
 	elif model_init == "seed":
 		if init_mode == "shell-dir-crop":
 			print("[fit] model-init=seed/init-mode=shell-dir-crop: constructing model from init shells", flush=True)
-			from init_shell_index import InitShellIndex, crop_shell_surface
+			from init_shell_index import (
+				InitShellIndex,
+				crop_shell_surface,
+				shell_quality_analysis,
+				trim_shell_surface_rows_by_quality,
+			)
 			init_shell_dir = _require_manifest_init_shell_dir(prep_params)
 			shell_index = InitShellIndex.from_directory(init_shell_dir)
 			closest = shell_index.closest_point(tuple(float(v) for v in data_cfg.seed), device=device)
 			surface = shell_index.surfaces[closest.shell_index]
+			source_step = float(surface.source_step) if surface.source_step is not None else float(model_cfg.mesh_step)
+			selected_shell = surface.xyz_wrapped[:, :surface.unique_w].to(device=device, dtype=torch.float32)
+			print(
+				f"[fit] shell-dir-crop closest shell before crop: "
+				f"id={closest.shell_id} path={surface.path} "
+				f"source_step={source_step:.3f} "
+				f"source_shape={int(surface.xyz_wrapped.shape[0])}x{int(surface.xyz_wrapped.shape[1])} "
+				f"unique_shape={int(selected_shell.shape[0])}x{int(selected_shell.shape[1])} "
+				f"quad=({closest.quad_row},{closest.quad_col}) tri={closest.triangle_id} "
+				f"h={closest.h:.3f} w={closest.w:.3f} dist={closest.distance:.3f}",
+				flush=True,
+			)
+			source_quality = shell_quality_analysis(selected_shell, target_step=source_step)
+			print(
+				f"[fit] shell-dir-crop source-shell quality before row trim: "
+				f"target_step={source_quality['target_step']:.3f} target_area={source_quality['target_area']:.3f} "
+				f"h=({source_quality['h_min']:.3f},{source_quality['h_med']:.3f},{source_quality['h_max']:.3f}) "
+				f"w_top=({source_quality['w_top_min']:.3f},{source_quality['w_top_med']:.3f},{source_quality['w_top_max']:.3f}) "
+				f"w_bottom=({source_quality['w_bottom_min']:.3f},{source_quality['w_bottom_med']:.3f},{source_quality['w_bottom_max']:.3f}) "
+				f"diag_main=({source_quality['diag_main_min']:.3f},{source_quality['diag_main_med']:.3f},{source_quality['diag_main_max']:.3f}) "
+				f"diag_anti=({source_quality['diag_anti_min']:.3f},{source_quality['diag_anti_med']:.3f},{source_quality['diag_anti_max']:.3f}) "
+				f"area=({source_quality['area_min']:.3f},{source_quality['area_med']:.3f},{source_quality['area_max']:.3f}) "
+				f"area_sqrt=({source_quality['area_sqrt_min']:.3f},{source_quality['area_sqrt_med']:.3f},{source_quality['area_sqrt_max']:.3f})",
+				flush=True,
+			)
+			trimmed_surface, trim_top, trim_bottom = trim_shell_surface_rows_by_quality(
+				surface,
+				target_step=source_step,
+				lo_ratio=0.5,
+				hi_ratio=2.0,
+			)
+			if trim_top or trim_bottom:
+				if not (float(trim_top) <= float(closest.h) <= float(trim_top + trimmed_surface.xyz_wrapped.shape[0] - 1)):
+					raise ValueError(
+						f"shell-dir-crop source row trim removed closest seed row: "
+						f"h={closest.h:.3f} trim_top={trim_top} kept_h={int(trimmed_surface.xyz_wrapped.shape[0])}"
+					)
+				closest = dataclasses.replace(
+					closest,
+					h=float(closest.h) - float(trim_top),
+					quad_row=max(0, int(closest.quad_row) - int(trim_top)),
+				)
+				surface = trimmed_surface
+				selected_shell = surface.xyz_wrapped[:, :surface.unique_w].to(device=device, dtype=torch.float32)
+				trim_quality = shell_quality_analysis(selected_shell, target_step=source_step)
+				print(
+					f"[fit] shell-dir-crop source-shell row trim: "
+					f"trim_top={trim_top} trim_bottom={trim_bottom} "
+					f"kept_shape={int(surface.xyz_wrapped.shape[0])}x{int(surface.xyz_wrapped.shape[1])} "
+					f"adjusted_h={closest.h:.3f} "
+					f"h=({trim_quality['h_min']:.3f},{trim_quality['h_med']:.3f},{trim_quality['h_max']:.3f}) "
+					f"w_top=({trim_quality['w_top_min']:.3f},{trim_quality['w_top_med']:.3f},{trim_quality['w_top_max']:.3f}) "
+					f"w_bottom=({trim_quality['w_bottom_min']:.3f},{trim_quality['w_bottom_med']:.3f},{trim_quality['w_bottom_max']:.3f}) "
+					f"diag_main=({trim_quality['diag_main_min']:.3f},{trim_quality['diag_main_med']:.3f},{trim_quality['diag_main_max']:.3f}) "
+					f"diag_anti=({trim_quality['diag_anti_min']:.3f},{trim_quality['diag_anti_med']:.3f},{trim_quality['diag_anti_max']:.3f}) "
+					f"area=({trim_quality['area_min']:.3f},{trim_quality['area_med']:.3f},{trim_quality['area_max']:.3f}) "
+					f"area_sqrt=({trim_quality['area_sqrt_min']:.3f},{trim_quality['area_sqrt_med']:.3f},{trim_quality['area_sqrt_max']:.3f})",
+					flush=True,
+				)
+			if _SHELL_STEP_ANALYSIS_ENABLED:
+				step_stats = opt_loss_step.step_loss_analysis(selected_shell, mesh_step=source_step)
+				print(
+					f"[fit] shell-dir-crop selected-shell step analysis before crop: "
+					f"loss={step_stats['loss']:.6g} target={step_stats['target']:.3f} "
+					f"step_min={step_stats['step_min']:.3f} step_avg={step_stats['step_avg']:.3f} "
+					f"step_med={step_stats['step_med']:.3f} step_max={step_stats['step_max']:.3f} "
+					f"h_avg={step_stats['h_avg']:.3f} w_avg={step_stats['w_avg']:.3f} "
+					f"diag_avg={step_stats['diag_avg']:.3f} "
+					f"h_max={step_stats['h_max']:.3f} w_max={step_stats['w_max']:.3f} "
+					f"diag_max={step_stats['diag_max']:.3f} max_kind={step_stats['max_kind']}",
+					flush=True,
+				)
 			crop_xyz, crop_valid, crop_info = crop_shell_surface(
 				surface,
 				closest,
 				seed=tuple(float(v) for v in data_cfg.seed),
 				model_w=float(data_cfg.model_w) if data_cfg.model_w is not None else 0.0,
 				model_h=float(data_cfg.model_h),
+				model_w_unit=data_cfg.model_w_unit,
 				mesh_step=float(model_cfg.mesh_step),
 				device=device,
 			)
+			if _SHELL_STEP_ANALYSIS_ENABLED:
+				crop_step_stats = opt_loss_step.step_loss_analysis(crop_xyz, mesh_step=float(model_cfg.mesh_step))
+				print(
+					f"[fit] shell-dir-crop resampled-crop step analysis: "
+					f"loss={crop_step_stats['loss']:.6g} target={crop_step_stats['target']:.3f} "
+					f"step_min={crop_step_stats['step_min']:.3f} step_avg={crop_step_stats['step_avg']:.3f} "
+					f"step_med={crop_step_stats['step_med']:.3f} step_max={crop_step_stats['step_max']:.3f} "
+					f"h_avg={crop_step_stats['h_avg']:.3f} w_avg={crop_step_stats['w_avg']:.3f} "
+					f"diag_avg={crop_step_stats['diag_avg']:.3f} "
+					f"h_max={crop_step_stats['h_max']:.3f} w_max={crop_step_stats['w_max']:.3f} "
+					f"diag_max={crop_step_stats['diag_max']:.3f} max_kind={crop_step_stats['max_kind']}",
+					flush=True,
+				)
 			mdl = model.Model3D.from_tifxyz_crop(
 				crop_xyz,
 				crop_valid,
@@ -898,12 +893,31 @@ def main(argv: list[str] | None = None) -> int:
 				model_w=(None if data_cfg.model_w is None else float(data_cfg.model_w)),
 				model_h=float(data_cfg.model_h),
 			)
+			if _SHELL_STEP_ANALYSIS_ENABLED:
+				model_step_stats = opt_loss_step.step_loss_analysis(mdl._grid_xyz().detach(), mesh_step=float(model_cfg.mesh_step))
+				print(
+					f"[fit] shell-dir-crop model-init step analysis: "
+					f"loss={model_step_stats['loss']:.6g} target={model_step_stats['target']:.3f} "
+					f"step_min={model_step_stats['step_min']:.3f} step_avg={model_step_stats['step_avg']:.3f} "
+					f"step_med={model_step_stats['step_med']:.3f} step_max={model_step_stats['step_max']:.3f} "
+					f"h_avg={model_step_stats['h_avg']:.3f} w_avg={model_step_stats['w_avg']:.3f} "
+					f"diag_avg={model_step_stats['diag_avg']:.3f} "
+					f"h_max={model_step_stats['h_max']:.3f} w_max={model_step_stats['w_max']:.3f} "
+					f"diag_max={model_step_stats['diag_max']:.3f} max_kind={model_step_stats['max_kind']}",
+					flush=True,
+				)
 			print(
 				f"[fit] shell-dir-crop selected {closest.shell_id}: "
 				f"quad=({closest.quad_row},{closest.quad_col}) tri={closest.triangle_id} "
 				f"h={closest.h:.3f} w={closest.w:.3f} "
 				f"dist={closest.distance:.3f} "
-				f"crop={crop_info.mesh_h}x{crop_info.mesh_w} full_width={crop_info.full_width}",
+				f"crop={crop_info.mesh_h}x{crop_info.mesh_w} "
+				f"requested_h={crop_info.requested_mesh_h} "
+				f"dropped_h={crop_info.requested_mesh_h - crop_info.mesh_h} "
+				f"dropped_h_low={crop_info.height_dropped_low} "
+				f"dropped_h_high={crop_info.height_dropped_high} "
+				f"source={crop_info.source_h}x{crop_info.source_w} "
+				f"full_width={crop_info.full_width}",
 				flush=True,
 			)
 		elif init_mode == "cylinder_seed":
@@ -945,13 +959,28 @@ def main(argv: list[str] | None = None) -> int:
 	_t = _stage_start("load_external_surfaces")
 	ext_surfaces_cfg = cfg.pop("external_surfaces", None)
 	if isinstance(ext_surfaces_cfg, list) and ext_surfaces_cfg:
-		from tifxyz_io import load_tifxyz, surface_step_stats
+		if len(ext_surfaces_cfg) != 1:
+			raise ValueError(
+				f"external_surfaces currently requires exactly one entry, got {len(ext_surfaces_cfg)}")
+		from tifxyz_io import surface_step_stats
 		for es in ext_surfaces_cfg:
 			es_path = str(es["path"])
 			es_offset = float(es.get("offset", 1.0))
-			xyz_ext, valid_ext, meta_ext = load_tifxyz(es_path, device=device)
+			xyz_ext, valid_ext, meta_ext, es_scale = _load_scaled_tifxyz(
+				es_path,
+				device=device,
+				base_shape_zyx=lasagna_base_shape_zyx,
+				request_shape_zyx=vc3d_volume_shape_zyx,
+				path_label=f"external surface {es_path}",
+			)
 			idx = mdl.add_external_surface(xyz_ext, valid=valid_ext, offset=es_offset)
-			scale = meta_ext.get("scale") if isinstance(meta_ext, dict) else None
+			meta_ext_base = volume_scale.scale_tifxyz_meta(
+				meta_ext,
+				es_scale.factor,
+				base_shape_zyx=lasagna_base_shape_zyx,
+				lasagna_base_shape_zyx=lasagna_base_shape_zyx,
+			)
+			scale = meta_ext_base.get("scale") if isinstance(meta_ext_base, dict) else None
 			meta_step = float("nan")
 			if isinstance(scale, list) and scale and float(scale[0]) > 0.0:
 				meta_step = 1.0 / float(scale[0])
@@ -986,11 +1015,11 @@ def main(argv: list[str] | None = None) -> int:
 	)
 	print("[fit] optimizer stages:", flush=True)
 	for i, st in enumerate(stages):
-		args_snap = st.global_opt.args.get("snap_surf") if isinstance(st.global_opt.args, dict) else None
+		args_snap_map = st.global_opt.args.get("snap_surf_map") if isinstance(st.global_opt.args, dict) else None
 		print(
 			f"[fit]   stage{i} name={st.name!r} steps={st.global_opt.steps} "
-			f"snap_surf_eff={st.global_opt.eff.get('snap_surf', 0.0):.6g} "
-			f"snap_surf_args={args_snap}",
+			f"snap_surf_map_eff={st.global_opt.eff.get('snap_surf_map', 0.0):.6g} "
+			f"snap_surf_map_args={args_snap_map}",
 			flush=True,
 		)
 	_stage_done("load_optimizer_stages", _t)
@@ -1112,7 +1141,10 @@ def main(argv: list[str] | None = None) -> int:
 			st["conn_offsets"] = torch.zeros_like(st["conn_offsets"])
 		with torch.no_grad():
 			st["mesh_flat"] = mdl.mesh_flat_for_save(data=data)
-		st["_model_params_"] = asdict(mdl.params)
+		params = asdict(mdl.params)
+		if lasagna_base_shape_zyx is not None:
+			params["lasagna_base_shape_zyx"] = [int(v) for v in lasagna_base_shape_zyx]
+		st["_model_params_"] = params
 		st["_fit_config_"] = fit_config
 		corr_results = opt_loss_corr.get_last_results()
 		if corr_results is not None:

@@ -22,6 +22,7 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFrame>
+#include <QDoubleSpinBox>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QJsonArray>
@@ -29,6 +30,7 @@
 #include <QJsonObject>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMessageBox>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QScrollArea>
@@ -47,6 +49,7 @@
 
 #include "utils/Json.hpp"
 
+#include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <cstdio>
@@ -191,6 +194,19 @@ QStringList linkedSurfaceNamesFromRefs(const QJsonArray& refs)
 QStringList linkedSurfaceNamesFromJobSpec(const QJsonObject& jobSpec)
 {
     return linkedSurfaceNamesFromRefs(jobSpec[QStringLiteral("linked_surfaces")].toArray());
+}
+
+QJsonArray volumeShapeZyxForState(CState* state)
+{
+    if (!state || !state->currentVolume()) {
+        return {};
+    }
+    const auto shape = state->currentVolume()->shape();
+    return QJsonArray{
+        static_cast<int>(shape[0]),
+        static_cast<int>(shape[1]),
+        static_cast<int>(shape[2]),
+    };
 }
 
 std::filesystem::path outputSegmentsPathForState(CState* state)
@@ -370,11 +386,16 @@ SegmentationLasagnaPanel::SegmentationLasagnaPanel(
         dimLayout->setSpacing(4);
 
         dimLayout->addWidget(new QLabel(tr("W:"), dimWidget));
-        _widthSpin = new QSpinBox(dimWidget);
-        _widthSpin->setRange(1, 999999);
-        _widthSpin->setValue(2048);
-        _widthSpin->setSingleStep(64);
+        _widthSpin = new QDoubleSpinBox(dimWidget);
+        _widthSpin->setRange(0.001, 999999.0);
+        _widthSpin->setDecimals(0);
+        _widthSpin->setValue(2048.0);
+        _widthSpin->setSingleStep(64.0);
         dimLayout->addWidget(_widthSpin, 1);
+        _widthUnitCombo = new QComboBox(dimWidget);
+        _widthUnitCombo->addItem(QStringLiteral("vx"), QStringLiteral("voxels"));
+        _widthUnitCombo->addItem(QStringLiteral("wraps"), QStringLiteral("wraps"));
+        dimLayout->addWidget(_widthUnitCombo);
 
         dimLayout->addWidget(new QLabel(tr("H:"), dimWidget));
         _heightSpin = new QSpinBox(dimWidget);
@@ -494,24 +515,6 @@ SegmentationLasagnaPanel::SegmentationLasagnaPanel(
         _offsetValueSpin->setToolTip(tr("Target grad_mag integral offset (-1, 0, +1 typical)"));
         row->addWidget(_offsetValueSpin);
     }, tr("Offset in winding-integral space. 0=reoptimize in place, ±1=adjacent winding."));
-
-    _offsetGroup->addRow(tr("Window:"), [&](QHBoxLayout* row) {
-        _windowSizeSpin = new QSpinBox(offsetContent);
-        _windowSizeSpin->setRange(0, 100000);
-        _windowSizeSpin->setSingleStep(1000);
-        _windowSizeSpin->setValue(5000);
-        _windowSizeSpin->setToolTip(tr("Window size in fullres voxels (0 = no windowing)"));
-        row->addWidget(_windowSizeSpin);
-    }, tr("Split large surfaces into windows for memory efficiency. 0 = process whole surface."));
-
-    _offsetGroup->addRow(tr("Overlap:"), [&](QHBoxLayout* row) {
-        _windowOverlapSpin = new QSpinBox(offsetContent);
-        _windowOverlapSpin->setRange(0, 50000);
-        _windowOverlapSpin->setSingleStep(100);
-        _windowOverlapSpin->setValue(500);
-        _windowOverlapSpin->setToolTip(tr("Overlap between windows in fullres voxels"));
-        row->addWidget(_windowOverlapSpin);
-    }, tr("Overlap ensures smooth transitions at window boundaries."));
 
     panelLayout->addWidget(_offsetGroup);
 
@@ -644,8 +647,34 @@ SegmentationLasagnaPanel::SegmentationLasagnaPanel(
     });
 
     // -- New model settings persistence --
-    connect(_widthSpin, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int v) {
-        writeSetting(QStringLiteral("lasagna_new_model_width"), v);
+    connect(_widthSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double v) {
+        const QString unit = newModelWidthUnit();
+        if (unit == QStringLiteral("wraps")) {
+            writeSetting(QStringLiteral("lasagna_new_model_width_wraps"), v);
+        } else {
+            writeSetting(QStringLiteral("lasagna_new_model_width"), v);
+        }
+    });
+    connect(_widthUnitCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int index) {
+        if (index < 0) return;
+        const QString unit = newModelWidthUnit();
+        writeSetting(QStringLiteral("lasagna_new_model_width_unit"), unit);
+        if (!_widthSpin) return;
+        QSettings settings(vc3d::settingsFilePath(), QSettings::IniFormat);
+        settings.beginGroup(_settingsGroup);
+        const double value = unit == QStringLiteral("wraps")
+            ? settings.value(QStringLiteral("lasagna_new_model_width_wraps"), 1.0).toDouble()
+            : settings.value(QStringLiteral("lasagna_new_model_width"), 2048.0).toDouble();
+        settings.endGroup();
+        const QSignalBlocker b(_widthSpin);
+        if (unit == QStringLiteral("wraps")) {
+            _widthSpin->setDecimals(3);
+            _widthSpin->setSingleStep(0.25);
+        } else {
+            _widthSpin->setDecimals(0);
+            _widthSpin->setSingleStep(64.0);
+        }
+        _widthSpin->setValue(value);
     });
     connect(_heightSpin, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int v) {
         writeSetting(QStringLiteral("lasagna_new_model_height"), v);
@@ -742,14 +771,6 @@ SegmentationLasagnaPanel::SegmentationLasagnaPanel(
     connect(_offsetValueSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double v) {
         writeSetting(QStringLiteral("lasagna_offset_value"), v);
     });
-    connect(_windowSizeSpin, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int v) {
-        writeSetting(QStringLiteral("lasagna_window_size"), v);
-    });
-    connect(_windowOverlapSpin, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int v) {
-        writeSetting(QStringLiteral("lasagna_window_overlap"), v);
-    });
-
-
     // -- Action buttons --
     connect(_newModelBtn, &QPushButton::clicked, this, [this]() {
         launchLasagnaMode(LasagnaMode::NewModel);
@@ -853,9 +874,14 @@ SegmentationLasagnaPanel::SegmentationLasagnaPanel(
         syncCompactStatusFromFull();
     });
     connect(&mgr, &LasagnaServiceManager::optimizationProgress, this,
-            [this](const QString& /*stage*/, int /*step*/, int /*total*/, double loss,
+            [this](const QString& /*stage*/, int step, int total, double loss,
                    double stageProgress, double overallProgress,
                    const QString& stageName) {
+        if ((overallProgress <= 0.0) && step > 0 && total > 0) {
+            overallProgress = static_cast<double>(step) / static_cast<double>(total);
+        }
+        overallProgress = std::clamp(overallProgress, 0.0, 1.0);
+        stageProgress = std::clamp(stageProgress, 0.0, 1.0);
         if (_progressBar) {
             _progressBar->setRange(0, 1000);
             _progressBar->setValue(static_cast<int>(overallProgress * 1000.0));
@@ -864,12 +890,40 @@ SegmentationLasagnaPanel::SegmentationLasagnaPanel(
             _progressBar->setVisible(true);
         }
         if (_progressLabel) {
-            _progressLabel->setText(
-                tr("Stage: %1 (%2%)  |  Overall: %3%  |  Loss: %4")
-                    .arg(stageName.isEmpty() ? QStringLiteral("...") : stageName)
+            const QString stageText = stageName.isEmpty() ? QStringLiteral("...") : stageName;
+            const QString label = total > 0
+                ? tr("Stage: %1 (%2%)  |  Overall: %3%  |  Step: %4/%5  |  Loss: %6")
+                    .arg(stageText)
                     .arg(stageProgress * 100.0, 0, 'f', 1)
                     .arg(overallProgress * 100.0, 0, 'f', 1)
-                    .arg(loss, 0, 'g', 5));
+                    .arg(step)
+                    .arg(total)
+                    .arg(loss, 0, 'g', 5)
+                : tr("Stage: %1 (%2%)  |  Overall: %3%  |  Loss: %4")
+                    .arg(stageText)
+                    .arg(stageProgress * 100.0, 0, 'f', 1)
+                    .arg(overallProgress * 100.0, 0, 'f', 1)
+                    .arg(loss, 0, 'g', 5);
+            _progressLabel->setText(label);
+            _progressLabel->setStyleSheet(QString());
+            _progressLabel->setVisible(true);
+        }
+        syncCompactStatusFromFull();
+    });
+    connect(&mgr, &LasagnaServiceManager::artifactUploadProgress, this,
+            [this](const QString& /*jobId*/, int current, int total, double progress,
+                   const QString& label) {
+        if (_progressBar) {
+            _progressBar->setRange(0, 1000);
+            _progressBar->setValue(static_cast<int>(progress * 1000.0));
+            _progressBar->setFormat(tr("Artifact upload: %1%").arg(progress * 100.0, 0, 'f', 1));
+            _progressBar->setVisible(true);
+        }
+        if (_progressLabel) {
+            const QString count = total > 0 ? tr(" (%1/%2)").arg(current).arg(total) : QString();
+            _progressLabel->setText(tr("Artifact upload: %1%2")
+                                        .arg(label.isEmpty() ? tr("Syncing artifacts") : label)
+                                        .arg(count));
             _progressLabel->setStyleSheet(QString());
             _progressLabel->setVisible(true);
         }
@@ -882,6 +936,8 @@ SegmentationLasagnaPanel::SegmentationLasagnaPanel(
             QJsonObject job = value.toObject();
             const QString state = job[QStringLiteral("state")].toString();
             if (state == QStringLiteral("running")) {
+                running = true;
+            } else if (state == QStringLiteral("upload")) {
                 running = true;
             } else if (state == QStringLiteral("waiting")) {
                 const int pos = job[QStringLiteral("queue_position")].toInt();
@@ -1167,8 +1223,7 @@ QStringList SegmentationLasagnaPanel::currentLinkedSurfaceNames() const
     }
 
     const QStringList storedNames = linkedSurfaceNamesFromRefs(linkedSurfacesFromMeta(segPath));
-    const bool selectedLasagnaModel = std::filesystem::exists(segPath / "model.pt");
-    if (selectedLasagnaModel || !storedNames.isEmpty()) {
+    if (!storedNames.isEmpty()) {
         return storedNames;
     }
 
@@ -1191,16 +1246,7 @@ void SegmentationLasagnaPanel::triggerOptimization()
               << " connection=" << (_connectionMode == 1 ? "external" : "internal")
               << std::endl;
 
-    if (configPath.isEmpty()) {
-        _progressLabel->setText(tr("No config file selected."));
-        _progressLabel->setStyleSheet(QStringLiteral("color: #c0392b;"));
-        _progressLabel->setVisible(true);
-        return;
-    }
-    if (!QFileInfo::exists(configPath)) {
-        _progressLabel->setText(tr("Config file not found: %1").arg(configPath));
-        _progressLabel->setStyleSheet(QStringLiteral("color: #c0392b;"));
-        _progressLabel->setVisible(true);
+    if (!validateLasagnaConfigPath(configPath, nullptr)) {
         return;
     }
 
@@ -1260,18 +1306,8 @@ void SegmentationLasagnaPanel::startOptimizationAtSeed(CState* state,
                                                        int seedZ)
 {
     _lastLasagnaMode = mode;
-    auto showStatus = [statusBar](const QString& msg, int timeout) {
-        if (statusBar) {
-            statusBar->showMessage(msg, timeout);
-        }
-    };
 
-    if (configPath.isEmpty()) {
-        showStatus(tr("No Lasagna config file selected."), 5000);
-        return;
-    }
-    if (!QFileInfo::exists(configPath)) {
-        showStatus(tr("Config file not found: %1").arg(configPath), 7000);
+    if (!validateLasagnaConfigPath(configPath, statusBar)) {
         return;
     }
 
@@ -1334,6 +1370,49 @@ QStringList SegmentationLasagnaPanel::lasagnaConfigPathsForMode(LasagnaMode mode
     return paths;
 }
 
+void SegmentationLasagnaPanel::showLasagnaConfigError(const QString& message,
+                                                      QStatusBar* statusBar,
+                                                      int timeoutMs)
+{
+    std::cerr << "[lasagna] " << message.toStdString() << std::endl;
+    if (statusBar) {
+        statusBar->showMessage(message, timeoutMs);
+    }
+    if (_progressLabel) {
+        _progressLabel->setText(message);
+        _progressLabel->setStyleSheet(QStringLiteral("color: #c0392b;"));
+        _progressLabel->setVisible(true);
+    }
+#ifndef VC_TEST_DISABLE_LASAGNA_DIALOGS
+    QMessageBox::warning(this, tr("Lasagna config error"), message);
+#endif
+}
+
+bool SegmentationLasagnaPanel::validateLasagnaConfigPath(const QString& configPath,
+                                                         QStatusBar* statusBar)
+{
+    if (configPath.isEmpty()) {
+        showLasagnaConfigError(tr("No Lasagna config file selected."), statusBar, 5000);
+        return false;
+    }
+
+    const QFileInfo configInfo(configPath);
+    if (!configInfo.exists()) {
+        showLasagnaConfigError(tr("Lasagna config file not found: %1").arg(configPath),
+                               statusBar,
+                               7000);
+        return false;
+    }
+    if (!configInfo.isFile()) {
+        showLasagnaConfigError(tr("Lasagna config path is not a file: %1").arg(configPath),
+                               statusBar,
+                               7000);
+        return false;
+    }
+
+    return true;
+}
+
 void SegmentationLasagnaPanel::startOptimizationWithOverrides(CState* state,
                                                               QStatusBar* statusBar,
                                                               int modeOverride,
@@ -1360,16 +1439,7 @@ void SegmentationLasagnaPanel::startOptimizationWithOverrides(CState* state,
         : _reoptConfigFilePath;
     const bool isNewModel = (launchMode == LasagnaMode::NewModel);
 
-    if (configPath.isEmpty()) {
-        auto msg = tr("No Lasagna config file selected.");
-        std::cerr << "[lasagna] " << msg.toStdString() << std::endl;
-        showStatus(msg, 5000);
-        return;
-    }
-    if (!QFileInfo::exists(configPath)) {
-        auto msg = tr("Config file not found: %1").arg(configPath);
-        std::cerr << "[lasagna] " << msg.toStdString() << std::endl;
-        showStatus(msg, 7000);
+    if (!validateLasagnaConfigPath(configPath, statusBar)) {
         return;
     }
 
@@ -1537,9 +1607,9 @@ void SegmentationLasagnaPanel::startOptimizationWithOverrides(CState* state,
     {
         QFile f(configPath);
         if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) {
-            auto msg = tr("Cannot read Lasagna config: %1").arg(configPath);
-            std::cerr << "[lasagna] " << msg.toStdString() << std::endl;
-            showStatus(msg, 7000);
+            auto msg = tr("Cannot read Lasagna config %1: %2")
+                .arg(configPath, f.errorString());
+            showLasagnaConfigError(msg, statusBar, 7000);
             return;
         }
         configText = QString::fromUtf8(f.readAll()).trimmed();
@@ -1551,20 +1621,19 @@ void SegmentationLasagnaPanel::startOptimizationWithOverrides(CState* state,
             auto msg = tr("Invalid Lasagna config JSON at byte %1: %2")
                 .arg(parseError.offset)
                 .arg(parseError.errorString());
-            std::cerr << "[lasagna] " << msg.toStdString() << std::endl;
-            showStatus(msg, 7000);
+            showLasagnaConfigError(msg, statusBar, 7000);
             return;
         }
         if (!doc.isObject()) {
             auto msg = tr("Invalid Lasagna config JSON: top-level value must be an object.");
-            std::cerr << "[lasagna] " << msg.toStdString() << std::endl;
-            showStatus(msg, 7000);
+            showLasagnaConfigError(msg, statusBar, 7000);
             return;
         }
         config = doc.object();
     }
 
-    int nmW = newModelWidth();
+    double nmW = newModelWidth();
+    QString nmWUnit = newModelWidthUnit();
     int nmH = newModelHeight();
     int nmN = newModelWindings();
 
@@ -1604,57 +1673,47 @@ void SegmentationLasagnaPanel::startOptimizationWithOverrides(CState* state,
     }
 
     const double offsetVal = offsetValue();
-    const int size = windowSize();
-    const int overlap = windowOverlap();
 
     QJsonObject args = config[QStringLiteral("args")].toObject();
     // VC3D is transport only. Do not add config-semantic branching here.
     // Config interpretation belongs in fit_service.py / fit.py.
     args[QStringLiteral("seed")] = QJsonArray{cx, cy, cz};
     args[QStringLiteral("model-w")] = nmW;
+    args[QStringLiteral("model-w-unit")] = nmWUnit;
     args[QStringLiteral("model-h")] = nmH;
     args[QStringLiteral("windings")] = nmN;
     config[QStringLiteral("args")] = args;
 
     std::cerr << "[lasagna] request settings:"
               << " seed=(" << cx << "," << cy << "," << cz << ")"
-              << " w=" << nmW << " h=" << nmH
+              << " w=" << nmW << " " << nmWUnit.toStdString() << " h=" << nmH
               << " windings=" << nmN
-              << " offset=" << offsetVal
-              << " window_size=" << size
-              << " window_overlap=" << overlap << std::endl;
+              << " offset=" << offsetVal << std::endl;
 
     if (isOffsetMode && !segPath.empty()) {
 
-        if (size > 0 && !outputDir.isEmpty()) {
+        if (!outputDir.isEmpty()) {
             int offIdx = 1;
             std::error_code ec2;
             for (bool collision = true; collision; ++offIdx) {
                 collision = false;
-                std::string offPrefix = rootName + "_off" + std::to_string(offIdx) + "_w";
-                const QString reservedPrefix = QString::fromStdString(
-                    rootName + "_off" + std::to_string(offIdx));
-                if (_submittedOutputNames.contains(reservedPrefix)) {
+                const std::string offName = rootName + "_off" + std::to_string(offIdx) + tifxyzSuffix;
+                if (_submittedOutputNames.contains(QString::fromStdString(offName))) {
                     collision = true;
                     continue;
                 }
                 for (auto& entry : std::filesystem::directory_iterator(outputDir.toStdString(), ec2)) {
                     auto name = entry.path().filename().string();
-                    if (name.size() > offPrefix.size() + tifxyzSuffix.size() &&
-                        name.compare(0, offPrefix.size(), offPrefix) == 0 &&
-                        name.compare(name.size() - tifxyzSuffix.size(),
-                                     tifxyzSuffix.size(), tifxyzSuffix) == 0) {
+                    if (name == offName) {
                         collision = true;
                         break;
                     }
                 }
             }
-            outputName = QString::fromStdString(rootName + "_off" + std::to_string(offIdx - 1));
+            outputName = QString::fromStdString(rootName + "_off" + std::to_string(offIdx - 1) + tifxyzSuffix);
         }
 
         std::cerr << "[lasagna] offset mode: offset=" << offsetVal
-                  << " window_size=" << size
-                  << " window_overlap=" << overlap
                   << " outputName=" << outputName.toStdString() << std::endl;
     }
 
@@ -1688,6 +1747,7 @@ void SegmentationLasagnaPanel::startOptimizationWithOverrides(CState* state,
         } catch (...) {
         }
     }
+    const QJsonArray volumeShapeZyx = volumeShapeZyxForState(state);
 
     QJsonObject request;
     request[QStringLiteral("data_input")] = dataInput;
@@ -1697,11 +1757,9 @@ void SegmentationLasagnaPanel::startOptimizationWithOverrides(CState* state,
     if (!outputName.isEmpty()) {
         request[QStringLiteral("output_name")] = outputName;
     }
-    if (size > 0) {
-        request[QStringLiteral("window_size")] = size;
-        request[QStringLiteral("window_overlap")] = overlap;
+    if (!volumeShapeZyx.isEmpty()) {
+        request[QStringLiteral("volume_shape_zyx")] = volumeShapeZyx;
     }
-
     QJsonObject jobSpec;
     QJsonArray objectUploads;
     QJsonArray linkedSurfaces;
@@ -1745,8 +1803,7 @@ void SegmentationLasagnaPanel::startOptimizationWithOverrides(CState* state,
         }
 
         linkedSurfaces = linkedSurfacesFromMeta(segPath);
-        const bool selectedLasagnaModel = std::filesystem::exists(segPath / "model.pt");
-        if (linkedSurfaces.isEmpty() && !selectedLasagnaModel) {
+        if (linkedSurfaces.isEmpty()) {
             linkedSurfaces.append(currentSegmentUpload[QStringLiteral("object")].toObject());
             appendUploadIfNew(currentSegmentUpload);
         } else if (!outputSegmentsPath.empty()) {
@@ -1801,6 +1858,9 @@ void SegmentationLasagnaPanel::startOptimizationWithOverrides(CState* state,
     }
     jobSpec[QStringLiteral("config")] = config;
     jobSpec[QStringLiteral("linked_surfaces")] = linkedSurfaces;
+    if (!volumeShapeZyx.isEmpty()) {
+        jobSpec[QStringLiteral("volume_shape_zyx")] = volumeShapeZyx;
+    }
     request[QStringLiteral("config")] = config;
     request[QStringLiteral("job_spec")] = jobSpec;
     request[QStringLiteral("_objects")] = objectUploads;
@@ -1870,9 +1930,33 @@ void SegmentationLasagnaPanel::restoreSettings(QSettings& settings)
         _outputNameEdit->setText(settings.value(QStringLiteral("lasagna_output_name"), QString()).toString());
     }
     // Dimensions
+    QString widthUnit = settings.value(
+        QStringLiteral("lasagna_new_model_width_unit"),
+        QStringLiteral("voxels")).toString().trimmed().toLower();
+    if (widthUnit == QStringLiteral("vx")) {
+        widthUnit = QStringLiteral("voxels");
+    }
+    if (widthUnit != QStringLiteral("wraps")) {
+        widthUnit = QStringLiteral("voxels");
+    }
+    if (_widthUnitCombo) {
+        const QSignalBlocker b(_widthUnitCombo);
+        const int idx = _widthUnitCombo->findData(widthUnit);
+        _widthUnitCombo->setCurrentIndex(idx >= 0 ? idx : 0);
+    }
     if (_widthSpin) {
         const QSignalBlocker b(_widthSpin);
-        _widthSpin->setValue(settings.value(QStringLiteral("lasagna_new_model_width"), 2048).toInt());
+        if (widthUnit == QStringLiteral("wraps")) {
+            _widthSpin->setDecimals(3);
+            _widthSpin->setSingleStep(0.25);
+            _widthSpin->setValue(
+                settings.value(QStringLiteral("lasagna_new_model_width_wraps"), 1.0).toDouble());
+        } else {
+            _widthSpin->setDecimals(0);
+            _widthSpin->setSingleStep(64.0);
+            _widthSpin->setValue(
+                settings.value(QStringLiteral("lasagna_new_model_width"), 2048).toDouble());
+        }
     }
     if (_heightSpin) {
         const QSignalBlocker b(_heightSpin);
@@ -1913,16 +1997,6 @@ void SegmentationLasagnaPanel::restoreSettings(QSettings& settings)
         const QSignalBlocker b(_offsetValueSpin);
         _offsetValueSpin->setValue(
             settings.value(QStringLiteral("lasagna_offset_value"), 1.0).toDouble());
-    }
-    if (_windowSizeSpin) {
-        const QSignalBlocker b(_windowSizeSpin);
-        _windowSizeSpin->setValue(
-            settings.value(QStringLiteral("lasagna_window_size"), 5000).toInt());
-    }
-    if (_windowOverlapSpin) {
-        const QSignalBlocker b(_windowOverlapSpin);
-        _windowOverlapSpin->setValue(
-            settings.value(QStringLiteral("lasagna_window_overlap"), 500).toInt());
     }
     // Populate config combos from saved paths
     if (!_newModelConfigFilePath.isEmpty()) {
@@ -2082,9 +2156,18 @@ utils::Json SegmentationLasagnaPanel::lasagnaConfigJson() const
 // Lasagna mode helpers
 // ---------------------------------------------------------------------------
 
-int SegmentationLasagnaPanel::newModelWidth() const
+double SegmentationLasagnaPanel::newModelWidth() const
 {
-    return _widthSpin ? _widthSpin->value() : 2048;
+    return _widthSpin ? _widthSpin->value() : 2048.0;
+}
+
+QString SegmentationLasagnaPanel::newModelWidthUnit() const
+{
+    if (!_widthUnitCombo) {
+        return QStringLiteral("voxels");
+    }
+    const QString unit = _widthUnitCombo->currentData().toString();
+    return unit == QStringLiteral("wraps") ? unit : QStringLiteral("voxels");
 }
 
 int SegmentationLasagnaPanel::newModelHeight() const
@@ -2110,16 +2193,6 @@ QString SegmentationLasagnaPanel::newModelOutputName() const
 double SegmentationLasagnaPanel::offsetValue() const
 {
     return _offsetValueSpin ? _offsetValueSpin->value() : 1.0;
-}
-
-int SegmentationLasagnaPanel::windowSize() const
-{
-    return _windowSizeSpin ? _windowSizeSpin->value() : 5000;
-}
-
-int SegmentationLasagnaPanel::windowOverlap() const
-{
-    return _windowOverlapSpin ? _windowOverlapSpin->value() : 500;
 }
 
 void SegmentationLasagnaPanel::setSeedFromFocus(int x, int y, int z)
