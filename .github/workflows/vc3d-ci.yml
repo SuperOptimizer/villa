@@ -47,6 +47,7 @@ jobs:
   build-test:
     name: ${{ matrix.action }}-${{ matrix.preset }}-${{ matrix.compiler }} (${{ matrix.image }})
     needs: changes
+    if: needs.changes.outputs.vc == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     continue-on-error: ${{ matrix.blocking != true }}
@@ -79,6 +80,7 @@ jobs:
   coverage:
     name: Coverage (clang, source-based)
     needs: changes
+    if: needs.changes.outputs.vc == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     continue-on-error: true
@@ -179,6 +181,7 @@ jobs:
   dead-code:
     name: Dead-code report (clang, nm + --print-gc-sections)
     needs: changes
+    if: needs.changes.outputs.vc == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     continue-on-error: true
