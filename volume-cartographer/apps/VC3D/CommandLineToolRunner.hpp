@@ -90,7 +90,7 @@ public:
     // child by valid-cell count unless explicitRoles is set, in which case
     // we pass --parent / --child explicitly. The parent tifxyz is
     // overwritten in place (the binary snapshots the pre-patch state to
-    // <volpkg>/backups/<parent_name>/{0..7}/ first).
+    // <parent_dir>/backups/<parent_name>/{0..7}/ first).
     void setMergePatchParams(const QString& parentPath,
                              const QString& childPath,
                              bool explicitRoles,

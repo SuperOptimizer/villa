@@ -2670,8 +2670,9 @@ void MergePatchDialog::refreshOverwriteBanner()
         tr("Parent <b>%1</b> will be overwritten in place. "
            "x/y/z/mask/meta are replaced atomically; aux files "
            "(approval.tif, generations.tif, ...) are preserved. "
-           "The pre-patch state is snapshotted to "
-           "<code>%2/backups/%1/{0..7}/</code>.").arg(parentId, _volpkgDir));
+           "The pre-patch state is snapshotted to a "
+           "<code>backups/%1/{0..7}/</code> folder beside the volpkg "
+           "file.").arg(parentId));
 }
 
 QString MergePatchDialog::parentPath() const { return _parentPath; }

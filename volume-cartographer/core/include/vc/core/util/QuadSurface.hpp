@@ -381,9 +381,10 @@ public:
     // Write a single ancillary channel to path/<name>.tif in place, without
     // snapshotting or rewriting x/y/z. No-op if the channel is absent/empty.
     void saveChannel(const std::string& name);
-    // Rotating backup under <volpkg>/backups/<seg>/. Throttled to at most one
-    // snapshot per segment every couple minutes; pass force=true to bypass.
-    // maxBackups < 0 means "use the configured default" (setBackupCount()).
+    // Rotating backup under <backupRoot>/backups/<seg>/ (backupRoot defaults to
+    // the segment's parent dir; VolumePkg sets it to the volpkg.json's dir).
+    // Throttled to at most one snapshot per segment every couple minutes; pass
+    // force=true to bypass. maxBackups < 0 means "use the configured default".
     void saveSnapshot(int maxBackups = -1, bool force = false);
 
     // App-configurable number of rotating snapshots kept per segment. VC3D

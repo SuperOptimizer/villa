@@ -317,7 +317,7 @@ class VolumePkg;
 // auto-detect / explicit-override the binary supports. The parent dir is
 // overwritten in place by the binary; the dialog shows a banner up front so
 // the user knows. Recovery is via the rotating backup ring
-// (<volpkg>/backups/<parent_name>/{0..7}/) that the binary populates via
+// (<parent_dir>/backups/<parent_name>/{0..7}/) that the binary populates via
 // QuadSurface::saveOverwrite.
 class MergePatchDialog : public QDialog {
     Q_OBJECT

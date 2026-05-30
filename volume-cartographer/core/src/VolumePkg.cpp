@@ -685,7 +685,11 @@ std::shared_ptr<QuadSurface> VolumePkg::loadSurface(const std::string& id)
         }
         seg = it->second;
     }
-    return seg->loadSurface();
+    auto surf = seg->loadSurface();
+    if (surf) {
+        surf->backupRoot = path_.parent_path();
+    }
+    return surf;
 }
 
 std::shared_ptr<QuadSurface> VolumePkg::getSurface(const std::string& id)
@@ -697,7 +701,11 @@ std::shared_ptr<QuadSurface> VolumePkg::getSurface(const std::string& id)
         if (it == loadedSegmentations_.end()) return nullptr;
         seg = it->second;
     }
-    return seg->getSurface();
+    auto surf = seg->getSurface();
+    if (surf) {
+        surf->backupRoot = path_.parent_path();
+    }
+    return surf;
 }
 
 bool VolumePkg::unloadSurface(const std::string& id)

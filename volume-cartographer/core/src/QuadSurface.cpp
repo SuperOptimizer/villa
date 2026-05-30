@@ -1211,7 +1211,7 @@ void QuadSurface::saveOverwrite()
     }
 
     // Snapshot the on-disk state before overwriting. saveSnapshot() writes
-    // a rotating backup at <volpkg>/backups/<segname>/{0..N-1}/ so a
+    // a rotating backup at <backupRoot>/backups/<segname>/{0..N-1}/ so a
     // destructive save (e.g. corrupted in-memory _points) is recoverable.
     // Failures (disk full, permissions) are logged but never block the
     // user's edit — the backup is best-effort.
@@ -1338,12 +1338,14 @@ void QuadSurface::saveSnapshot(int maxBackups, bool force)
         return;
     }
 
-    // Path is expected to be: /path/to/scroll.volpkg/paths/segment_name
-    std::filesystem::path volpkgRoot = path.parent_path().parent_path();
-    std::string segmentName = path.filename().string();
-
-    // Create centralized backups directory structure
-    std::filesystem::path backupsDir = volpkgRoot / "backups" / segmentName;
+    // Backups live in a "backups/" dir under backupRoot — VolumePkg sets this to
+    // the directory holding the volpkg.json, so backups are always a sibling of
+    // the project file regardless of where the segment dir actually lives. If no
+    // root was supplied (e.g. standalone CLI tools), fall back to the segment's
+    // own parent dir.
+    const std::filesystem::path root =
+        backupRoot.empty() ? path.parent_path() : backupRoot;
+    std::filesystem::path backupsDir = root / "backups" / path.filename();
 
     std::error_code ec;
     std::filesystem::create_directories(backupsDir, ec);
@@ -1458,6 +1460,12 @@ void QuadSurface::saveSnapshot(int maxBackups, bool force)
         Logger()->warn("saveSnapshot: directory iteration failed for {}: {}",
                        path.string(), ec.message());
     }
+
+    // e.g. "autosaved seg_1234/3 -> /path/to/paths/backups/seg_1234/3"
+    Logger()->info("autosaved {}/{} -> {}",
+                   path.filename().string(),
+                   snapshot_dest.filename().string(),
+                   snapshot_dest.string());
 }
 
 
