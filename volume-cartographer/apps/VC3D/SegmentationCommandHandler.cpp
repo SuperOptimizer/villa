@@ -3652,11 +3652,12 @@ void SegmentationCommandHandler::onReloadFromBackup(const QString& segmentId, in
         return;
     }
 
-    // Build paths
+    // Backups live under <backupRoot>/backups/<id>/<index> (backupRoot is the
+    // volpkg.json's directory), matching QuadSurface::saveSnapshot().
     namespace fs = std::filesystem;
-    fs::path volpkgRoot = _state->vpkg()->getVolpkgDirectory();
-    fs::path backupDir = volpkgRoot / "backups" / segIdStd / std::to_string(backupIndex);
     fs::path segmentDir = surf->path;
+    fs::path backupRoot = surf->backupRoot.empty() ? segmentDir.parent_path() : surf->backupRoot;
+    fs::path backupDir = backupRoot / "backups" / segmentDir.filename() / std::to_string(backupIndex);
 
     if (!fs::exists(backupDir)) {
         QMessageBox::warning(_parentWidget, tr("Error"),

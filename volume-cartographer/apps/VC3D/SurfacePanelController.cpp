@@ -719,10 +719,17 @@ void SurfacePanelController::showContextMenu(const QPoint& pos)
             emit resumeLocalGrowPatchRequested(segmentId);
         });
 
-        // Reload from Backup submenu
-        std::filesystem::path backupsDir =
-            std::filesystem::path(_volumePkg->getVolpkgDirectory()) / "backups" / segmentId.toStdString();
-        if (std::filesystem::exists(backupsDir) && std::filesystem::is_directory(backupsDir)) {
+        // Reload from Backup submenu. Backups live under
+        // <backupRoot>/backups/<id> (backupRoot is the volpkg.json's directory),
+        // matching QuadSurface::saveSnapshot().
+        auto backupSurf = getSurfaceById(segmentId.toStdString());
+        std::filesystem::path backupsDir;
+        if (backupSurf && !backupSurf->path.empty()) {
+            std::filesystem::path root = backupSurf->backupRoot.empty()
+                ? backupSurf->path.parent_path() : backupSurf->backupRoot;
+            backupsDir = root / "backups" / backupSurf->path.filename();
+        }
+        if (!backupsDir.empty() && std::filesystem::exists(backupsDir) && std::filesystem::is_directory(backupsDir)) {
             std::vector<int> availableBackups;
             for (const auto& entry : std::filesystem::directory_iterator(backupsDir)) {
                 if (entry.is_directory()) {

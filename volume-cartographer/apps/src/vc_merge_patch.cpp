@@ -21,7 +21,7 @@
 //         outermost `blend_cells` of the child. Inside that thin rim the
 //         child fully replaces the parent.
 //   [6/6] parent->saveOverwrite() + writeValidMask. The save snapshots
-//         the last-persisted state into <volpkg>/backups/<parent>/{0..7}/
+//         the last-persisted state into <parent_dir>/backups/<parent>/{0..7}/
 //         (rotating 8-slot ring, same convention as grow / brush /
 //         rotation edits) and then atomically swaps the new
 //         x/y/z/mask/meta into place. Cells outside the footprint are
@@ -1155,8 +1155,9 @@ int pmRun(PMSurface parent, PMSurface child, const PMConfig& cfg)
     // Overwrite the parent tifxyz in place via QuadSurface::saveOverwrite.
     // That call:
     //   1. saveSnapshot(8) -- copies the LAST-PERSISTED on-disk state
-    //      into <volpkg>/backups/<parent_name>/{0..7}/ (rotating ring),
-    //      same convention used by grow / brush / rotation edits. Snapshot
+    //      into <parent_dir>/backups/<parent_name>/{0..7}/ (rotating ring,
+    //      a sibling of the segment dir), same convention used by grow /
+    //      brush / rotation edits. Snapshot
     //      failures are logged via the QuadSurface logger but never block
     //      the actual save.
     //   2. save(force_overwrite=true) -- writes new x/y/z/meta to a
@@ -1168,7 +1169,8 @@ int pmRun(PMSurface parent, PMSurface child, const PMConfig& cfg)
     // invalidateMask + writeValidMask re-derive mask.tif from the patched
     // points so any newly valid cells are reflected.
     std::cout << "[6/6] overwriting parent tifxyz at " << parent.path
-              << " (snapshot to <volpkg>/backups/" << parent.name << "/)\n";
+              << " (snapshot to " << parent.path.parent_path().string()
+              << "/backups/" << parent.name << "/)\n";
 
     parent.qs->invalidateMask();
     parent.qs->saveOverwrite();
@@ -1246,7 +1248,7 @@ int main(int argc, char** argv)
         "sizes, or for scripts).\n"
         "\n"
         "Backups: before overwriting, the parent's last-persisted on-disk "
-        "state is snapshotted to <volpkg>/backups/<parent_name>/{0..7}/ "
+        "state is snapshotted to <parent_dir>/backups/<parent_name>/{0..7}/ "
         "(rotating 8-slot ring, same convention as grow / brush / rotation "
         "edits in VC3D)");
     desc.add_options()

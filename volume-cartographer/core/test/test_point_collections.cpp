@@ -12,6 +12,8 @@
 #include <fstream>
 #include <vector>
 
+#include <unistd.h>  // ::getpid for unique temp file names
+
 namespace fs = std::filesystem;
 
 TEST_CASE("add/query points and collections")

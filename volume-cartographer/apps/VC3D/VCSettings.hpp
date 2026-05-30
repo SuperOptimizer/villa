@@ -313,7 +313,7 @@ namespace tools {
 // Backup Settings
 // -----------------------------------------------------------------------------
 namespace backup {
-    // How many rotating snapshots to keep per segment under <volpkg>/backups/.
+    // How many rotating snapshots to keep per segment under <volpkg_dir>/backups/.
     constexpr auto SEGMENT_COUNT = "backup/segment_count";
     constexpr int  SEGMENT_COUNT_DEFAULT = 10;
 }

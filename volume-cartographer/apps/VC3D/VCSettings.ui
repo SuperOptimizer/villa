@@ -698,7 +698,7 @@
              <string>Segment backups to keep</string>
             </property>
             <property name="toolTip">
-             <string>Number of rotating snapshots kept per segment under &lt;volpkg&gt;/backups/&lt;segment&gt;/. 0 disables backups. Snapshots are throttled to at most one every 2 minutes per segment.</string>
+             <string>Number of rotating snapshots kept per segment in a backups/ folder beside the volpkg file. 0 disables backups. Snapshots are throttled to at most one every 2 minutes per segment.</string>
             </property>
            </widget>
           </item>

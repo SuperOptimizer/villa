@@ -142,6 +142,26 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
     set(_lto -flto=thin)
     if(APPLE)
         set(_link "")
+        # ld64.lld (the LLVM Mach-O linker the macOS preset selects via
+        # -fuse-ld=lld) mishandles C++ exception unwind info for our large
+        # ThinLTO shared libraries: a `throw` inside e.g. libvc_core that should
+        # be caught in an executable instead unwinds past every handler into
+        # std::terminate (SIGABRT) once it crosses the dylib boundary. The
+        # failure is in how lld lays out the dylib's unwind tables — relinking
+        # the *same* objects with Apple's ld makes cross-dylib exceptions
+        # propagate correctly, and no ld64.lld flag (-keep_dwarf_unwind,
+        # -no_compact_unwind, -dead_strip) reliably fixes it for a library this
+        # size. So on macOS we link shared libraries with Apple's system ld
+        # (always available via the SDK) while keeping lld for executables.
+        # -fuse-ld= with an empty value selects the driver default (Apple ld).
+        # A later -fuse-ld= (empty) on the link line overrides the preset's
+        # earlier -fuse-ld=lld for shared-library targets only; clang honors the
+        # last one. Applied per-target via a genex so it's idempotent across
+        # reconfigures and leaves executables on lld.
+        if(CMAKE_EXE_LINKER_FLAGS MATCHES "lld" OR CMAKE_SHARED_LINKER_FLAGS MATCHES "lld")
+            add_link_options(
+                "$<$<STREQUAL:$<TARGET_PROPERTY:TYPE>,SHARED_LIBRARY>:-fuse-ld=>")
+        endif()
     else()
         set(_link -fuse-ld=lld -Wl,--gc-sections -Wl,--as-needed)
     endif()

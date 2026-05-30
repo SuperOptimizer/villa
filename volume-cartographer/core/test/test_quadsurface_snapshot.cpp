@@ -87,7 +87,8 @@ TEST_CASE("saveSnapshot rotates when existing backups exceed maxBackups")
         qs->saveSnapshot(2, /*force=*/true);
     }
 
-    auto backupsRoot = vol / "backups" / "seg1";
+    // Backups are a sibling of the segment dir, not under the volpkg root.
+    auto backupsRoot = paths / "backups" / "seg1";
     REQUIRE(fs::exists(backupsRoot));
     // After 3 calls with maxBackups=2 we still have slots 0 and 1.
     CHECK(fs::exists(backupsRoot / "0"));
@@ -118,7 +119,7 @@ TEST_CASE("saveSnapshot copies all regular files (not just tifs)")
     qs->path = segDir;
     qs->saveSnapshot(3);
 
-    auto slot = vol / "backups" / "seg2" / "0";
+    auto slot = paths / "backups" / "seg2" / "0";
     REQUIRE(fs::exists(slot));
     CHECK(fs::exists(slot / "x.tif"));
     CHECK(fs::exists(slot / "extra.txt"));
@@ -142,7 +143,7 @@ TEST_CASE("saveSnapshot throttles rapid calls; force bypasses")
         qs->id = "seg3"; qs->path = segDir; return qs;
     };
 
-    auto backupsRoot = vol / "backups" / "seg3";
+    auto backupsRoot = paths / "backups" / "seg3";
 
     // First snapshot creates slot 0.
     reload()->saveSnapshot(10);
@@ -158,4 +159,84 @@ TEST_CASE("saveSnapshot throttles rapid calls; force bypasses")
     CHECK(fs::exists(backupsRoot / "1"));
 
     fs::remove_all(vol);
+}
+
+TEST_CASE("saveSnapshot: no backupRoot falls back to the segment's parent dir")
+{
+    // With backupRoot unset (e.g. standalone CLI tools), backups land in a
+    // backups/ dir beside the segment directory.
+    auto base = tmpDir("fallback");
+    auto segDir = base / "paths" / "seg1";
+    fs::create_directories(base / "paths");
+
+    {
+        QuadSurface qs(grid(), cv::Vec2f(1.f, 1.f));
+        qs.id = "seg1";
+        qs.save(segDir);
+    }
+
+    auto qs = std::make_unique<QuadSurface>(segDir);
+    qs->id = "seg1";
+    qs->path = segDir;
+    REQUIRE(qs->backupRoot.empty());
+    qs->saveSnapshot(3, /*force=*/true);
+
+    CHECK(fs::exists(segDir.parent_path() / "backups" / "seg1" / "0" / "x.tif"));
+
+    fs::remove_all(base);
+}
+
+TEST_CASE("saveSnapshot: backupRoot anchors backups regardless of segment location")
+{
+    // VolumePkg sets backupRoot to the volpkg.json's directory. Backups must go
+    // under <backupRoot>/backups/<id>/ even when the segment lives in a
+    // subdirectory (paths/) or somewhere else entirely.
+    auto volpkgDir = tmpDir("volpkg");
+    auto segDir = volpkgDir / "paths" / "seg1";
+    fs::create_directories(volpkgDir / "paths");
+
+    {
+        QuadSurface qs(grid(), cv::Vec2f(1.f, 1.f));
+        qs.id = "seg1";
+        qs.save(segDir);
+    }
+
+    auto qs = std::make_unique<QuadSurface>(segDir);
+    qs->id = "seg1";
+    qs->path = segDir;
+    qs->backupRoot = volpkgDir;  // as VolumePkg would set it
+    qs->saveSnapshot(3, /*force=*/true);
+
+    // Backup is a sibling of the volpkg dir's contents, NOT next to the segment.
+    CHECK(fs::exists(volpkgDir / "backups" / "seg1" / "0" / "x.tif"));
+    CHECK_FALSE(fs::exists(segDir.parent_path() / "backups"));
+
+    fs::remove_all(volpkgDir);
+}
+
+TEST_CASE("saveSnapshot: backupRoot with a segment outside the volpkg dir")
+{
+    // The volpkg.json may point at an explicit segment path anywhere on disk.
+    // Backups still go under backupRoot, not beside the far-flung segment.
+    auto volpkgDir = tmpDir("volpkg_explicit");
+    auto segParent = tmpDir("elsewhere");
+    auto segDir = segParent / "seg1";
+
+    {
+        QuadSurface qs(grid(), cv::Vec2f(1.f, 1.f));
+        qs.id = "seg1";
+        qs.save(segDir);
+    }
+
+    auto qs = std::make_unique<QuadSurface>(segDir);
+    qs->id = "seg1";
+    qs->path = segDir;
+    qs->backupRoot = volpkgDir;
+    qs->saveSnapshot(3, /*force=*/true);
+
+    CHECK(fs::exists(volpkgDir / "backups" / "seg1" / "0" / "x.tif"));
+    CHECK_FALSE(fs::exists(segParent / "backups"));
+
+    fs::remove_all(volpkgDir);
+    fs::remove_all(segParent);
 }

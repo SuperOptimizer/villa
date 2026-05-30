@@ -65,8 +65,8 @@ TEST_CASE("saveChannel: writes only the channel tif, no snapshot, round-trips")
     auto root = tmpDir("savechannel");
     auto segDir = root / "seg";
 
-    // Place the seg dir two levels deep so it mimics <volpkg>/paths/<seg>,
-    // which is where saveSnapshot() would write backups to (../../backups).
+    // Place the seg dir under a paths/ dir so it mimics <volpkg>/paths/<seg>.
+    // saveSnapshot() would write backups beside the seg dir (paths/backups/).
     auto volpkg = root / "scroll.volpkg";
     auto pathsDir = volpkg / "paths";
     fs::create_directories(pathsDir);
@@ -86,6 +86,7 @@ TEST_CASE("saveChannel: writes only the channel tif, no snapshot, round-trips")
 
     CHECK(fs::exists(segDir / "approval.tif"));
     // No backups/ directory: saveChannel must not snapshot the segment.
+    CHECK_FALSE(fs::exists(pathsDir / "backups"));
     CHECK_FALSE(fs::exists(volpkg / "backups"));
     // x.tif untouched (not rewritten).
     CHECK(fs::last_write_time(segDir / "x.tif") == xMtimeBefore);
