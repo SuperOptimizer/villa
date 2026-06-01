@@ -55,6 +55,11 @@ constexpr float kMaxScale = 128.0f;
 constexpr int kInteractionSettleMs = 140;
 constexpr int kResizeSettleMs = 140;
 constexpr int kChunkReadyActiveDelayMs = 500;
+// Non-interactive chunk-ready coalescing. Chunks for one viewpoint trickle in
+// over many milliseconds; the default 16ms render debounce re-renders the whole
+// frame per chunk (~9-11x per viewpoint). Debounce chunk-ready re-renders on a
+// longer window so a burst collapses into ~1 render once chunks stop arriving.
+constexpr int kChunkReadyIdleDelayMs = 250;
 constexpr float kResolutionLodZoomBias = 0.5f;
 constexpr float kSegmentationResolutionLodZoomBias = 1.0f;
 constexpr int kSurfaceResolutionLevelBias = 1;
@@ -882,7 +887,12 @@ void CChunkedVolumeViewer::rebuildChunkArray()
                     guard->_settleRenderTimer->start(kChunkReadyActiveDelayMs);
                 return;
             }
-            guard->scheduleRender("chunk ready");
+            // Coalesce: (re)start the render timer on the longer idle window so a
+            // burst of arriving chunks collapses into one re-render once they
+            // stop, instead of one full-frame render per chunk at the 16ms tick.
+            guard->_renderPending = true;
+            if (guard->_renderTimer)
+                guard->_renderTimer->start(kChunkReadyIdleDelayMs);
         }, Qt::QueuedConnection);
     });
 }
@@ -2061,6 +2071,12 @@ struct CChunkedVolumeViewer::RenderResult {
 CChunkedVolumeViewer::RenderResult CChunkedVolumeViewer::renderFrame(RenderContext ctx)
 {
     QElapsedTimer renderTimer;
+    // Sub-phase timing (only meaningful under --profile). gen = surface coords,
+    // sample = chunk sample/decode, blit = colormap LUT + framebuffer write.
+    const bool profilePhases = ProfileLoggingEnabled();
+    qint64 phaseGenMs = -1, phaseSampleMs = 0, phaseBlitMs = 0;
+    bool phaseGenCached = false;
+    QElapsedTimer phaseTimer;
     if (ProfileLoggingEnabled()) {
         renderTimer.start();
         Logger()->info("[vc3d-profile] renderFrame begin reason='{}' caller='{}' serial={} surf='{}' size={}x{} level={} interactive={} overlay={} composite={} planeComposite={}",
@@ -2082,8 +2098,9 @@ CChunkedVolumeViewer::RenderResult CChunkedVolumeViewer::renderFrame(RenderConte
         if (!ProfileLoggingEnabled() || !renderTimer.isValid())
             return;
         result.renderFrameElapsedMs = renderTimer.elapsed();
-        Logger()->info("[vc3d-profile] renderFrame end elapsed_ms={} reason='{}' caller='{}' serial={} framebuffer={}x{}",
-                       result.renderFrameElapsedMs, ctx.profileReason, ctx.profileCaller,
+        Logger()->info("[vc3d-profile] renderFrame end elapsed_ms={} gen_ms={} genCached={} sample_ms={} blit_ms={} reason='{}' caller='{}' serial={} framebuffer={}x{}",
+                       result.renderFrameElapsedMs, phaseGenMs, phaseGenCached,
+                       phaseSampleMs, phaseBlitMs, ctx.profileReason, ctx.profileCaller,
                        result.serial, result.framebuffer.width(), result.framebuffer.height());
     };
 
@@ -2267,7 +2284,9 @@ CChunkedVolumeViewer::RenderResult CChunkedVolumeViewer::renderFrame(RenderConte
                                + n * ctx.zOff;
         const cv::Vec3f vxStep = vx / ctx.scale;
         const cv::Vec3f vyStep = vy / ctx.scale;
+        if (profilePhases) phaseTimer.restart();
         samplePlane(origin, vxStep, vyStep, n, values, coverage, *ctx.chunkArray);
+        if (profilePhases) phaseSampleMs += phaseTimer.elapsed();
         if (ctx.overlayChunkArray && ctx.overlayVolume && ctx.overlayOpacity > 0.0f) {
             overlayValues.create(ctx.fbH, ctx.fbW);
             overlayCoverage.create(ctx.fbH, ctx.fbW);
@@ -2320,10 +2339,13 @@ CChunkedVolumeViewer::RenderResult CChunkedVolumeViewer::renderFrame(RenderConte
             }
         }
 
+        phaseGenCached = genCacheHit;
         if (!genCacheHit) {
+            if (profilePhases) phaseTimer.restart();
             ctx.surf->gen(&coords, needSurfaceNormals ? &normals : nullptr,
                           cv::Size(ctx.fbW, ctx.fbH), {0, 0, 0}, ctx.scale, offset);
             applyPerPixelNormalOffset(coords, normals, ctx.zOff);
+            if (profilePhases) phaseGenMs = phaseTimer.elapsed();
 
             if (ctx.genCache && !coords.empty()) {
                 std::lock_guard lock(ctx.genCache->mutex);
@@ -2340,7 +2362,9 @@ CChunkedVolumeViewer::RenderResult CChunkedVolumeViewer::renderFrame(RenderConte
             }
         }
         if (!coords.empty()) {
+            if (profilePhases) phaseTimer.restart();
             sampleCoords(coords, normals, values, coverage, *ctx.chunkArray);
+            if (profilePhases) phaseSampleMs += phaseTimer.elapsed();
             if (ctx.overlayChunkArray && ctx.overlayVolume && ctx.overlayOpacity > 0.0f) {
                 overlayValues.create(ctx.fbH, ctx.fbW);
                 overlayCoverage.create(ctx.fbH, ctx.fbW);
@@ -2358,6 +2382,7 @@ CChunkedVolumeViewer::RenderResult CChunkedVolumeViewer::renderFrame(RenderConte
         }
     }
 
+    if (profilePhases) phaseTimer.restart();
     std::array<uint32_t, 256> lut{};
     vc::buildWindowLevelColormapLut(lut, ctx.windowLow, ctx.windowHigh, ctx.baseColormapId);
     std::array<uint32_t, 256> overlayLut{};
@@ -2385,6 +2410,7 @@ CChunkedVolumeViewer::RenderResult CChunkedVolumeViewer::renderFrame(RenderConte
             row[x] = pixel;
         }
     }
+    if (profilePhases) phaseBlitMs = phaseTimer.elapsed();
     finishRenderFrameProfile();
     return result;
 }
