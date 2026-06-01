@@ -455,6 +455,16 @@ private:
     bool _needsLoad = false;
     // Mutex to protect lazy loading from concurrent access
     mutable std::mutex _loadMutex;
+
+    // Serializes all on-disk writes targeting a given segment directory, keyed by
+    // the directory path so it works across separate QuadSurface objects pointing
+    // at the same dir (e.g. the autosave worker's snapshot vs. the live surface).
+    // Without it, a worker-thread saveOverwrite() directory swap can delete a tmp
+    // file out from under a main-thread saveChannel() rename -> uncaught
+    // filesystem_error -> std::terminate. Recursive so a public entry point
+    // (saveOverwrite) can hold it across nested saveSnapshot()/save() calls on
+    // the same thread without self-deadlock.
+    static std::recursive_mutex& dirWriteMutex(const std::filesystem::path& dir);
 };
 
 std::unique_ptr<QuadSurface> load_quad_from_tifxyz(const std::string &path, int flags = 0);

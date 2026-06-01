@@ -699,6 +699,7 @@ void QuadSurface::writeValidMask(const cv::Mat& img)
     if (path.empty()) {
         return;
     }
+    std::lock_guard<std::recursive_mutex> dirLock(dirWriteMutex(path));
     std::filesystem::path maskPath = path / "mask.tif";
     cv::Mat_<uint8_t> mask = validMask();
 
@@ -1198,11 +1199,24 @@ void QuadSurface::save(const std::filesystem::path &path_, bool force_overwrite)
         save(path_, path_.filename(), force_overwrite);
 }
 
+std::recursive_mutex& QuadSurface::dirWriteMutex(const std::filesystem::path& dir)
+{
+    // Keyed by normalized dir string so separate QuadSurface objects pointing at
+    // the same segment dir share one lock. Grows by one entry per distinct dir
+    // touched this session (tiny, never pruned); a mutex guards the map itself.
+    static std::mutex mapMutex;
+    static std::unordered_map<std::string, std::recursive_mutex> locks;
+    const std::string key = dir.lexically_normal().string();
+    std::lock_guard<std::mutex> g(mapMutex);
+    return locks[key];
+}
+
 void QuadSurface::saveOverwrite()
 {
     if (path.empty()) {
         throw std::runtime_error("QuadSurface::saveOverwrite() requires a valid path");
     }
+    std::lock_guard<std::recursive_mutex> dirLock(dirWriteMutex(path));
 
     std::filesystem::path final_path = path;
     std::string uuid = !id.empty() ? id : final_path.filename().string();
@@ -1287,16 +1301,29 @@ void QuadSurface::saveChannel(const std::string& name)
     if (path.empty()) {
         throw std::runtime_error("QuadSurface::saveChannel() requires a valid path");
     }
+    std::lock_guard<std::recursive_mutex> dirLock(dirWriteMutex(path));
+
     auto it = _channels.find(name);
     if (it == _channels.end() || it->second.empty()) {
         return;
     }
 
     // Write only <name>.tif, no snapshot or x/y/z rewrite. tmp+rename so a
-    // crash mid-write can't tear the existing file.
-    const std::string tmpStem = "." + name + ".tmp" + std::to_string(::getpid());
+    // crash mid-write can't tear the existing file. Unique tmp (pid+counter) so
+    // overlapping saves don't reuse a name; non-throwing rename so a lost race
+    // degrades to a logged warning instead of std::terminate.
+    static std::atomic<uint64_t> tmpCounter{0};
+    const std::string tmpStem = "." + name + ".tmp" + std::to_string(::getpid())
+        + "_" + std::to_string(tmpCounter.fetch_add(1, std::memory_order_relaxed));
     writeChannelFile(path, tmpStem, it->second);
-    std::filesystem::rename(path / (tmpStem + ".tif"), path / (name + ".tif"));
+    std::error_code ec;
+    std::filesystem::rename(path / (tmpStem + ".tif"), path / (name + ".tif"), ec);
+    if (ec) {
+        Logger()->warn("saveChannel: rename {}.tif -> {}.tif failed: {}",
+                       tmpStem, name, ec.message());
+        std::error_code rmEc;
+        std::filesystem::remove(path / (tmpStem + ".tif"), rmEc);
+    }
 }
 
 // Minimum wall-clock gap between rotating snapshots of the same segment.
@@ -1322,6 +1349,7 @@ void QuadSurface::saveSnapshot(int maxBackups, bool force)
     if (path.empty()) {
         throw std::runtime_error("QuadSurface::saveSnapshot() requires a valid path");
     }
+    std::lock_guard<std::recursive_mutex> dirLock(dirWriteMutex(path));
     if (maxBackups < 0) {
         maxBackups = g_backupCount.load();
     }
@@ -1473,6 +1501,10 @@ void QuadSurface::save(const std::string &path_, const std::string &uuid, bool f
 {
     std::filesystem::path target_path = path_;
     std::filesystem::path final_path = path_;
+
+    // Serialize on the TARGET dir (may differ from this->path for new-dir saves)
+    // so the atomic directory swap can't race another writer to the same dir.
+    std::lock_guard<std::recursive_mutex> dirLock(dirWriteMutex(final_path));
 
     if (!force_overwrite && std::filesystem::exists(final_path))
         throw std::runtime_error("path already exists!");

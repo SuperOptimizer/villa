@@ -307,13 +307,9 @@ void SegmentationOverlayController::detachViewer(VolumeViewerBase* viewer)
 
 void SegmentationOverlayController::loadApprovalMaskImage(QuadSurface* surface)
 {
-    // If there are unsaved pending changes and a debounced save is active,
-    // save immediately before loading new data to avoid losing auto-approvals
-    if (_approvalSaveTimer && _approvalSaveTimer->isActive() && _approvalSaveSurface) {
-        _approvalSaveTimer->stop();
-        saveApprovalMaskToSurface(_approvalSaveSurface);
-        _approvalSaveSurface = nullptr;
-    }
+    // Segment switch: flush pending approval edits to the OLD surface now,
+    // before its pointer changes, so they aren't lost.
+    flushPendingApprovalMaskSave();
 
     // Clear undo stack - old entries are for a different surface
     clearApprovalMaskUndoHistory();
@@ -530,9 +526,9 @@ void SegmentationOverlayController::paintApprovalMaskDirect(
     }
 }
 
-void SegmentationOverlayController::saveApprovalMaskToSurface(QuadSurface* surface)
+void SegmentationOverlayController::composeApprovalMaskToSurface(QuadSurface* surface)
 {
-    OverlayProfileScope profile("saveApprovalMaskToSurface");
+    OverlayProfileScope profile("composeApprovalMaskToSurface");
     if (!surface || (_savedApprovalMaskImage.isNull() && _pendingApprovalMaskImage.isNull())) {
         return;
     }
@@ -578,19 +574,10 @@ void SegmentationOverlayController::saveApprovalMaskToSurface(QuadSurface* surfa
         }
     }
 
-    // Only approval.tif changed; saveChannel avoids the full-segment snapshot
-    // + x/y/z rewrite that saveOverwrite() would do on every update.
+    // Stash the composited mask onto the surface's approval channel. Disk
+    // persistence is the single SegmentationModule autosave's job (saveOverwrite
+    // writes x/y/z + meta + all channels incl. approval every 10s).
     surface->setChannel("approval", approvalMask);
-    surface->saveChannel("approval");
-
-    // Also take a rotating backup so approval edits are recoverable. This is
-    // throttled to ~one snapshot per segment every couple minutes, so frequent
-    // approval writes coalesce instead of copying the whole segment each time.
-    try {
-        surface->saveSnapshot();
-    } catch (const std::exception& e) {
-        qWarning() << "saveApprovalMaskToSurface: backup snapshot failed:" << e.what();
-    }
 
     // Update saved image to match what we just wrote and clear pending
     for (int row = 0; row < height; ++row) {
@@ -713,46 +700,32 @@ void SegmentationOverlayController::clearApprovalMaskUndoHistory()
 
 void SegmentationOverlayController::scheduleDebouncedSave(QuadSurface* surface)
 {
-    scheduleApprovalMaskSave(surface);
+    // Compose the edited mask onto the surface's approval channel and remember
+    // the surface for the boundary flush. The caller (which owns the module)
+    // triggers the single autosave; there is no separate approval timer.
+    if (!surface) {
+        return;
+    }
+    composeApprovalMaskToSurface(surface);
+    _approvalSaveSurface = surface;
 }
 
 void SegmentationOverlayController::flushPendingApprovalMaskSave()
 {
-    // If there's a pending debounced save, execute it immediately
-    // This ensures changes are saved to the correct surface before segment switching
-    if (_approvalSaveTimer && _approvalSaveTimer->isActive() && _approvalSaveSurface) {
-        _approvalSaveTimer->stop();
-        saveApprovalMaskToSurface(_approvalSaveSurface);
-        _approvalSaveSurface = nullptr;
-    }
-}
-
-void SegmentationOverlayController::scheduleApprovalMaskSave(QuadSurface* surface)
-{
-    if (!surface) {
-        return;
-    }
-
-    _approvalSaveSurface = surface;
-
-    if (!_approvalSaveTimer) {
-        _approvalSaveTimer = new QTimer(this);
-        _approvalSaveTimer->setSingleShot(true);
-        connect(_approvalSaveTimer, &QTimer::timeout, this, &SegmentationOverlayController::performDebouncedApprovalSave);
-    }
-
-    // Restart the timer (debounce)
-    _approvalSaveTimer->start(kApprovalSaveDelayMs);
-}
-
-void SegmentationOverlayController::performDebouncedApprovalSave()
-{
+    // Boundary flush (segment switch / app close): write the pending approval
+    // edits to disk synchronously before the surface pointer changes. Uses the
+    // full saveOverwrite so it shares the per-dir lock with the autosave.
     if (!_approvalSaveSurface) {
         return;
     }
-
-    saveApprovalMaskToSurface(_approvalSaveSurface);
+    QuadSurface* surface = _approvalSaveSurface;
     _approvalSaveSurface = nullptr;
+    composeApprovalMaskToSurface(surface);
+    try {
+        surface->saveOverwrite();
+    } catch (const std::exception& e) {
+        qWarning() << "flushPendingApprovalMaskSave: save failed:" << e.what();
+    }
 }
 
 bool SegmentationOverlayController::isOverlayEnabledFor(VolumeViewerBase* viewer) const
@@ -1122,13 +1095,8 @@ void SegmentationOverlayController::onSurfaceChanged(std::string name, std::shar
 {
     Q_UNUSED(surface);
 
-    // If there are unsaved pending changes and a debounced save is active,
-    // save immediately before the surface pointer becomes dangling
-    if (_approvalSaveTimer && _approvalSaveTimer->isActive() && _approvalSaveSurface) {
-        _approvalSaveTimer->stop();
-        saveApprovalMaskToSurface(_approvalSaveSurface);
-        _approvalSaveSurface = nullptr;
-    }
+    // Surface changing: flush pending approval edits before the pointer dangles.
+    flushPendingApprovalMaskSave();
 
     if (name == "segmentation") {
         refreshAll();
