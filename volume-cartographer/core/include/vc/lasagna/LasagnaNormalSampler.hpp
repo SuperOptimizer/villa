@@ -10,7 +10,7 @@
 namespace vc::lasagna {
 
 struct LasagnaNormalSamplerOptions {
-    size_t maxCachedChunks = 128;
+    size_t maxCachedBytes = 512ULL * 1024ULL * 1024ULL;
 };
 
 class LasagnaNormalSampler final : public NormalSampler {
@@ -26,6 +26,15 @@ public:
     LasagnaNormalSampler& operator=(LasagnaNormalSampler&&) noexcept;
 
     [[nodiscard]] NormalSample sampleNormal(const cv::Vec3d& volumePoint) const override;
+    [[nodiscard]] NormalSampleWithDerivative sampleNormalWithDerivative(
+        const cv::Vec3d& volumePoint) const override;
+    [[nodiscard]] NormalPrefetchReport prefetchNormalSamples(
+        const std::vector<cv::Vec3d>& volumePoints,
+        bool withDerivative) const override;
+    [[nodiscard]] NormalBatchReport sampleNormalBatch(
+        const std::vector<cv::Vec3d>& volumePoints,
+        bool withDerivative,
+        std::vector<NormalSampleWithDerivative>& samples) const override;
 
 private:
     class Impl;

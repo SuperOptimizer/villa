@@ -5,6 +5,7 @@
 #include <QPointer>
 #include <QString>
 
+#include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <memory>
@@ -15,12 +16,14 @@
 #include <opencv2/core/mat.hpp>
 
 #include "vc/lasagna/LineOptimizer.hpp"
+#include "volume_viewers/CChunkedVolumeViewer.hpp"
 
-class CChunkedVolumeViewer;
 class CState;
 class LineAnnotationDialog;
 class Surface;
+class SurfacePanelController;
 class ViewerManager;
+class VolumePkg;
 class QWidget;
 
 class LineAnnotationController : public QObject
@@ -28,18 +31,41 @@ class LineAnnotationController : public QObject
     Q_OBJECT
 
 public:
+    enum class InitialDirectionMode {
+        Sideways,
+        ZInOut,
+    };
+
     struct OptimizationTaskResult {
         bool ok = false;
         std::filesystem::path manifestPath;
         cv::Vec3d seedPoint{0.0, 0.0, 0.0};
+        std::vector<vc::lasagna::LineControlPoint> controlPoints;
+        cv::Vec3d sourceSliceNormal{0.0, 0.0, 1.0};
+        InitialDirectionMode initialDirectionMode = InitialDirectionMode::Sideways;
         vc::lasagna::LineOptimizationResult result;
         std::string error;
+        std::string eventName;
+    };
+
+    struct FiberSummary {
+        uint64_t id = 0;
+        int controlPointCount = 0;
+        int linePointCount = 0;
+        double lengthVx = 0.0;
     };
 
     using DatasetPicker =
         std::function<std::optional<std::string>(QWidget*, const std::filesystem::path&)>;
     using OptimizationTaskFactory =
-        std::function<OptimizationTaskResult(std::filesystem::path, cv::Vec3d)>;
+        std::function<OptimizationTaskResult(std::filesystem::path,
+                                             std::vector<vc::lasagna::LineControlPoint>,
+                                             std::vector<cv::Vec3d>,
+                                             cv::Vec3d,
+                                             InitialDirectionMode,
+                                             bool,
+                                             int,
+                                             int)>;
 
     LineAnnotationController(CState* state,
                              ViewerManager* viewerManager,
@@ -48,12 +74,21 @@ public:
 
     bool canLaunchFromViewer(const CChunkedVolumeViewer* viewer) const;
     void launchFromViewer(CChunkedVolumeViewer* viewer, const QPointF& scenePoint);
+    void openFiber(uint64_t fiberId);
+    void deleteFiber(uint64_t fiberId);
+    void saveOpenFibers();
+    [[nodiscard]] std::vector<FiberSummary> fiberSummaries() const;
 
     void setDatasetPickerForTesting(DatasetPicker picker);
     void setOptimizationTaskFactoryForTesting(OptimizationTaskFactory factory);
+    void setSurfacePanel(SurfacePanelController* panel);
+
+signals:
+    void fibersChanged(std::vector<LineAnnotationController::FiberSummary> fibers);
 
 private slots:
     void onSurfaceChanged(std::string name, std::shared_ptr<Surface> surf, bool isEditUpdate = false);
+    void onVolumePackageChanged(std::shared_ptr<VolumePkg> pkg);
 
 private:
     enum class SourceKind {
@@ -62,6 +97,11 @@ private:
     };
 
     struct LineAnnotationSession;
+    struct StoredFiber {
+        uint64_t id = 0;
+        std::vector<cv::Vec3d> controlPoints;
+        std::vector<cv::Vec3d> linePoints;
+    };
 
     struct PaneRecord {
         int id = 0;
@@ -73,24 +113,63 @@ private:
 
     std::string nextSurfaceName();
     void cleanupSurfaceName(const std::string& surfaceName);
-    void handleLineSeed(const std::string& surfaceName, cv::Vec3f volumePoint);
+    void launchSession(SourceKind sourceKind,
+                       const std::string& surfaceName,
+                       std::shared_ptr<Surface> sourceSurface,
+                       const CChunkedVolumeViewer::CameraState& camera,
+                       cv::Vec3d sourceSliceNormal,
+                       std::shared_ptr<LineAnnotationSession> session);
+    void handleLineSeed(const std::string& surfaceName,
+                        cv::Vec3f volumePoint,
+                        InitialDirectionMode directionMode);
+    void handleGeneratedControlPoint(const std::string& surfaceName,
+                                     cv::Vec3f volumePoint,
+                                     double linePosition);
     bool ensureDatasetForSession(LineAnnotationSession& session);
-    void startOptimization(LineAnnotationSession& session, cv::Vec3d seedPoint);
+    void startOptimization(LineAnnotationSession& session,
+                           bool fullOptimization = false,
+                           int activeStart = -1,
+                           int activeEnd = -1);
     void finishOptimization(const std::string& surfaceName);
     bool materializeGeneratedViews(LineAnnotationSession& session);
+    void handleShowAsMesh(const std::string& surfaceName);
+    [[nodiscard]] std::filesystem::path resolveMeshExportPathsDir() const;
+    [[nodiscard]] std::filesystem::path nextMeshExportPath(const std::filesystem::path& pathsDir,
+                                                           const std::string& stem) const;
+    [[nodiscard]] std::vector<std::filesystem::path> saveGeneratedQuadMeshes(LineAnnotationSession& session);
     [[nodiscard]] PaneRecord* paneForSurface(const std::string& surfaceName);
     [[nodiscard]] const PaneRecord* paneForSurface(const std::string& surfaceName) const;
     [[nodiscard]] std::optional<std::string> pickDataset(QWidget* parent,
                                                           const std::filesystem::path& startDir) const;
     [[nodiscard]] OptimizationTaskResult runOptimizationTask(std::filesystem::path manifestPath,
-                                                             cv::Vec3d seedPoint) const;
+                                                             std::vector<vc::lasagna::LineControlPoint> controlPoints,
+                                                             std::vector<cv::Vec3d> initialLinePoints,
+                                                             cv::Vec3d sourceSliceNormal,
+                                                             InitialDirectionMode directionMode,
+                                                             bool fullOptimization = false,
+                                                             int activeStart = -1,
+                                                             int activeEnd = -1) const;
+    void loadFibersForCurrentPackage();
+    void emitFiberSummaries();
+    [[nodiscard]] std::filesystem::path fibersDir() const;
+    [[nodiscard]] std::filesystem::path fiberPath(uint64_t fiberId) const;
+    [[nodiscard]] uint64_t nextFiberId() const;
+    [[nodiscard]] static double lineLengthVx(const std::vector<cv::Vec3d>& points);
+    [[nodiscard]] static vc::lasagna::LineModel lineModelFromPoints(
+        const std::vector<cv::Vec3d>& points,
+        const vc::lasagna::NormalSampler* normalSampler);
+    void saveSessionAsFiber(LineAnnotationSession& session);
+    void saveFiber(const StoredFiber& fiber) const;
+    [[nodiscard]] std::optional<StoredFiber> loadFiberFile(const std::filesystem::path& path) const;
     void showError(const QString& message) const;
 
     CState* _state = nullptr;
     ViewerManager* _viewerManager = nullptr;
+    SurfacePanelController* _surfacePanel = nullptr;
     QPointer<QWidget> _parentWidget;
     int _nextPaneId = 1;
     std::vector<PaneRecord> _panes;
+    std::vector<StoredFiber> _fibers;
     DatasetPicker _datasetPicker;
     OptimizationTaskFactory _optimizationTaskFactory;
 };
