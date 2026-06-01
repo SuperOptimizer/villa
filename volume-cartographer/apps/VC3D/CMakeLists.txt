@@ -16,6 +16,10 @@ set(srcs
     Keybinds.hpp
     CWindow.cpp
     CWindowContextMenu.cpp
+    RenderBenchRecorder.cpp
+    RenderBenchRecorder.hpp
+    RenderBenchReplay.cpp
+    RenderBenchReplay.hpp
     FileWatcherService.cpp
     FileWatcherService.hpp
     AxisAlignedSliceController.cpp

@@ -89,6 +89,10 @@ public:
     float normalOffset() const override { return _zOff; }
     CameraState cameraState() const;
     void applyCameraState(const CameraState& state, bool forceRender = true);
+    // Render-bench helpers: true when no render is running/queued/pending; count of
+    // remote chunk fetches still outstanding. Used by replay to settle each frame.
+    bool isRenderQuiescent() const;
+    std::size_t chunkFetchesInFlight() const;
     int datasetScaleIndex() const override { return _dsScaleIdx; }
     float datasetScaleFactor() const override { return _dsScale; }
     Surface* currentSurface() const override;

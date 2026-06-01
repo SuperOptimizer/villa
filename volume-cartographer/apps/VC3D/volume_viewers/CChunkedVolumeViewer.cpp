@@ -833,6 +833,20 @@ void CChunkedVolumeViewer::applyCameraState(const CameraState& state, bool force
     emit overlaysUpdated();
 }
 
+bool CChunkedVolumeViewer::isRenderQuiescent() const
+{
+    return !_renderWorkerBusy.load(std::memory_order_acquire)
+        && !_renderPendingAfterWorker
+        && !_renderPending
+        && !(_renderTimer && _renderTimer->isActive())
+        && !(_settleRenderTimer && _settleRenderTimer->isActive());
+}
+
+std::size_t CChunkedVolumeViewer::chunkFetchesInFlight() const
+{
+    return _chunkArray ? _chunkArray->stats().remoteFetchesInFlight : 0;
+}
+
 void CChunkedVolumeViewer::rebuildChunkArray()
 {
     if (_chunkCbId != 0 && _chunkArray) {

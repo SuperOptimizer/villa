@@ -1,5 +1,8 @@
 #include "CWindow.hpp"
 
+#include "RenderBenchRecorder.hpp"
+#include "RenderBenchReplay.hpp"
+
 #include "vc/core/types/Volume.hpp"
 #include "vc/core/types/VolumePkg.hpp"
 #include "vc/core/util/Surface.hpp"
@@ -367,8 +370,9 @@ static bool windowStateMetaMatches(const QSettings& settings,
 }
 
 // Constructor
-CWindow::CWindow(size_t cacheSizeGB) :
+CWindow::CWindow(size_t cacheSizeGB, RenderBenchOptions benchOptions) :
     _cmdRunner(nullptr),
+    _benchOptions(std::move(benchOptions)),
     _seedingWidget(nullptr),
     _point_collection_widget(nullptr)
 {
@@ -910,6 +914,20 @@ CWindow::CWindow(size_t cacheSizeGB) :
             _segmentationCommandHandler.get(), &SegmentationCommandHandler::onRenameSurface);
     connect(_surfacePanel.get(), &SurfacePanelController::copySurfaceRequested,
             _segmentationCommandHandler.get(), &SegmentationCommandHandler::onCopySurfaceRequested);
+
+    // Render-bench: kick off replay once the event loop is running, or arm the
+    // recorder to attach when a volume+segment becomes active.
+    if (!_benchOptions.replayPath.isEmpty()) {
+        _benchReplay = std::make_unique<RenderBenchReplay>();
+        if (_benchReplay->load(_benchOptions.replayPath)) {
+            _benchReplay->setWarmPass(_benchOptions.replayWarm);
+            QTimer::singleShot(0, this, [this] { _benchReplay->run(*this); });
+        } else {
+            _benchReplay.reset();
+        }
+    } else if (!_benchOptions.recordPath.isEmpty()) {
+        _benchRecorder = std::make_unique<RenderBenchRecorder>(_benchOptions.recordPath);
+    }
 }
 
 // Destructor
@@ -2802,6 +2820,10 @@ void CWindow::saveWindowState()
 
 void CWindow::closeEvent(QCloseEvent* event)
 {
+    // Flush a render-bench recording (if any) before teardown.
+    if (_benchRecorder && _benchRecorder->attached()) {
+        _benchRecorder->save();
+    }
     // Tell ViewerManager to stop maintaining the SurfacePatchIndex. The
     // CState teardown below iterates every tracked surface and sets it to
     // nullptr, which would otherwise trigger an O(N) rtree->remove() per
@@ -3328,6 +3350,32 @@ void CWindow::onSurfaceActivated(const QString& surfaceId, QuadSurface* surface)
     if (_surfaceAffineTransforms) {
         _surfaceAffineTransforms->refresh();
     }
+
+    maybeAttachBenchRecorder();
+}
+
+void CWindow::maybeAttachBenchRecorder()
+{
+    if (!_benchRecorder || _benchRecorder->attached())
+        return;
+    auto* viewer = segmentationViewer();
+    if (!viewer || !viewer->currentVolume() || !viewer->currentSurface())
+        return;
+
+    RenderBenchRecorder::Header h;
+    h.volpkgPath = _state ? _state->vpkgPath() : QString();
+    h.volpkgIsRemote = h.volpkgPath.startsWith("s3://");
+    h.volumeId = QString::fromStdString(viewer->currentVolume()->id());
+    h.segmentId = QString::fromStdString(viewer->surfName() == "segmentation"
+                                             ? _state->activeSurfaceId()
+                                             : viewer->surfName());
+    if (auto* gv = viewer->graphicsView()) {
+        h.viewportW = gv->viewport()->width();
+        h.viewportH = gv->viewport()->height();
+    }
+    h.cacheSizeGB = _cacheSizeBytes / (1024ULL * 1024ULL * 1024ULL);
+    h.vc3dCommit = QString::fromStdString(ProjectInfo::RepositoryShortHash()).trimmed();
+    _benchRecorder->attach(viewer, std::move(h));
 }
 
 void CWindow::onSurfaceActivatedPreserveEditing(const QString& surfaceId, QuadSurface* surface)

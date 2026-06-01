@@ -183,13 +183,36 @@ auto main(int argc, char* argv[]) -> int
         "Enable VC3D render profiling logs.");
     parser.addOption(profileOption);
 
+    QCommandLineOption recordOption(
+        "record",
+        "Record a navigation camera-state timeline to the given JSON file.",
+        "file");
+    parser.addOption(recordOption);
+
+    QCommandLineOption replayOption(
+        "replay",
+        "Replay a recorded navigation timeline (implies --profile), then exit.",
+        "file");
+    parser.addOption(replayOption);
+
+    QCommandLineOption replayWarmOption(
+        "replay-warm",
+        "With --replay, run a discarded warm-up pass before the timed pass.");
+    parser.addOption(replayWarmOption);
+
     parser.process(app);
 
     if (parser.isSet(debugOption)) {
         SetDebugLoggingEnabled(true);
         SetLogLevel("debug");
     }
-    if (parser.isSet(profileOption)) {
+
+    RenderBenchOptions benchOptions;
+    benchOptions.recordPath = parser.value(recordOption).trimmed();
+    benchOptions.replayPath = parser.value(replayOption).trimmed();
+    benchOptions.replayWarm = parser.isSet(replayWarmOption);
+
+    if (parser.isSet(profileOption) || !benchOptions.replayPath.isEmpty()) {
         SetProfileLoggingEnabled(true);
         Logger()->info("[vc3d-profile] enabled");
     }
@@ -230,7 +253,7 @@ auto main(int argc, char* argv[]) -> int
         }
     }
 
-    CWindow aWin(cacheSizeGB);
+    CWindow aWin(cacheSizeGB, benchOptions);
     aWin.show();
     return QApplication::exec();
 }
