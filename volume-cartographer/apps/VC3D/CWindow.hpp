@@ -43,6 +43,15 @@ class Volume;
 class VolumePkg;
 class Surface;
 class QuadSurface;
+class RenderBenchRecorder;
+class RenderBenchReplay;
+
+// Render-bench profiling modes (see RenderBenchRecorder/RenderBenchReplay).
+struct RenderBenchOptions {
+    QString recordPath;   // non-empty: record camera-state timeline to this file
+    QString replayPath;   // non-empty: replay a recorded timeline then quit
+    bool replayWarm = false;
+};
 
 #define MAX_RECENT_VOLPKG 10
 
@@ -75,6 +84,7 @@ class CWindow : public QMainWindow
     Q_OBJECT
 
     friend class MenuActionController;
+    friend class RenderBenchReplay;
 
 public:
 signals:
@@ -93,7 +103,8 @@ public slots:
     void onFocusViewsRequested(uint64_t collectionId, uint64_t pointId);
 
 public:
-    explicit CWindow(size_t cacheSizeGB = CHUNK_CACHE_SIZE_GB);
+    explicit CWindow(size_t cacheSizeGB = CHUNK_CACHE_SIZE_GB,
+                     RenderBenchOptions benchOptions = {});
     ~CWindow(void);
 
     // Helper method to get the current volume path
@@ -174,6 +185,9 @@ private slots:
     void clearSurfaceSelection();
     void onSurfaceActivated(const QString& surfaceId, QuadSurface* surface);
     void onSurfaceActivatedPreserveEditing(const QString& surfaceId, QuadSurface* surface);
+    // Attaches the render-bench recorder once a volume+segment are active (no-op
+    // unless --record was passed and the recorder isn't already attached).
+    void maybeAttachBenchRecorder();
     void onSegmentationGrowthStatusChanged(bool running);
     void onSliceStepSizeChanged(int newSize);
     void onSurfaceWillBeDeleted(std::string name, std::shared_ptr<Surface> surf);
@@ -245,6 +259,10 @@ private:
     std::unique_ptr<SurfaceAffineTransformController> _surfaceAffineTransforms;
     // runner for command line tools
     CommandLineToolRunner* _cmdRunner;
+    // Render-bench profiling harness (record/replay navigation timelines).
+    RenderBenchOptions _benchOptions;
+    std::unique_ptr<RenderBenchRecorder> _benchRecorder;
+    std::unique_ptr<RenderBenchReplay> _benchReplay;
     bool _normalGridAvailable{false};
     QString _normalGridPath;
 
