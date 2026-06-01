@@ -3363,9 +3363,12 @@ void CWindow::maybeAttachBenchRecorder()
         return;
 
     RenderBenchRecorder::Header h;
-    h.volpkgPath = _state ? _state->vpkgPath() : QString();
-    h.volpkgIsRemote = h.volpkgPath.startsWith("s3://");
+    // The replay driver reopens via OpenVolume(), which wants the .volpkg.json
+    // file path (vpkg()->path()), not the parent directory vpkgPath() returns.
+    auto vpkg = _state ? _state->vpkg() : nullptr;
+    h.volpkgPath = vpkg ? QString::fromStdString(vpkg->path().string()) : QString();
     h.volumeId = QString::fromStdString(viewer->currentVolume()->id());
+    h.volpkgIsRemote = viewer->currentVolume()->isRemote();
     h.segmentId = QString::fromStdString(viewer->surfName() == "segmentation"
                                              ? _state->activeSurfaceId()
                                              : viewer->surfName());

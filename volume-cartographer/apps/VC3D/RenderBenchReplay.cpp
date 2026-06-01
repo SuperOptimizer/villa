@@ -20,10 +20,11 @@
 
 namespace
 {
-constexpr int kReadyTimeoutMs = 30000;   // wait for volume/surface to come up
-constexpr int kMaxFrameMs = 30000;       // hard ceiling per keyframe settle
-constexpr int kQuietWindowMs = 150;      // continuous quiescence before "settled"
-constexpr int kPumpSliceMs = 5;          // event-loop poll granularity
+constexpr int kReadyTimeoutMs = 60000;     // wait for volume/surface to come up
+constexpr int kMaxFrameMsLocal = 30000;    // per-keyframe settle ceiling, local data
+constexpr int kMaxFrameMsRemote = 180000;  // per-keyframe ceiling for S3 (slow/flaky net)
+constexpr int kQuietWindowMs = 150;        // continuous quiescence before "settled"
+constexpr int kPumpSliceMs = 5;            // event-loop poll granularity
 }  // namespace
 
 bool RenderBenchReplay::load(const QString& path)
@@ -46,6 +47,7 @@ bool RenderBenchReplay::load(const QString& path)
     _header.volpkgPath = h["volpkgPath"].toString();
     _header.volumeId = h["volumeId"].toString();
     _header.segmentId = h["segmentId"].toString();
+    _header.volpkgIsRemote = h["volpkgIsRemote"].toBool();
     const auto vp = h["viewport"].toObject();
     _header.viewportW = vp["width"].toInt();
     _header.viewportH = vp["height"].toInt();
@@ -201,6 +203,12 @@ void RenderBenchReplay::run(CWindow& window)
         }
     }
 
+    // Remote (S3) data streams chunks in over the network and can stall on a
+    // flaky connection; give it a much longer settle ceiling than local data.
+    const int maxFrameMs = _header.volpkgIsRemote ? kMaxFrameMsRemote : kMaxFrameMsLocal;
+    Logger()->info("[vc3d-replay] remote={} per-frame settle ceiling={}ms",
+                   _header.volpkgIsRemote, maxFrameMs);
+
     auto driveFrame = [&](int i, const Keyframe& kf, bool timed) {
         if (!viewer)
             return;
@@ -217,7 +225,7 @@ void RenderBenchReplay::run(CWindow& window)
         QElapsedTimer frameTimer;
         frameTimer.start();
         viewer->applyCameraState(cs, /*forceRender=*/true);
-        const bool settled = settleFrame(viewer, kMaxFrameMs, kQuietWindowMs);
+        const bool settled = settleFrame(viewer, maxFrameMs, kQuietWindowMs);
         if (timed) {
             const QSize fb = viewer->graphicsView()
                 ? viewer->graphicsView()->viewport()->size() : QSize(0, 0);

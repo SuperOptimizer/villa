@@ -22,6 +22,7 @@ public:
         QString segmentId;
         int viewportW = 0;
         int viewportH = 0;
+        bool volpkgIsRemote = false;
     };
 
     struct Keyframe {
