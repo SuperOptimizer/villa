@@ -23,10 +23,12 @@ if TEST_DIR not in sys.path:
 from snap_surf.map_fixture_io import _float_tif, _mask_tif, _write_json, _write_vector_dir, load_map_fixture
 from snap_surf.map_global import (
 	AffineMapModel,
+	BoundarySelfMapRuntime,
 	GlobalMapModel,
 	GlobalMapRuntime,
 	GlobalMapStageConfig,
 	GlobalMapConfig,
+	SelfMapRuntime,
 	_LrAutoscaleState,
 	_affine_from_seed_ext_quads,
 	_affine_multistart_candidates,
@@ -44,11 +46,16 @@ from snap_surf.map_global import (
 	_stage_loss_cfg,
 	_stage_station_weight,
 	_write_map_objs,
+	_self_map_objective_for_uv,
+	self_map_active_quads,
+	self_map_initial_uv,
+	self_map_pair_depths,
 	optimize_fixture,
 	parse_global_map_stage_item,
 	parse_global_map_config,
 	snap_surf_config_from_global_config,
 )
+from snap_surf.map_pyramid import _map_init_integrate_dyadic_uv_pyramid, _map_init_uv_pyr_from_dense
 from snap_surf import map_global_cli
 from snap_surf_test_utils import _normals_2d, _normals_3d, _plane_xyz
 
@@ -282,6 +289,302 @@ class SnapSurfMapGlobalTest(unittest.TestCase):
 		self.assertEqual(_stage_objective_level(stage, 3, ext_shape), 0)
 		self.assertEqual(_stage_objective_level(coarse, 3, ext_shape), 3)
 		self.assertEqual(_stage_objective_level(explicit, 3, ext_shape), 2)
+
+	def test_self_map_mode1_initializes_single_shifted_map(self) -> None:
+		uv_out = self_map_initial_uv(
+			mode="multi_wrap_full",
+			direction="out",
+			depth=1,
+			height=3,
+			width=6,
+			model_w_wraps=2.5,
+			device=torch.device("cpu"),
+			dtype=torch.float32,
+		)
+		uv_in = self_map_initial_uv(
+			mode="multi_wrap_full",
+			direction="in",
+			depth=1,
+			height=3,
+			width=6,
+			model_w_wraps=2.5,
+			device=torch.device("cpu"),
+			dtype=torch.float32,
+		)
+
+		self.assertEqual(tuple(uv_out.shape), (1, 3, 6, 2))
+		self.assertTrue(torch.allclose(uv_out[0, :, :, 0], torch.arange(3, dtype=torch.float32).view(3, 1).expand(3, 6)))
+		self.assertAlmostEqual(float(uv_out[0, 0, 0, 1]), 2.0)
+		self.assertAlmostEqual(float(uv_in[0, 0, 0, 1]), -2.0)
+		self.assertEqual(self_map_pair_depths("multi_wrap_full", "out", 1), ([0], [0]))
+
+	def test_self_map_mode2_initializes_identity_pairs(self) -> None:
+		uv = self_map_initial_uv(
+			mode="multi_wrap_d",
+			direction="out",
+			depth=4,
+			height=3,
+			width=5,
+			device=torch.device("cpu"),
+			dtype=torch.float32,
+		)
+
+		self.assertEqual(tuple(uv.shape), (3, 3, 5, 2))
+		self.assertEqual(self_map_pair_depths("multi_wrap_d", "out", 4), ([0, 1, 2], [1, 2, 3]))
+		self.assertEqual(self_map_pair_depths("multi_wrap_d", "in", 4), ([1, 2, 3], [0, 1, 2]))
+		hh = torch.arange(3, dtype=torch.float32).view(3, 1).expand(3, 5)
+		ww = torch.arange(5, dtype=torch.float32).view(1, 5).expand(3, 5)
+		self.assertTrue(torch.allclose(uv[2, :, :, 0], hh))
+		self.assertTrue(torch.allclose(uv[2, :, :, 1], ww))
+
+	def test_stacked_uv_pyramid_preserves_batch_axis(self) -> None:
+		uv = self_map_initial_uv(
+			mode="multi_wrap_d",
+			direction="out",
+			depth=3,
+			height=5,
+			width=5,
+			device=torch.device("cpu"),
+			dtype=torch.float32,
+		)
+		pyr = _map_init_uv_pyr_from_dense(uv, levels=3, factor=2)
+		recon = _map_init_integrate_dyadic_uv_pyramid(list(pyr), preserve_batch=True)
+
+		self.assertEqual(tuple(pyr[0].shape), (2, 2, 5, 5))
+		self.assertEqual(tuple(pyr[1].shape[:2]), (2, 2))
+		self.assertEqual(tuple(recon.shape), tuple(uv.shape))
+		self.assertTrue(torch.allclose(recon, uv, atol=1.0e-6))
+
+	def test_self_map_batched_objective_matches_pair_average(self) -> None:
+		D, H, W = 3, 4, 4
+		model_xyz = torch.stack([_plane_xyz(h=H, w=W, z=float(d)) for d in range(D)], dim=0)
+		model_normals = _normals_3d(D, H, W)
+		model_valid = torch.ones(D, H, W, dtype=torch.bool)
+		uv = self_map_initial_uv(
+			mode="multi_wrap_d",
+			direction="out",
+			depth=D,
+			height=H,
+			width=W,
+			device=torch.device("cpu"),
+			dtype=torch.float32,
+		)
+		cfg = snap_surf_config_from_global_config(
+			GlobalMapConfig(base={
+				"map_init": {
+					"subdiv": 1,
+					"w_vec_normal": 0.0,
+					"w_surface_normal": 0.0,
+					"w_smooth": 0.0,
+					"w_bend": 0.0,
+					"w_jac": 0.0,
+					"w_metric_smooth": 0.0,
+					"w_area_smooth": 0.0,
+					"w_z_lift": 0.0,
+					"max_sample_angle_deg": 180.0,
+					"max_step_neighbor_ratio": 0.0,
+				}
+			}, stages=())
+		)
+		active = self_map_active_quads(mode="multi_wrap_d", direction="out", model_valid=model_valid, uv=uv)
+
+		loss_b, _terms = _self_map_objective_for_uv(
+			uv=uv,
+			mode="multi_wrap_d",
+			direction="out",
+			model_xyz=model_xyz,
+			model_normals=model_normals,
+			model_valid=model_valid,
+			cfg=cfg,
+			level=0,
+			active_quad=active,
+		)
+		per_pair = []
+		for i in range(D - 1):
+			loss_i, _ = _self_map_objective_for_uv(
+				uv=uv[i:i + 1],
+				mode="multi_wrap_d",
+				direction="out",
+				model_xyz=model_xyz[i:i + 2],
+				model_normals=model_normals[i:i + 2],
+				model_valid=model_valid[i:i + 2],
+				cfg=cfg,
+				level=0,
+				active_quad=active[i:i + 1],
+			)
+			per_pair.append(loss_i)
+		expected = torch.stack(per_pair).mean()
+
+		self.assertTrue(torch.allclose(loss_b, expected, atol=1.0e-6))
+
+	def test_self_map_batched_snap_loss_matches_pair_average(self) -> None:
+		D, H, W = 3, 4, 4
+		model_xyz = torch.stack([_plane_xyz(h=H, w=W, z=float(d)) for d in range(D)], dim=0)
+		model_normals = _normals_3d(D, H, W)
+		model_valid = torch.ones(D, H, W, dtype=torch.bool)
+		runtime = SelfMapRuntime(mode="multi_wrap_d", direction="out")
+		loss_b, _lms, _masks, stats_b = runtime.snap_loss(
+			model_xyz=model_xyz,
+			model_normals=model_normals,
+			model_valid=model_valid,
+			offset=1.0,
+			data=None,
+		)
+		per_pair = []
+		samples = 0.0
+		for i in range(D - 1):
+			pair_runtime = SelfMapRuntime(mode="multi_wrap_d", direction="out")
+			loss_i, _lms_i, _masks_i, stats_i = pair_runtime.snap_loss(
+				model_xyz=model_xyz[i:i + 2],
+				model_normals=model_normals[i:i + 2],
+				model_valid=model_valid[i:i + 2],
+				offset=1.0,
+				data=None,
+			)
+			per_pair.append(loss_i)
+			samples += stats_i["snaps_map_snap_samples"]
+
+		expected = torch.stack(per_pair).mean()
+
+		self.assertTrue(torch.allclose(loss_b, expected, atol=1.0e-6))
+		self.assertEqual(stats_b["snaps_map_snap_samples"], samples)
+
+	def test_self_map_in_direction_uses_negative_signed_offset(self) -> None:
+		D, H, W = 2, 4, 4
+		model_xyz = torch.stack([_plane_xyz(h=H, w=W, z=float(d)) for d in range(D)], dim=0)
+		model_normals = _normals_3d(D, H, W)
+		model_valid = torch.ones(D, H, W, dtype=torch.bool)
+
+		for data in (None, _constant_grad_data(1.0)):
+			loss_out, _lms_o, _masks_o, stats_out = SelfMapRuntime(
+				mode="multi_wrap_d",
+				direction="out",
+			).snap_loss(
+				model_xyz=model_xyz,
+				model_normals=model_normals,
+				model_valid=model_valid,
+				offset=1.0,
+				data=data,
+			)
+			loss_in, _lms_i, _masks_i, stats_in = SelfMapRuntime(
+				mode="multi_wrap_d",
+				direction="in",
+			).snap_loss(
+				model_xyz=model_xyz,
+				model_normals=model_normals,
+				model_valid=model_valid,
+				offset=1.0,
+				data=data,
+			)
+
+			self.assertLess(float(loss_out.detach()), 1.0e-6)
+			self.assertLess(float(loss_in.detach()), 1.0e-6)
+			self.assertEqual(stats_out["snaps_map_snap_samples"], stats_in["snaps_map_snap_samples"])
+
+	def test_boundary_self_map_snap_loss_identity_maps_both_directions(self) -> None:
+		H, W = 4, 4
+		fixed_xyz = _plane_xyz(h=H, w=W, z=0.0)
+		new_xyz = _plane_xyz(h=H, w=W, z=1.0).unsqueeze(0)
+		fixed_normals = _normals_2d(H, W)
+		new_normals = _normals_3d(1, H, W)
+		fixed_valid = torch.ones(H, W, dtype=torch.bool)
+		new_valid = torch.ones(1, H, W, dtype=torch.bool)
+
+		loss_out, _lms_o, _masks_o, stats_out = BoundarySelfMapRuntime(
+			mode="multi_wrap_d",
+			direction="out",
+			fixed_xyz=fixed_xyz,
+			fixed_normals=fixed_normals,
+			fixed_valid=fixed_valid,
+		).snap_loss(
+			model_xyz=new_xyz,
+			model_normals=new_normals,
+			model_valid=new_valid,
+			offset=1.0,
+			data=None,
+		)
+		loss_in, _lms_i, _masks_i, stats_in = BoundarySelfMapRuntime(
+			mode="multi_wrap_d",
+			direction="in",
+			fixed_xyz=fixed_xyz,
+			fixed_normals=fixed_normals,
+			fixed_valid=fixed_valid,
+		).snap_loss(
+			model_xyz=new_xyz,
+			model_normals=new_normals,
+			model_valid=new_valid,
+			offset=1.0,
+			data=None,
+		)
+
+		self.assertLess(float(loss_out.detach()), 1.0e-6)
+		self.assertLess(float(loss_in.detach()), 1.0e-6)
+		self.assertEqual(stats_out["snaps_map_snap_samples"], stats_in["snaps_map_snap_samples"])
+		self.assertGreater(stats_out["snaps_map_snap_samples"], 0.0)
+
+	def test_boundary_self_map_in_direction_grads_trainable_source_only(self) -> None:
+		H, W = 4, 4
+		fixed_xyz = _plane_xyz(h=H, w=W, z=0.0).requires_grad_(True)
+		new_xyz = _plane_xyz(h=H, w=W, z=1.25).unsqueeze(0).detach().requires_grad_(True)
+		runtime = BoundarySelfMapRuntime(
+			mode="multi_wrap_d",
+			direction="in",
+			fixed_xyz=fixed_xyz,
+			fixed_normals=_normals_2d(H, W),
+			fixed_valid=torch.ones(H, W, dtype=torch.bool),
+		)
+
+		loss, _lms, _masks, stats = runtime.snap_loss(
+			model_xyz=new_xyz,
+			model_normals=_normals_3d(1, H, W),
+			model_valid=torch.ones(1, H, W, dtype=torch.bool),
+			offset=1.0,
+			data=None,
+		)
+		loss.backward()
+
+		self.assertGreater(stats["snaps_map_snap_samples"], 0.0)
+		self.assertIsNotNone(new_xyz.grad)
+		self.assertGreater(float(new_xyz.grad.detach().abs().sum()), 0.0)
+		self.assertIsNone(fixed_xyz.grad)
+
+	def test_boundary_self_map_runtime_serializes_like_self_map_state(self) -> None:
+		H, W = 5, 5
+		runtime = BoundarySelfMapRuntime(
+			mode="multi_wrap_d",
+			direction="out",
+			fixed_xyz=_plane_xyz(h=H, w=W, z=0.0),
+			fixed_normals=_normals_2d(H, W),
+			fixed_valid=torch.ones(H, W, dtype=torch.bool),
+		)
+		stage = GlobalMapStageConfig(
+			steps=0,
+			lr=0.01,
+			params=("map_uv_ms",),
+			args={"startup_timing": False},
+		)
+
+		stats = runtime.run_stage(
+			stage=stage,
+			model_xyz=_plane_xyz(h=H, w=W, z=1.0).unsqueeze(0),
+			model_normals=_normals_3d(1, H, W),
+			model_valid=torch.ones(1, H, W, dtype=torch.bool),
+		)
+
+		self.assertIsNotNone(runtime.global_model)
+		assert runtime.global_model is not None
+		state = {
+			"preserve_batch": bool(runtime.global_model.preserve_batch),
+			"map_uv_ms": [p.detach().cpu() for p in runtime.global_model.map_uv_ms],
+			"mode": runtime.mode,
+			"direction": runtime.direction,
+			"steps_run": runtime.steps_run,
+		}
+		self.assertTrue(state["preserve_batch"])
+		self.assertEqual(state["mode"], "multi_wrap_d")
+		self.assertEqual(state["direction"], "out")
+		self.assertEqual(state["map_uv_ms"][0].shape[0], 1)
+		self.assertIn("snaps_map_loss", stats)
 
 	def test_runtime_map_init_keeps_z_lift_unless_disabled(self) -> None:
 		h, w = 5, 5
