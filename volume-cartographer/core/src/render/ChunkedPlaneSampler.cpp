@@ -507,34 +507,6 @@ void addStats(ChunkedPlaneSampler::Stats& dst, const ChunkedPlaneSampler::Stats&
     dst.errorChunks += src.errorChunks;
 }
 
-int countUncovered(const cv::Mat_<uint8_t>& coverage)
-{
-    int count = 0;
-    for (int y = 0; y < coverage.rows; ++y) {
-        const uint8_t* row = coverage.ptr<uint8_t>(y);
-        for (int x = 0; x < coverage.cols; ++x)
-            if (!row[x])
-                ++count;
-    }
-    return count;
-}
-
-int countSampleableCoords(const cv::Mat_<uint8_t>& coverage,
-                          const cv::Mat_<cv::Vec3f>& coords)
-{
-    const int h = std::min(coverage.rows, coords.rows);
-    const int w = std::min(coverage.cols, coords.cols);
-    int count = 0;
-    for (int y = 0; y < h; ++y) {
-        const uint8_t* coverageRow = coverage.ptr<uint8_t>(y);
-        const cv::Vec3f* coordRow = coords.ptr<cv::Vec3f>(y);
-        for (int x = 0; x < w; ++x)
-            if (!coverageRow[x] && !surfaceSentinel(coordRow[x]))
-                ++count;
-    }
-    return count;
-}
-
 } // namespace
 
 std::vector<ChunkKey> ChunkedPlaneSampler::collectPlaneDependencies(
@@ -898,91 +870,5 @@ ChunkedPlaneSampler::Stats ChunkedPlaneSampler::sampleCoordsLevel(
     return sampleCoordsLevelImpl(array, level, coords, out, coverage, options, false);
 }
 
-ChunkedPlaneSampler::Stats ChunkedPlaneSampler::samplePlaneFineToCoarse(
-    IChunkedArray& array,
-    int startLevel,
-    const cv::Vec3f& origin,
-    const cv::Vec3f& vxStep,
-    const cv::Vec3f& vyStep,
-    cv::Mat_<uint8_t>& out,
-    cv::Mat_<uint8_t>& coverage,
-    const Options& options)
-{
-    Stats total;
-    int remaining = countUncovered(coverage);
-    for (int level = std::max(0, startLevel); level < array.numLevels(); ++level) {
-        Stats stats = samplePlaneLevel(array, level, origin, vxStep, vyStep,
-                                       out, coverage, options);
-        addStats(total, stats);
-        remaining -= stats.coveredPixels;
-        if (remaining <= 0)
-            break;
-    }
-    return total;
-}
-
-ChunkedPlaneSampler::Stats ChunkedPlaneSampler::sampleCoordsFineToCoarse(
-    IChunkedArray& array,
-    int startLevel,
-    const cv::Mat_<cv::Vec3f>& coords,
-    cv::Mat_<uint8_t>& out,
-    cv::Mat_<uint8_t>& coverage,
-    const Options& options)
-{
-    Stats total;
-    int remaining = countSampleableCoords(coverage, coords);
-    for (int level = std::max(0, startLevel); level < array.numLevels(); ++level) {
-        Stats stats = sampleCoordsLevel(array, level, coords, out, coverage, options);
-        addStats(total, stats);
-        remaining -= stats.coveredPixels;
-        if (remaining <= 0)
-            break;
-    }
-    return total;
-}
-
-ChunkedPlaneSampler::Stats ChunkedPlaneSampler::samplePlaneCoarseToFine(
-    IChunkedArray& array,
-    int finestLevel,
-    const cv::Vec3f& origin,
-    const cv::Vec3f& vxStep,
-    const cv::Vec3f& vyStep,
-    cv::Mat_<uint8_t>& out,
-    cv::Mat_<uint8_t>& coverage,
-    const Options& options)
-{
-    Stats total;
-    if (array.numLevels() <= 0)
-        return total;
-
-    const int firstLevel = std::clamp(finestLevel, 0, array.numLevels() - 1);
-    for (int level = array.numLevels() - 1; level >= firstLevel; --level) {
-        Stats stats = samplePlaneLevelImpl(array, level, origin, vxStep, vyStep,
-                                           out, coverage, options, true);
-        addStats(total, stats);
-    }
-    return total;
-}
-
-ChunkedPlaneSampler::Stats ChunkedPlaneSampler::sampleCoordsCoarseToFine(
-    IChunkedArray& array,
-    int finestLevel,
-    const cv::Mat_<cv::Vec3f>& coords,
-    cv::Mat_<uint8_t>& out,
-    cv::Mat_<uint8_t>& coverage,
-    const Options& options)
-{
-    Stats total;
-    if (array.numLevels() <= 0)
-        return total;
-
-    const int firstLevel = std::clamp(finestLevel, 0, array.numLevels() - 1);
-    for (int level = array.numLevels() - 1; level >= firstLevel; --level) {
-        Stats stats = sampleCoordsLevelImpl(array, level, coords, out, coverage,
-                                            options, true);
-        addStats(total, stats);
-    }
-    return total;
-}
 
 } // namespace vc::render

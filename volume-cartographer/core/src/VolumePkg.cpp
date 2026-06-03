@@ -77,6 +77,20 @@ bool isSingleZarrVolumeDir(const fs::path& dir)
     return false;
 }
 
+// A local volume-compressor archive: either a .vca file directly, or a directory
+// that contains exactly one .vca (mirrors Volume::findVcaArchive resolution).
+bool isVcaLocation(const fs::path& path)
+{
+    std::error_code ec;
+    if (fs::is_regular_file(path, ec) && path.extension() == ".vca") return true;
+    if (fs::is_directory(path, ec)) {
+        for (const auto& e : fs::directory_iterator(path, ec)) {
+            if (e.is_regular_file() && e.path().extension() == ".vca") return true;
+        }
+    }
+    return false;
+}
+
 bool isSegmentDir(const fs::path& dir)
 {
     if (!fs::is_directory(dir)) return false;
@@ -292,6 +306,8 @@ std::string validateLocation(Category category, const std::string& location)
     const auto path = resolveLocalPath(location);
     std::error_code ec;
     if (!fs::exists(path, ec)) return "Path does not exist: " + path.string();
+    // A .vca volume may be a plain file (not a directory); accept it here.
+    if (category == Category::Volumes && isVcaLocation(path)) return {};
     if (!fs::is_directory(path, ec)) return "Path is not a directory: " + path.string();
 
     switch (category) {
@@ -904,7 +920,9 @@ void VolumePkg::resolveVolumeEntry(const vc::project::Entry& e)
             Logger()->warn("Failed to load volume '{}': {}", vp.string(), ex.what());
         }
     };
-    if (isSingleZarrVolumeDir(path)) {
+    if (isVcaLocation(path)) {
+        loadOne(path);  // Volume::loadMetadata resolves the .vca within
+    } else if (isSingleZarrVolumeDir(path)) {
         loadOne(path);
     } else {
         for (const auto& child : immediateSubdirs(path)) {

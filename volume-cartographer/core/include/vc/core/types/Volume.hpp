@@ -268,6 +268,11 @@ protected:
     PyramidPolicy::Reduction pyramidReduction_ = PyramidPolicy::Reduction::Mean;
     void zarrOpen();
 
+    // Local volume-compressor (.vca) archive: set in loadMetadata() when the
+    // volume path resolves to a .vca file; empty for zarr/remote volumes.
+    std::filesystem::path vcaPath_;
+    void vcaOpen();
+
     // Cache ownership
     mutable std::shared_ptr<vc::render::ChunkCache> chunkedCache_;
     mutable std::mutex cacheMutex_;

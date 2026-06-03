@@ -81,41 +81,6 @@ public:
                                    cv::Mat_<uint8_t>& coverage,
                                    const Options& options = Options());
 
-    // Fine-to-coarse fallback. Finer covered pixels are never overwritten by
-    // coarser levels.
-    static Stats samplePlaneFineToCoarse(IChunkedArray& array,
-                                         int startLevel,
-                                         const cv::Vec3f& origin,
-                                         const cv::Vec3f& vxStep,
-                                         const cv::Vec3f& vyStep,
-                                         cv::Mat_<uint8_t>& out,
-                                         cv::Mat_<uint8_t>& coverage,
-                                         const Options& options = Options());
-
-    static Stats sampleCoordsFineToCoarse(IChunkedArray& array,
-                                          int startLevel,
-                                          const cv::Mat_<cv::Vec3f>& coords,
-                                          cv::Mat_<uint8_t>& out,
-                                          cv::Mat_<uint8_t>& coverage,
-                                          const Options& options = Options());
-
-    // Coarse-to-fine progressive render. Coarser levels provide the first
-    // available image; ready finer levels overwrite those pixels.
-    static Stats samplePlaneCoarseToFine(IChunkedArray& array,
-                                         int finestLevel,
-                                         const cv::Vec3f& origin,
-                                         const cv::Vec3f& vxStep,
-                                         const cv::Vec3f& vyStep,
-                                         cv::Mat_<uint8_t>& out,
-                                         cv::Mat_<uint8_t>& coverage,
-                                         const Options& options = Options());
-
-    static Stats sampleCoordsCoarseToFine(IChunkedArray& array,
-                                          int finestLevel,
-                                          const cv::Mat_<cv::Vec3f>& coords,
-                                          cv::Mat_<uint8_t>& out,
-                                          cv::Mat_<uint8_t>& coverage,
-                                          const Options& options = Options());
 };
 
 } // namespace vc::render

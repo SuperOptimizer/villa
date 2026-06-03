@@ -166,63 +166,6 @@ TEST_CASE("sampleCoordsLevel: explicit coords mode runs without crashing")
     CHECK(stats.errorChunks == 0);
 }
 
-TEST_CASE("samplePlaneFineToCoarse: falls back to coarse when fine is missing")
-{
-    // Fine level (0) missing; coarse level (1) provides the value.
-    struct FineMissingArray : AllDataArray {
-        using AllDataArray::AllDataArray;
-        ChunkResult tryGetChunk(int level, int iz, int iy, int ix) override
-        {
-            if (level == 0) {
-                ChunkResult r;
-                r.status = ChunkStatus::Missing;
-                r.dtype = vc::render::ChunkDtype::UInt8;
-                r.shape = shape(0);
-                return r;
-            }
-            return AllDataArray::tryGetChunk(level, iz, iy, ix);
-        }
-        ChunkResult getChunkBlocking(int level, int iz, int iy, int ix) override
-        {
-            return tryGetChunk(level, iz, iy, ix);
-        }
-    };
-    FineMissingArray a(0, 88);
-    cv::Mat_<uint8_t> out(2, 2, uint8_t{0});
-    cv::Mat_<uint8_t> coverage(2, 2, uint8_t{0});
-    auto stats = ChunkedPlaneSampler::samplePlaneFineToCoarse(
-        a, /*startLevel=*/0,
-        cv::Vec3f(0, 0, 0), cv::Vec3f(1, 0, 0), cv::Vec3f(0, 1, 0),
-        out, coverage, {vc::Sampling::Nearest, 2});
-    CHECK(stats.coveredPixels > 0);
-    CHECK(out(0, 0) == 88);
-}
-
-TEST_CASE("samplePlaneCoarseToFine: paints coarse first, overwrites with fine")
-{
-    AllDataArray a(/*lvl0=*/55, /*lvl1=*/22);
-    cv::Mat_<uint8_t> out(2, 2, uint8_t{0});
-    cv::Mat_<uint8_t> coverage(2, 2, uint8_t{0});
-    ChunkedPlaneSampler::samplePlaneCoarseToFine(
-        a, /*finestLevel=*/0,
-        cv::Vec3f(0, 0, 0), cv::Vec3f(1, 0, 0), cv::Vec3f(0, 1, 0),
-        out, coverage, {vc::Sampling::Nearest, 2});
-    // Fine value should win.
-    CHECK(out(0, 0) == 55);
-}
-
-TEST_CASE("sampleCoords coarse/fine variants run without crashing")
-{
-    AllDataArray a(1, 2);
-    auto coords = axisAlignedCoords(2, 2);
-    cv::Mat_<uint8_t> out1(2, 2, uint8_t{0}), cov1(2, 2, uint8_t{0});
-    auto s1 = ChunkedPlaneSampler::sampleCoordsCoarseToFine(a, 0, coords, out1, cov1);
-    CHECK(s1.errorChunks == 0);
-    cv::Mat_<uint8_t> out2(2, 2, uint8_t{0}), cov2(2, 2, uint8_t{0});
-    auto s2 = ChunkedPlaneSampler::sampleCoordsFineToCoarse(a, 0, coords, out2, cov2);
-    CHECK(s2.errorChunks == 0);
-}
-
 TEST_CASE("Options round-trip")
 {
     ChunkedPlaneSampler::Options o(vc::Sampling::Trilinear, 64);

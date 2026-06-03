@@ -37,6 +37,7 @@ add_library(vc_core
         src/render/Colormaps.cpp
         src/render/PostProcess.cpp
         src/render/ZarrChunkFetcher.cpp
+        src/render/VcaChunkFetcher.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/../apps/src/vc_merge_tifxyz_grid.cpp
         ${CMAKE_CURRENT_BINARY_DIR}/Version.cpp
 )
@@ -59,10 +60,11 @@ target_link_libraries(vc_core
         CURL::libcurl
 )
 
-# utils header-only library + vendored c3d codec.
+# utils header-only library + vendored c3d / vc codecs.
 target_link_libraries(vc_core PUBLIC
     $<BUILD_INTERFACE:utils>
     $<BUILD_INTERFACE:utils_c3d_codec>
+    $<BUILD_INTERFACE:vc>
 )
 target_link_libraries(vc_core PRIVATE
     Blosc::blosc
