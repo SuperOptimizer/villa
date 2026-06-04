@@ -5,6 +5,7 @@ import math
 import os
 import time
 from dataclasses import dataclass, replace
+from pathlib import Path
 
 import torch
 
@@ -153,6 +154,7 @@ MAP_LOSS_NAMES = (
 	"map_dist",
 	"map_vec_normal",
 	"map_surface_normal",
+	"map_turn",
 	"map_smooth",
 	"map_bend",
 	"map_jac",
@@ -165,6 +167,7 @@ MAP_STAGE_LOSS_TO_GLOBAL = {
 	"dist": "map_dist",
 	"vec": "map_vec_normal",
 	"norm": "map_surface_normal",
+	"turn": "map_turn",
 	"smooth": "map_smooth",
 	"bend": "map_bend",
 	"jac": "map_jac",
@@ -401,6 +404,7 @@ lambda_global: dict[str, float] = {
 	"map_dist": 1.0,
 	"map_vec_normal": 1.0,
 	"map_surface_normal": 1.0,
+	"map_turn": 10.0,
 	"map_smooth": 0.05,
 	"map_bend": 0.01,
 	"map_jac": 1.0,
@@ -620,6 +624,7 @@ def _global_map_args_from_eff(args: dict, *, base: dict[str, float], eff: dict[s
 		"w_dist": float(base.get("map_dist", 0.0)),
 		"w_vec_normal": float(base.get("map_vec_normal", 0.0)),
 		"w_surface_normal": float(base.get("map_surface_normal", 0.0)),
+		"map_turn": float(base.get("map_turn", 0.0)),
 		"w_smooth": float(base.get("map_smooth", 0.0)),
 		"w_bend": float(base.get("map_bend", 0.0)),
 		"w_jac": float(base.get("map_jac", 0.0)),
@@ -644,6 +649,80 @@ def _global_map_stage_from_opt_settings(*, name: str, opt_cfg: OptSettings, args
 		w_fac=_global_map_w_fac_from_eff(base=opt_cfg.base_eff, eff=opt_cfg.eff),
 		args=_global_map_args_from_eff(args, base=opt_cfg.base_eff, eff=opt_cfg.eff),
 	)
+
+
+def global_map_config_from_stages_cfg(cfg: dict) -> snap_surf_map_global.GlobalMapConfig:
+	stages = load_stages_cfg(cfg)
+	map_stages: list[snap_surf_map_global.GlobalMapStageConfig] = []
+	base_eff: dict[str, float] | None = None
+
+	def _collect(raw_stages: list[Stage]) -> None:
+		nonlocal base_eff
+		for stage in raw_stages:
+			if stage.children:
+				raise ValueError("global map fixture configs do not support nested/expand stages")
+			if stage.global_opt is None:
+				continue
+			if stage.global_opt.kind != "map":
+				raise ValueError(
+					f"global map fixture config stage '{stage.name}' is not a map stage; "
+					"fixture configs must contain only map optimization stages"
+				)
+			if base_eff is None:
+				base_eff = dict(stage.global_opt.base_eff)
+			map_stages.append(_global_map_stage_from_opt_settings(
+				name=stage.name,
+				opt_cfg=stage.global_opt,
+				args=stage.global_opt.args or {},
+			))
+
+	_collect(stages)
+	if not map_stages:
+		raise ValueError("global map fixture config contains no map optimization stages")
+	return snap_surf_map_global.GlobalMapConfig(base=dict(base_eff or {}), stages=tuple(map_stages))
+
+
+def load_global_map_config(path: str | Path) -> snap_surf_map_global.GlobalMapConfig:
+	try:
+		with open(path, "r", encoding="utf-8") as f:
+			cfg = json.load(f)
+	except json.JSONDecodeError as exc:
+		raise ValueError(
+			f"stages_json: invalid JSON in {path}: line {exc.lineno}, column {exc.colno}: {exc.msg}"
+		) from exc
+	if not isinstance(cfg, dict):
+		raise ValueError("stages_json: expected an object")
+	return global_map_config_from_stages_cfg(cfg)
+
+
+def _resolve_snap_surf_map_fixture_export_args(args: dict, *, out_dir: str | None) -> dict:
+	if not isinstance(args, dict):
+		return args
+	if out_dir is None:
+		return dict(args)
+	out = dict(args)
+	base = Path(out_dir)
+
+	def _resolve_path(value):
+		if value in (None, "", False):
+			return value
+		path = Path(str(value))
+		return str(path if path.is_absolute() else base / path)
+
+	for key in ("fixture_export_dir", "map_fixture_export_dir"):
+		if key in out:
+			out[key] = _resolve_path(out[key])
+	for key in ("export_fixture", "fixture_export"):
+		raw = out.get(key)
+		if isinstance(raw, str):
+			out[key] = _resolve_path(raw)
+		elif isinstance(raw, dict):
+			nested = dict(raw)
+			for path_key in ("dir", "out_dir", "path"):
+				if path_key in nested:
+					nested[path_key] = _resolve_path(nested[path_key])
+			out[key] = nested
+	return out
 
 
 def _lr_scalespace(*, lr: float | list[float], scale_i: int) -> float:
@@ -1994,11 +2073,11 @@ def optimize(
 			if self_map_mode == "off" and not getattr(model, "_ext_surfaces", None):
 				raise ValueError("snap_surf global map stages require external_surfaces")
 			map_stage = _global_map_stage_from_opt_settings(name=stage.name, opt_cfg=opt_cfg, args=stage_args)
-			_map_status_rows = 0
-			_map_status_width = max(16, len(f"{label} {max(0, opt_cfg.steps)}/{max(0, opt_cfg.steps)}") + 2)
-			_map_wall = time.perf_counter()
-			_map_last_step = 0
-			_map_legend_printed = False
+			map_stage = replace(
+				map_stage,
+				args=_resolve_snap_surf_map_fixture_export_args(map_stage.args, out_dir=out_dir),
+			)
+			_map_status_printer = snap_surf_map_global.MapRuntimeStatusPrinter(label=label, total_steps=max(0, opt_cfg.steps))
 			_map_auto_stop_info: dict[str, float] = {}
 
 			def _map_auto_stop_fn(*, history: list[float], step: int) -> bool:
@@ -2012,61 +2091,12 @@ def optimize(
 				return True
 
 			def _print_map_status(*, step: int, total: int, stats: dict[str, float]) -> None:
-				nonlocal _map_status_rows, _map_wall, _map_last_step, _map_legend_printed
-				if not _map_legend_printed:
-					print_progress_legend(
-						prefix="[optimizer]",
-						items=[
-							("step", "stage step"),
-							("sm_los", "map objective loss"),
-							("sm_dst", "map distance loss"),
-							("sm_vec", "map vector-normal loss"),
-							("sm_nrm", "map normal alignment loss"),
-							("sm_trn", "lifted z-heading loss"),
-							("sm_ts", "valid lifted z-heading samples"),
-							("sm_smp", "valid map samples"),
-							("sm_bad", "map samples rejected by validity/limits"),
-							("sm_uvb", "active quads with non-finite UV"),
-							("sm_mbd", "active quads rejected by model/sample checks"),
-							("lr", "effective map optimizer learning rate"),
-							("lr_scl", "map LR autoscale factor"),
-							("it/s", "optimizer it/s"),
-						],
-					)
-					_map_legend_printed = True
-				if _map_status_rows % 20 == 0:
-					print(
-						f"{'step':>{_map_status_width}s} {'sm_los':>8s} {'sm_dst':>8s} "
-						f"{'sm_vec':>8s} {'sm_nrm':>8s} {'sm_trn':>8s} {'sm_ts':>8s} "
-						f"{'sm_smp':>8s} {'sm_bad':>8s} {'sm_uvb':>8s} {'sm_mbd':>8s} "
-						f"{'lr':>8s} {'lr_scl':>8s} {'it/s':>5s}",
-						flush=True,
-					)
-				now = time.perf_counter()
-				its = None
-				if int(step) > int(_map_last_step):
-					its = (int(step) - int(_map_last_step)) / max(1.0e-9, now - _map_wall)
-					_map_wall = now
-					_map_last_step = int(step)
-				its_str = f"{its:5.1f}" if its is not None else f"{'':>5s}"
-				print(
-					f"{f'{label} {int(step)}/{int(total)}':>{_map_status_width}s} "
-					f"{format_progress_value(float(stats.get('snaps_map_loss', 0.0))):>8s} "
-					f"{format_progress_value(float(stats.get('snaps_map_dist', 0.0))):>8s} "
-					f"{format_progress_value(float(stats.get('snaps_map_vec', 0.0))):>8s} "
-					f"{format_progress_value(float(stats.get('snaps_map_norm', 0.0))):>8s} "
-					f"{format_progress_value(float(stats.get('snaps_map_turn', 0.0))):>8s} "
-					f"{format_progress_value(float(stats.get('snaps_map_turn_smp', 0.0))):>8s} "
-					f"{format_progress_value(float(stats.get('snaps_map_samples', 0.0))):>8s} "
-					f"{format_progress_value(float(stats.get('snaps_map_sample_bad', 0.0))):>8s} "
-					f"{format_progress_value(float(stats.get('snaps_map_uvbad', 0.0))):>8s} "
-					f"{format_progress_value(float(stats.get('snaps_map_model_bad', 0.0))):>8s} "
-					f"{format_progress_value(float(stats.get('snaps_map_lr', opt_cfg.lr if isinstance(opt_cfg.lr, (int, float)) else _lr_last(opt_cfg.lr)))):>8s} "
-					f"{format_progress_value(float(stats.get('snaps_map_lr_autoscale', 1.0))):>8s} "
-					f"{its_str}",
-					flush=True,
+				_map_status_printer.print(
+					step=int(step),
+					total=int(total),
+					stats=stats,
+					fallback_lr=float(opt_cfg.lr if isinstance(opt_cfg.lr, (int, float)) else _lr_last(opt_cfg.lr)),
 				)
-				_map_status_rows += 1
 				if progress_fn is not None:
 					_stage_total = max(1, int(total))
 					_stage_step = min(max(0, int(step)), _stage_total)
@@ -2170,6 +2200,10 @@ def optimize(
 				name=raw_map_name,
 				opt_cfg=map_opt_cfg,
 				args=map_opt_cfg.args or {},
+			)
+			snap_surf_map_opt_stage = replace(
+				snap_surf_map_opt_stage,
+				args=_resolve_snap_surf_map_fixture_export_args(snap_surf_map_opt_stage.args, out_dir=out_dir),
 			)
 
 		snap_surf_map_weight = _need_term("snap_surf_map", stage_eff)
@@ -2725,10 +2759,14 @@ def optimize(
 				"snaps_map_snap_samples",
 				"snaps_map_loss",
 				"snaps_map_dist",
-				"snaps_map_vec",
-				"snaps_map_norm",
-				"snaps_map_samples",
-			}
+					"snaps_map_vec",
+					"snaps_map_norm",
+					"snaps_map_smooth",
+					"snaps_map_bend",
+					"snaps_map_metric_smooth",
+					"snaps_map_area_smooth",
+					"snaps_map_samples",
+				}
 			def _show_status_key(k: str) -> bool:
 				if not str(k).startswith("snaps_map_"):
 					return True
