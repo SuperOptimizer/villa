@@ -148,6 +148,113 @@ void centerViewerOnSurfacePointForNavigation(VolumeViewerBase* viewer, const cv:
     viewer->centerOnSurfacePoint(position, !isChunkedViewer(viewer));
 }
 
+struct SurfaceFocusPoint {
+    cv::Vec3f world{0, 0, 0};
+    cv::Vec3f ptr{0, 0, 0};
+    int row = -1;
+    int col = -1;
+};
+
+bool isValidSurfacePoint(const cv::Vec3f& point)
+{
+    return point[0] != -1.0f && point[1] != -1.0f && point[2] != -1.0f
+        && std::isfinite(point[0]) && std::isfinite(point[1]) && std::isfinite(point[2]);
+}
+
+std::optional<SurfaceFocusPoint> focusPointAtGrid(QuadSurface& surface, int row, int col)
+{
+    const cv::Mat_<cv::Vec3f>* points = surface.rawPointsPtr();
+    if (!points || row < 0 || row >= points->rows || col < 0 || col >= points->cols) {
+        return std::nullopt;
+    }
+    if (row <= 0 || col <= 0 || row >= points->rows - 1 || col >= points->cols - 1) {
+        return std::nullopt;
+    }
+    if (!surface.isQuadValid(row, col)) {
+        return std::nullopt;
+    }
+    const cv::Vec3f normal = surface.gridNormal(row, col);
+    if (!std::isfinite(normal[0]) || !std::isfinite(normal[1]) || !std::isfinite(normal[2])) {
+        return std::nullopt;
+    }
+
+    const cv::Vec3f& point = (*points)(row, col);
+    if (!isValidSurfacePoint(point)) {
+        return std::nullopt;
+    }
+
+    const cv::Vec3f center = surface.center();
+    const cv::Vec2f scale = surface.scale();
+    return SurfaceFocusPoint{
+        point,
+        cv::Vec3f(static_cast<float>(col) - center[0] * scale[0],
+                  static_cast<float>(row) - center[1] * scale[1],
+                  0.0f),
+        row,
+        col,
+    };
+}
+
+std::optional<SurfaceFocusPoint> findSegmentFocusPoint(QuadSurface& surface)
+{
+    surface.ensureLoaded();
+    const cv::Mat_<cv::Vec3f>* points = surface.rawPointsPtr();
+    if (!points || points->empty()) {
+        return std::nullopt;
+    }
+
+    const cv::Vec2f centerGrid = surface.ptrToGrid({0, 0, 0});
+    const int centerRow = std::clamp(static_cast<int>(std::lround(centerGrid[1])), 0, points->rows - 1);
+    const int centerCol = std::clamp(static_cast<int>(std::lround(centerGrid[0])), 0, points->cols - 1);
+
+    if (auto focus = focusPointAtGrid(surface, centerRow, centerCol)) {
+        return focus;
+    }
+
+    const int maxHorizontalRadius = std::max(centerCol, points->cols - 1 - centerCol);
+    for (int radius = 1; radius <= maxHorizontalRadius; ++radius) {
+        if (auto focus = focusPointAtGrid(surface, centerRow, centerCol - radius)) {
+            return focus;
+        }
+        if (auto focus = focusPointAtGrid(surface, centerRow, centerCol + radius)) {
+            return focus;
+        }
+    }
+
+    const int maxRadius = std::max({centerRow, centerCol,
+                                    points->rows - 1 - centerRow,
+                                    points->cols - 1 - centerCol});
+    for (int radius = 1; radius <= maxRadius; ++radius) {
+        const int rowMin = std::max(0, centerRow - radius);
+        const int rowMax = std::min(points->rows - 1, centerRow + radius);
+        const int colMin = std::max(0, centerCol - radius);
+        const int colMax = std::min(points->cols - 1, centerCol + radius);
+
+        for (int col = colMin; col <= colMax; ++col) {
+            if (auto focus = focusPointAtGrid(surface, rowMin, col)) {
+                return focus;
+            }
+            if (rowMax != rowMin) {
+                if (auto focus = focusPointAtGrid(surface, rowMax, col)) {
+                    return focus;
+                }
+            }
+        }
+        for (int row = rowMin + 1; row < rowMax; ++row) {
+            if (auto focus = focusPointAtGrid(surface, row, colMin)) {
+                return focus;
+            }
+            if (colMax != colMin) {
+                if (auto focus = focusPointAtGrid(surface, row, colMax)) {
+                    return focus;
+                }
+            }
+        }
+    }
+
+    return std::nullopt;
+}
+
 void ensureDockWidgetFeatures(QDockWidget* dock)
 {
     if (!dock) {
@@ -1322,6 +1429,7 @@ void CWindow::setVolume(std::shared_ptr<Volume> newvol)
             poi->p[1] = std::clamp(poi->p[1], y0, y1);
             poi->p[2] = std::clamp(poi->p[2], z0, z1);
         }
+        poi->surfacePtr.reset();
 
         _state->setPOI("focus", poi);
     }
@@ -1581,6 +1689,7 @@ bool CWindow::centerFocusAt(const cv::Vec3f& position, const cv::Vec3f& normal, 
     } else if (focus->surfaceId.empty()) {
         focus->surfaceId = "segmentation";
     }
+    focus->surfacePtr.reset();
 
     focus->suppressTransientPlaneIntersections = true;
     _state->setPOI("focus", focus);
@@ -1914,16 +2023,15 @@ void CWindow::CreateWidgets(void)
                 auto surf = _state->vpkg()->getSurface(segmentId.toStdString());
                 auto* quad = dynamic_cast<QuadSurface*>(surf.get());
                 if (!quad) return;
-                quad->ensureLoaded();
-                const cv::Vec3f worldCenter = quad->coord({0, 0, 0}, {0, 0, 0});
-                if (!std::isfinite(worldCenter[0]) || worldCenter[0] < 0.0f) return;
-                cv::Vec3f normal = quad->normal({0, 0, 0}, {0, 0, 0});
+                const auto focusPoint = findSegmentFocusPoint(*quad);
+                if (!focusPoint) return;
+                cv::Vec3f normal = quad->normal(focusPoint->ptr, {0, 0, 0});
                 if (!std::isfinite(normal[0]) || !std::isfinite(normal[1]) || !std::isfinite(normal[2])) {
                     normal = cv::Vec3f(0, 0, 1);
                 }
                 if (auto vol = _state->currentVolume()) {
                     auto [w, h, d] = vol->shapeXyz();
-                    cv::Vec3f clamped = worldCenter;
+                    cv::Vec3f clamped = focusPoint->world;
                     clamped[0] = std::clamp(clamped[0], 0.0f, static_cast<float>(w - 1));
                     clamped[1] = std::clamp(clamped[1], 0.0f, static_cast<float>(h - 1));
                     clamped[2] = std::clamp(clamped[2], 0.0f, static_cast<float>(d - 1));
@@ -1931,6 +2039,7 @@ void CWindow::CreateWidgets(void)
                     poi->p = clamped;
                     poi->n = normal;
                     poi->surfaceId = segmentId.toStdString();
+                    poi->surfacePtr = focusPoint->ptr;
                     _state->setPOI("focus", poi);
                 }
             });
@@ -3286,6 +3395,8 @@ void CWindow::onSurfaceActivated(const QString& surfaceId, QuadSurface* surface)
 
     auto surf = _state->activeSurface().lock();
 
+    _state->setSurface("segmentation", surf, false, false);
+
     if (newSurfId != previousSurfId) {
         if (_segmentationModule && _segmentationModule->editingEnabled()) {
             _segmentationModule->setEditingEnabled(false);
@@ -3323,41 +3434,6 @@ void CWindow::onSurfaceActivated(const QString& surfaceId, QuadSurface* surface)
         newSurfId == "xy plane" || newSurfId == "seg xz" || newSurfId == "seg yz";
     if (_axisAlignedSliceController && !activatingAxisAlignedPlane) {
         _axisAlignedSliceController->resetAll();
-    }
-
-    QSettings settings(vc3d::settingsFilePath(), QSettings::IniFormat);
-    const bool moveOnSurfaceChange =
-        settings.value(vc3d::settings::viewer::RESET_VIEW_ON_SURFACE_CHANGE,
-                       vc3d::settings::viewer::RESET_VIEW_ON_SURFACE_CHANGE_DEFAULT).toBool();
-
-    if (moveOnSurfaceChange) {
-        if (auto quadSurf = std::dynamic_pointer_cast<QuadSurface>(surf)) {
-            try {
-                quadSurf->ensureLoaded();
-                const cv::Vec3f worldCenter = quadSurf->coord({0, 0, 0}, {0, 0, 0});
-                const bool centerValid = std::isfinite(worldCenter[0])
-                    && std::isfinite(worldCenter[1])
-                    && std::isfinite(worldCenter[2])
-                    && worldCenter[0] >= 0.0f;
-                if (centerValid) {
-                    if (auto vol = _state->currentVolume()) {
-                        auto [w, h, d] = vol->shapeXyz();
-                        cv::Vec3f clamped = worldCenter;
-                        clamped[0] = std::clamp(clamped[0], 0.0f, static_cast<float>(w - 1));
-                        clamped[1] = std::clamp(clamped[1], 0.0f, static_cast<float>(h - 1));
-                        clamped[2] = std::clamp(clamped[2], 0.0f, static_cast<float>(d - 1));
-                        POI* poi = new POI;
-                        poi->p = clamped;
-                        poi->n = cv::Vec3f(0, 0, 0);
-                        poi->surfaceId = newSurfId;
-                        _state->setPOI("focus", poi);
-                    }
-                }
-            } catch (const std::exception& e) {
-                qWarning() << "Could not compute world center for"
-                           << surfaceId << ":" << e.what();
-            }
-        }
     }
 
     try {
@@ -3426,6 +3502,8 @@ void CWindow::onSurfaceActivatedPreserveEditing(const QString& surfaceId, QuadSu
     }
 
     auto surf = _state->activeSurface().lock();
+
+    _state->setSurface("segmentation", surf, false, false);
 
     if (newSurfId != previousSurfId && _segmentationModule) {
         try {
@@ -4378,6 +4456,7 @@ void CWindow::onFocusViewsRequested(uint64_t collectionId, uint64_t pointId)
     }
     focus->p = focusPos;
     focus->n = N;
+    focus->surfacePtr.reset();
     _state->setPOI("focus", focus);
 
     // Now set our PCA-derived planes (overriding what applySlicePlaneOrientation set)
