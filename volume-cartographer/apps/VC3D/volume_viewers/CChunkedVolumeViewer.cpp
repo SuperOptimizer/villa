@@ -577,14 +577,6 @@ CChunkedVolumeViewer::CChunkedVolumeViewer(CState* state, ViewerManager* manager
 CChunkedVolumeViewer::~CChunkedVolumeViewer()
 {
     quiesceForClose();
-    if (_chunkCbId != 0 && _chunkArray) {
-        _chunkArray->removeChunkReadyListener(_chunkCbId);
-        _chunkCbId = 0;
-    }
-    if (_overlayChunkCbId != 0 && _overlayChunkArray) {
-        _overlayChunkArray->removeChunkReadyListener(_overlayChunkCbId);
-        _overlayChunkCbId = 0;
-    }
     clearIntersectionItems();
 }
 
@@ -620,14 +612,6 @@ void CChunkedVolumeViewer::quiesceForClose()
     _renderPendingAfterWorker = false;
     ++_renderSerial;
 
-    if (_chunkCbId != 0 && _chunkArray) {
-        _chunkArray->removeChunkReadyListener(_chunkCbId);
-        _chunkCbId = 0;
-    }
-    if (_overlayChunkCbId != 0 && _overlayChunkArray) {
-        _overlayChunkArray->removeChunkReadyListener(_overlayChunkCbId);
-        _overlayChunkCbId = 0;
-    }
 }
 
 void CChunkedVolumeViewer::reloadPerfSettings()
@@ -709,10 +693,6 @@ std::size_t CChunkedVolumeViewer::chunkFetchesInFlight() const
 
 void CChunkedVolumeViewer::rebuildChunkArray()
 {
-    if (_chunkCbId != 0 && _chunkArray) {
-        _chunkArray->removeChunkReadyListener(_chunkCbId);
-        _chunkCbId = 0;
-    }
     _chunkArray.reset();
     if (!_volume)
         return;
@@ -725,21 +705,14 @@ void CChunkedVolumeViewer::rebuildChunkArray()
         return;
     }
 
-    if (!_chunkArray)
-        return;
-
-    QPointer<CChunkedVolumeViewer> guard(this);
-    std::weak_ptr<Volume> volumeWeak = _volume;
-    _chunkCbId = _chunkArray->addChunkReadyListener([guard, volumeWeak]() {
-        QMetaObject::invokeMethod(qApp, [guard, volumeWeak]() {
-            if (!guard)
-                return;
-            auto volume = volumeWeak.lock();
-            if (!volume || guard->_volume != volume || guard->_closing)
-                return;
-            guard->scheduleRender("chunk ready");
-        }, Qt::QueuedConnection);
-    });
+    // tick/settle: no per-chunk chunk-ready listener. In the old model every
+    // completed fetch posted a scheduleRender("chunk ready") -- a callback storm
+    // (one per chunk) that re-rendered repeatedly. Now the render is clocked: a
+    // frame that missed chunks records them, the tick issues the fetches, and
+    // finishRenderOnMainThread reschedules ONE render for the next cycle
+    // (hadMisses -> scheduleRender). That self-heal loop converges on its own
+    // (it only stops when a frame misses nothing), so the listener is redundant
+    // and would just add extra render scheduling from the fetch threads.
 }
 
 void CChunkedVolumeViewer::OnVolumeChanged(std::shared_ptr<Volume> vol)
@@ -920,10 +893,6 @@ void CChunkedVolumeViewer::onVolumeClosing()
 {
     if (_closing) {
         return;
-    }
-    if (_chunkCbId != 0 && _chunkArray) {
-        _chunkArray->removeChunkReadyListener(_chunkCbId);
-        _chunkCbId = 0;
     }
     _chunkArray.reset();
     _volume.reset();
@@ -1177,6 +1146,11 @@ struct CChunkedVolumeViewer::RenderResult {
     float surfacePtrY = 0.0f;
     float scale = 1.0f;
     qint64 renderFrameElapsedMs = 0;
+    // tick/settle: chunks this frame read-missed (resident lookup returned
+    // MissQueued). finishRenderOnMainThread hands these to the cache's
+    // requestChunks() and runs a tick so they fetch for the next cycle.
+    std::vector<vc::render::ChunkKey> missedKeys;
+    std::vector<vc::render::ChunkKey> overlayMissedKeys;  // same, for the overlay array
 };
 
 CChunkedVolumeViewer::RenderResult CChunkedVolumeViewer::renderFrame(RenderContext ctx)
@@ -1225,6 +1199,23 @@ CChunkedVolumeViewer::RenderResult CChunkedVolumeViewer::renderFrame(RenderConte
     cv::Mat_<uint8_t> overlayCoverage;
     const vc::render::ChunkedPlaneSampler::Options options(ctx.samplingMethod, 32);
 
+    // tick/settle: accumulate the chunks every sampler call missed into the
+    // RenderResult so finishRenderOnMainThread can requestChunks() + tick().
+    auto collectMissed = [&result](vc::render::ChunkedPlaneSampler::Stats st) {
+        if (st.missedKeys.empty())
+            return;
+        result.missedKeys.insert(result.missedKeys.end(),
+            std::make_move_iterator(st.missedKeys.begin()),
+            std::make_move_iterator(st.missedKeys.end()));
+    };
+    auto collectOverlayMissed = [&result](vc::render::ChunkedPlaneSampler::Stats st) {
+        if (st.missedKeys.empty())
+            return;
+        result.overlayMissedKeys.insert(result.overlayMissedKeys.end(),
+            std::make_move_iterator(st.missedKeys.begin()),
+            std::make_move_iterator(st.missedKeys.end()));
+    };
+
     auto streamingCompositeUnsupported = [&]() {
         return !isSupportedStreamingCompositeMethod(ctx.compositeSettings.params.method) ||
                ctx.compositeSettings.params.lightingEnabled ||
@@ -1244,8 +1235,8 @@ CChunkedVolumeViewer::RenderResult CChunkedVolumeViewer::renderFrame(RenderConte
                            vc::render::ChunkCache& array) {
         const bool wantComposite = ctx.compositeSettings.planeEnabled && !streamingCompositeUnsupported();
         if (!wantComposite) {
-            vc::render::ChunkedPlaneSampler::samplePlaneLevel(
-                array, ctx.startLevel, origin, vxStep, vyStep, dst, cov, options);
+            collectMissed(vc::render::ChunkedPlaneSampler::samplePlaneLevel(
+                array, ctx.startLevel, origin, vxStep, vyStep, dst, cov, options));
             return;
         }
 
@@ -1263,9 +1254,9 @@ CChunkedVolumeViewer::RenderResult CChunkedVolumeViewer::renderFrame(RenderConte
             layerValues.emplace_back(dst.rows, dst.cols, uint8_t(0));
             layerCoverage.emplace_back(dst.rows, dst.cols, uint8_t(0));
             const cv::Vec3f layerOrigin = origin + normal * (float(zStart + i) * zStep);
-            vc::render::ChunkedPlaneSampler::samplePlaneLevel(
+            collectMissed(vc::render::ChunkedPlaneSampler::samplePlaneLevel(
                 array, ctx.startLevel, layerOrigin, vxStep, vyStep,
-                layerValues.back(), layerCoverage.back(), compositeOptions);
+                layerValues.back(), layerCoverage.back(), compositeOptions));
         }
         LayerStack stack;
         stack.values.resize(numLayers);
@@ -1300,8 +1291,8 @@ CChunkedVolumeViewer::RenderResult CChunkedVolumeViewer::renderFrame(RenderConte
                                    !streamingCompositeUnsupported() &&
                                    !normals.empty();
         if (!wantComposite) {
-            vc::render::ChunkedPlaneSampler::sampleCoordsLevel(
-                array, ctx.startLevel, coords, dst, cov, options);
+            collectMissed(vc::render::ChunkedPlaneSampler::sampleCoordsLevel(
+                array, ctx.startLevel, coords, dst, cov, options));
             return;
         }
 
@@ -1316,11 +1307,11 @@ CChunkedVolumeViewer::RenderResult CChunkedVolumeViewer::renderFrame(RenderConte
         // depths per pixel and reduces to the max inline, sharing the chunk
         // lookup across a pixel's depths instead of N separate full-frame passes.
         if (ctx.compositeSettings.params.method == "max") {
-            vc::render::ChunkedPlaneSampler::sampleCoordsMaxComposite(
+            collectMissed(vc::render::ChunkedPlaneSampler::sampleCoordsMaxComposite(
                 array, ctx.startLevel, coords, normals,
                 zStart, numLayers, zStep,
                 static_cast<float>(ctx.compositeSettings.params.isoCutoff),
-                dst, cov, compositeOptions);
+                dst, cov, compositeOptions));
             return;
         }
 
@@ -1348,9 +1339,9 @@ CChunkedVolumeViewer::RenderResult CChunkedVolumeViewer::renderFrame(RenderConte
             }
             layerValues.emplace_back(dst.rows, dst.cols, uint8_t(0));
             layerCoverage.emplace_back(dst.rows, dst.cols, uint8_t(0));
-            vc::render::ChunkedPlaneSampler::sampleCoordsLevel(
+            collectMissed(vc::render::ChunkedPlaneSampler::sampleCoordsLevel(
                 array, ctx.startLevel, layerCoords,
-                layerValues.back(), layerCoverage.back(), compositeOptions);
+                layerValues.back(), layerCoverage.back(), compositeOptions));
         }
         LayerStack stack;
         stack.values.resize(numLayers);
@@ -1398,9 +1389,9 @@ CChunkedVolumeViewer::RenderResult CChunkedVolumeViewer::renderFrame(RenderConte
             overlayValues.setTo(0);
             overlayCoverage.setTo(0);
             const int level = std::clamp(ctx.startLevel, 0, ctx.overlayChunkArray->numLevels() - 1);
-            vc::render::ChunkedPlaneSampler::samplePlaneLevel(
+            collectOverlayMissed(vc::render::ChunkedPlaneSampler::samplePlaneLevel(
                 *ctx.overlayChunkArray, level, origin, vxStep, vyStep,
-                overlayValues, overlayCoverage, options);
+                overlayValues, overlayCoverage, options));
         }
     } else {
         cv::Mat_<cv::Vec3f> coords;
@@ -1427,8 +1418,8 @@ CChunkedVolumeViewer::RenderResult CChunkedVolumeViewer::renderFrame(RenderConte
                 overlayValues.setTo(0);
                 overlayCoverage.setTo(0);
                 const int level = std::clamp(ctx.startLevel, 0, ctx.overlayChunkArray->numLevels() - 1);
-                vc::render::ChunkedPlaneSampler::sampleCoordsLevel(
-                    *ctx.overlayChunkArray, level, coords, overlayValues, overlayCoverage, options);
+                collectOverlayMissed(vc::render::ChunkedPlaneSampler::sampleCoordsLevel(
+                    *ctx.overlayChunkArray, level, coords, overlayValues, overlayCoverage, options));
             }
         }
     }
@@ -1446,6 +1437,11 @@ CChunkedVolumeViewer::RenderResult CChunkedVolumeViewer::renderFrame(RenderConte
     auto* fbBits = reinterpret_cast<uint32_t*>(result.framebuffer.bits());
     const int fbStride = result.framebuffer.bytesPerLine() / 4;
     const uint32_t uncoveredPixel = planeView ? 0xFF404040u : 0xFF000000u;
+    if (::getenv("VCA_TICK_DBG")) {
+        long covSum = 0; for (int y = 0; y < ctx.fbH; ++y) { const auto* c = coverage.ptr<uint8_t>(y); for (int x = 0; x < ctx.fbW; ++x) covSum += c[x] ? 1 : 0; }
+        fprintf(stderr, "[ts] BLIT serial=%llu covered=%ld/%d missed=%zu\n",
+                (unsigned long long)ctx.serial, covSum, ctx.fbW*ctx.fbH, result.missedKeys.size());
+    }
     for (int y = 0; y < ctx.fbH; ++y) {
         auto* row = fbBits + size_t(y) * size_t(fbStride);
         const auto* src = values.ptr<uint8_t>(y);
@@ -1540,6 +1536,13 @@ void CChunkedVolumeViewer::submitRender(const char* reason, std::source_location
             ctx.serial, ctx.fbW, ctx.fbH, ctx.startLevel));
     }
 
+    // tick/settle: freeze the cache for the SETTLE phase. While frozen the render
+    // reads resident-only (lock-free) and completed fetches park in staging
+    // instead of mutating the cache. finishRenderOnMainThread thaws + ticks.
+    _chunkArray->freeze();
+    if (_overlayChunkArray)
+        _overlayChunkArray->freeze();
+
     QPointer<CChunkedVolumeViewer> guard(this);
     (void)QtConcurrent::run([guard, ctx = std::move(ctx)]() mutable {
         auto result = std::make_shared<RenderResult>(renderFrame(std::move(ctx)));
@@ -1561,6 +1564,39 @@ void CChunkedVolumeViewer::finishRenderOnMainThread(std::shared_ptr<RenderResult
             _renderPendingAfterWorker));
     }
     _renderWorkerBusy.store(false, std::memory_order_release);
+
+    // ===== TICK =====================================================
+    // The render (SETTLE) is done; we're on the main thread with no render
+    // running. This is the one place we let the cache mutate. Thaw, hand it the
+    // chunks this frame missed, then tick() (fold any fetches that completed
+    // during the frame + issue fetches for the misses). Re-freeze happens at the
+    // next submitRender. Do this even for stale/closing results so the cache
+    // never stays frozen.
+    if (::getenv("VCA_TICK_DBG")) {
+        fprintf(stderr, "[ts] finishRender serial=%llu cur=%llu missed=%zu overlayMissed=%zu\n",
+                (unsigned long long)(result ? result->serial : 0),
+                (unsigned long long)_renderSerial,
+                result ? result->missedKeys.size() : std::size_t(0),
+                result ? result->overlayMissedKeys.size() : std::size_t(0));
+    }
+    if (_chunkArray) {
+        _chunkArray->thaw();
+        if (result && !result->missedKeys.empty())
+            _chunkArray->requestChunks(result->missedKeys);
+        _chunkArray->tick();
+    }
+    if (_overlayChunkArray) {
+        _overlayChunkArray->thaw();
+        if (result && !result->overlayMissedKeys.empty())
+            _overlayChunkArray->requestChunks(result->overlayMissedKeys);
+        _overlayChunkArray->tick();
+    }
+    // If the frame missed chunks (in either array), schedule one more render for
+    // the next cycle so the now-fetched chunks fill in (clocked self-heal -- one
+    // re-render per cycle instead of one per chunk-ready callback).
+    const bool hadMisses = result &&
+        (!result->missedKeys.empty() || !result->overlayMissedKeys.empty());
+
     if (_closing) {
         profile.setDetails("action=drop_closing");
         return;
@@ -1577,11 +1613,11 @@ void CChunkedVolumeViewer::finishRenderOnMainThread(std::shared_ptr<RenderResult
     _framebuffer = std::move(result->framebuffer);
     syncCameraTransform();
     scheduleIntersectionRender("stable render finished");
-    // No speculative prefetch: the render path itself resolves the visible
-    // coords to chunks and queues any it lacks (LocalChunkCache MissQueued ->
-    // background fetch), then a chunk-ready listener re-renders to fill them in.
-    // A separate prefetch pass just re-did that coords->chunk discovery (it was
-    // ~44% of CPU during navigation) for at most a frame of latency hiding.
+    // tick/settle: the render reads resident chunks only and records misses; the
+    // tick above (thaw -> requestChunks -> tick) issued the fetches, and the
+    // hadMisses reschedule below drives one re-render next cycle to fold them in.
+    // No speculative prefetch pass -- the frame's own coord->chunk walk is the
+    // working-set discovery.
     emit overlaysUpdated();
     _view->viewport()->update();
     updateStatusLabel();
@@ -1589,6 +1625,11 @@ void CChunkedVolumeViewer::finishRenderOnMainThread(std::shared_ptr<RenderResult
     if (_renderPendingAfterWorker) {
         _renderPendingAfterWorker = false;
         scheduleRender("worker finished with pending render");
+    } else if (hadMisses) {
+        // Clocked self-heal: the tick issued fetches for this frame's misses;
+        // render again next cycle to fold in whatever has arrived. Replaces the
+        // per-chunk chunk-ready -> scheduleRender storm with one re-render/cycle.
+        scheduleRender("tick: missed chunks requested");
     }
     if (profile.enabled()) {
         profile.setDetails(std::format(
@@ -1645,10 +1686,6 @@ void CChunkedVolumeViewer::setOverlayVolume(std::shared_ptr<Volume> volume)
     if (_closing) {
         return;
     }
-    if (_overlayChunkCbId != 0 && _overlayChunkArray) {
-        _overlayChunkArray->removeChunkReadyListener(_overlayChunkCbId);
-        _overlayChunkCbId = 0;
-    }
     _overlayVolume = std::move(volume);
     _overlayChunkArray.reset();
     if (_overlayVolume) {
@@ -1657,20 +1694,8 @@ void CChunkedVolumeViewer::setOverlayVolume(std::shared_ptr<Volume> volume)
         } catch (const std::exception&) {
             _overlayChunkArray.reset();
         }
-        if (_overlayChunkArray) {
-            QPointer<CChunkedVolumeViewer> guard(this);
-            std::weak_ptr<Volume> overlayVolumeWeak = _overlayVolume;
-            _overlayChunkCbId = _overlayChunkArray->addChunkReadyListener([guard, overlayVolumeWeak]() {
-                QMetaObject::invokeMethod(qApp, [guard, overlayVolumeWeak]() {
-                    if (!guard)
-                        return;
-                    auto volume = overlayVolumeWeak.lock();
-                    if (!volume || guard->_overlayVolume != volume || guard->_closing)
-                        return;
-                    guard->scheduleRender("overlay chunk ready");
-                }, Qt::QueuedConnection);
-            });
-        }
+        // tick/settle: no overlay chunk-ready listener -- overlay misses are
+        // collected and fetched via the tick, same as the main array.
     }
     scheduleRender("overlay volume changed");
 }

@@ -57,6 +57,17 @@ public:
     // a later repaint on the UI thread.
     virtual ChunkResult tryGetChunk(int level, int iz, int iy, int ix) = 0;
 
+    // tick/settle read path: a pure, side-effect-free resident lookup used by the
+    // render while the array is "frozen". Unlike tryGetChunk it queues NO I/O and
+    // mutates no shared state (lock-free in the ChunkCache override). A miss
+    // returns MissQueued WITHOUT scheduling a fetch -- the caller records the miss
+    // and the owner issues the fetch at the next tick. The default implementation
+    // forwards to tryGetChunk for arrays that don't implement the tick model.
+    virtual ChunkResult readResident(int level, int iz, int iy, int ix) const
+    {
+        return const_cast<IChunkedArray*>(this)->tryGetChunk(level, iz, iy, ix);
+    }
+
     // Blocking access is for CLI, batch, optimization, and prefetch callers.
     // Viewer rendering paths must not call this on the Qt/main thread.
     virtual ChunkResult getChunkBlocking(int level, int iz, int iy, int ix) = 0;

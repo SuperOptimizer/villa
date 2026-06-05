@@ -307,7 +307,6 @@ private:
     std::shared_ptr<Surface> _defaultSurface;
     std::string _surfName;
     std::shared_ptr<vc::render::ChunkCache> _chunkArray;
-    vc::render::IChunkedArray::ChunkReadyCallbackId _chunkCbId = 0;
 
     QImage _framebuffer;
     std::atomic<bool> _renderWorkerBusy{false};
@@ -332,7 +331,6 @@ private:
     std::string _baseColormapId;
     std::shared_ptr<Volume> _overlayVolume;
     std::shared_ptr<vc::render::ChunkCache> _overlayChunkArray;
-    vc::render::IChunkedArray::ChunkReadyCallbackId _overlayChunkCbId = 0;
     float _overlayOpacity = 0.5f;
     std::string _overlayColormapId;
     float _overlayWindowLow = 0.0f;

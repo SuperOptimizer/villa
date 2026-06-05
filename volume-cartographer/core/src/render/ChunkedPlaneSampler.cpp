@@ -37,7 +37,12 @@ struct LocalChunkCache {
 
         auto it = chunks.find(key);
         if (it == chunks.end()) {
-            ChunkResult result = array.tryGetChunk(key.level, key.iz, key.iy, key.ix);
+            // tick/settle: readResident is the pure, lock-free render read -- it
+            // never queues I/O. A miss is recorded in requestedKeys; the viewer
+            // hands those to ChunkCache::requestChunks() so the next tick fetches
+            // them. (Old path called tryGetChunk, which queued a fetch per miss
+            // from inside the render worker.)
+            ChunkResult result = array.readResident(key.level, key.iz, key.iy, key.ix);
             if (result.status == ChunkStatus::MissQueued && requestedKeys.insert(key).second)
                 ++requested;
             if (result.status == ChunkStatus::Error && errorKeys.insert(key).second)
@@ -48,6 +53,16 @@ struct LocalChunkCache {
         lastKey = key;
         lastResult = &it->second;
         return it->second;
+    }
+
+    // Move the accumulated missed keys into a Stats so they propagate out to the
+    // viewer (which calls ChunkCache::requestChunks at the tick).
+    void flushMissedKeys(std::vector<ChunkKey>& out)
+    {
+        out.insert(out.end(),
+                   std::make_move_iterator(requestedKeys.begin()),
+                   std::make_move_iterator(requestedKeys.end()));
+        requestedKeys.clear();
     }
 
     IChunkedArray& array;
@@ -417,11 +432,17 @@ bool sampleLevelPoint(IChunkedArray& array,
     return sampleTrilinear(array, cache, access, level, p, out, requested, errors);
 }
 
-void addStats(ChunkedPlaneSampler::Stats& dst, const ChunkedPlaneSampler::Stats& src)
+void addStats(ChunkedPlaneSampler::Stats& dst, ChunkedPlaneSampler::Stats& src)
 {
     dst.coveredPixels += src.coveredPixels;
     dst.requestedChunks += src.requestedChunks;
     dst.errorChunks += src.errorChunks;
+    if (dst.missedKeys.empty())
+        dst.missedKeys = std::move(src.missedKeys);
+    else
+        dst.missedKeys.insert(dst.missedKeys.end(),
+            std::make_move_iterator(src.missedKeys.begin()),
+            std::make_move_iterator(src.missedKeys.end()));
 }
 
 } // namespace
@@ -484,6 +505,7 @@ ChunkedPlaneSampler::Stats samplePlaneLevelImpl(
                 }
             }
         }
+        chunkCache.flushMissedKeys(localStats.missedKeys);
         return localStats;
     };
 
@@ -505,7 +527,8 @@ ChunkedPlaneSampler::Stats samplePlaneLevelImpl(
         }));
     }
     for (auto& future : futures) {
-        addStats(stats, future.get());
+        auto fstats = future.get();
+        addStats(stats, fstats);
     }
     return stats;
 }
@@ -565,6 +588,7 @@ ChunkedPlaneSampler::Stats sampleCoordsLevelImpl(
                 }
             }
         }
+        chunkCache.flushMissedKeys(localStats.missedKeys);
         return localStats;
     };
 
@@ -586,7 +610,8 @@ ChunkedPlaneSampler::Stats sampleCoordsLevelImpl(
         }));
     }
     for (auto& future : futures) {
-        addStats(stats, future.get());
+        auto fstats = future.get();
+        addStats(stats, fstats);
     }
     return stats;
 }
@@ -783,6 +808,7 @@ ChunkedPlaneSampler::Stats maxCompositeTileRange(
             }
         }
     }
+    chunkCache.flushMissedKeys(localStats.missedKeys);
     return localStats;
 }
 
@@ -858,8 +884,10 @@ ChunkedPlaneSampler::Stats ChunkedPlaneSampler::sampleCoordsMaxComposite(
             return runRange(begin, end);
         }));
     }
-    for (auto& future : futures)
-        addStats(stats, future.get());
+    for (auto& future : futures) {
+        auto fstats = future.get();
+        addStats(stats, fstats);
+    }
     return stats;
 }
 

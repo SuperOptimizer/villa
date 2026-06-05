@@ -31,6 +31,10 @@ public:
         int coveredPixels = 0;
         int requestedChunks = 0;
         int errorChunks = 0;
+        // tick/settle: the chunk keys this render missed (resident lookup returned
+        // MissQueued). The viewer hands these to ChunkCache::requestChunks() so the
+        // next tick fetches them. Empty for the non-tick callers.
+        std::vector<ChunkKey> missedKeys;
     };
 
     // Samples one pyramid level into `out` for pixels not already marked in

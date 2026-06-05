@@ -5,6 +5,7 @@
 #include "vc/core/util/Logging.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <fstream>
 #include <limits>
 #include <mutex>
@@ -178,6 +179,164 @@ ChunkResult ChunkCache::tryGetChunk(int level, int iz, int iy, int ix)
     return ChunkResult{ChunkStatus::MissQueued, state->dtype_, state->levels_[level].chunkShape, {}, {}};
 }
 
+// ===================== tick / settle phase ==========================
+
+namespace {
+bool tickDbg()
+{
+    static const bool on = ::getenv("VCA_TICK_DBG") != nullptr;
+    return on;
+}
+}  // namespace
+
+void ChunkCache::freeze()
+{
+    state_->frozen_.store(true, std::memory_order_release);
+    if (tickDbg())
+        fprintf(stderr, "[ts] freeze   (cache=%p)\n", (void*)this);
+}
+
+void ChunkCache::thaw()
+{
+    state_->frozen_.store(false, std::memory_order_release);
+    if (tickDbg())
+        fprintf(stderr, "[ts] thaw     (cache=%p)\n", (void*)this);
+}
+
+bool ChunkCache::frozen() const
+{
+    return state_->frozen_.load(std::memory_order_acquire);
+}
+
+ChunkResult ChunkCache::readResident(int level, int iz, int iy, int ix) const
+{
+    // Lock-free resident read for the render SETTLE phase. No mutation: does not
+    // queue a fetch, does not move the LRU. Only sets the NRU referenced bit
+    // (atomic). Safe to call without the mutex ONLY while frozen() -- nothing
+    // writes entries_ then. A miss returns MissQueued; the caller is expected to
+    // record the key via requestChunks() so the next tick fetches it.
+    auto& state = *state_;
+    const ChunkKey key{level, iz, iy, ix};
+    if (level >= 0 && level < static_cast<int>(state.fetchers_.size()) &&
+        !state.fetchers_[static_cast<std::size_t>(level)]) {
+        return ChunkResult{ChunkStatus::Missing, state.dtype_,
+                           state.levels_[static_cast<std::size_t>(level)].chunkShape, {}, {}};
+    }
+    if (!isValidKey(state, key))
+        return ChunkResult{ChunkStatus::AllFill, state.dtype_, {}, {}, {}};
+
+    auto it = state.entries_.find(key);
+    if (it == state.entries_.end())
+        return ChunkResult{ChunkStatus::MissQueued, state.dtype_,
+                           state.levels_[level].chunkShape, {}, {}};
+
+    const Entry& entry = it->second;
+    // NRU mark via atomic_ref on a plain bool (keeps Entry movable for the map).
+    std::atomic_ref<bool>(const_cast<bool&>(entry.referenced))
+        .store(true, std::memory_order_relaxed);
+    switch (entry.status) {
+    case EntryStatus::Data:
+        return ChunkResult{ChunkStatus::Data, state.dtype_,
+                           state.levels_[level].chunkShape, entry.bytes, {}};
+    case EntryStatus::AllFill:
+        return ChunkResult{ChunkStatus::AllFill, state.dtype_,
+                           state.levels_[level].chunkShape, {}, {}};
+    case EntryStatus::Missing:
+        return ChunkResult{ChunkStatus::Missing, state.dtype_,
+                           state.levels_[level].chunkShape, {}, {}};
+    case EntryStatus::Error:
+        return ChunkResult{ChunkStatus::Error, state.dtype_,
+                           state.levels_[level].chunkShape, {}, entry.error};
+    case EntryStatus::InFlight:
+    default:
+        return ChunkResult{ChunkStatus::MissQueued, state.dtype_,
+                           state.levels_[level].chunkShape, {}, {}};
+    }
+}
+
+void ChunkCache::requestChunks(const std::vector<ChunkKey>& keys)
+{
+    if (keys.empty())
+        return;
+    std::lock_guard lock(state_->requestMutex_);
+    state_->requestedThisCycle_.insert(
+        state_->requestedThisCycle_.end(), keys.begin(), keys.end());
+}
+
+void ChunkCache::tick()
+{
+    auto state = state_;
+
+    // The tick is the ONLY place we mutate entries_ in the tick/settle model.
+    // It must run between frames -- not while a render is reading. We do not
+    // assert !frozen_ here because freeze() is owned by the render lifecycle;
+    // the viewer calls thaw()/tick()/freeze() in sequence on the same thread.
+
+    // 1) Fold staged fetch results (completed while frozen) into entries_.
+    std::vector<StagedFetch> staged;
+    {
+        std::lock_guard s(state->stagingMutex_);
+        staged.swap(state->stagedFetches_);
+    }
+    int folded = 0, foldSkipped = 0;
+    if (!staged.empty()) {
+        std::lock_guard lock(state->mutex_);
+        for (auto& sf : staged) {
+            if (sf.generation != state->generation_) { ++foldSkipped; continue; }
+            auto it = state->entries_.find(sf.key);
+            if (it == state->entries_.end() || it->second.fetchSerial != sf.fetchSerial) {
+                ++foldSkipped;
+                continue;
+            }
+            storeFetchResultLocked(state, sf.key, std::move(sf.fetch),
+                                   sf.loadedFromPersistentCache);
+            ++folded;
+        }
+        // Also drain anything that arrived in the staging queue meanwhile.
+        drainStagingLocked(state);
+    }
+
+    // 2) Issue fetches for chunks the last frame missed (recorded via
+    //    requestChunks). A miss creates an InFlight entry + queues background I/O;
+    //    the result will arrive in staging and fold at a future tick.
+    std::vector<ChunkKey> requested;
+    {
+        std::lock_guard r(state->requestMutex_);
+        requested.swap(state->requestedThisCycle_);
+    }
+    int issued = 0, dataResident = 0;
+    if (!requested.empty()) {
+        std::lock_guard lock(state->mutex_);
+        for (const auto& key : requested) {
+            if (!isValidKey(*state, key))
+                continue;
+            auto it = state->entries_.find(key);
+            if (it != state->entries_.end())
+                continue;  // already resident or in-flight
+            state->entries_.emplace(key, Entry{});
+            queueFetchLocked(state, key, state->generation_, 0);
+            ++issued;
+        }
+    }
+    if (tickDbg()) {
+        std::lock_guard lock(state->mutex_);
+        for (auto& [k, e] : state->entries_)
+            if (e.status == EntryStatus::Data) ++dataResident;
+        fprintf(stderr, "[ts] TICK staged=%zu folded=%d skip=%d | requested=%zu issued=%d "
+                "| entries=%zu dataResident=%d frozen=%d\n",
+                staged.size(), folded, foldSkipped, requested.size(), issued,
+                state->entries_.size(), dataResident, int(state->frozen_.load()));
+    }
+
+    // 3) NRU clock sweep: evict to budget using the referenced bits the frame
+    //    set, then clear survivors' bits. This is the only eviction the tick
+    //    model needs -- no per-access LRU touch.
+    {
+        std::lock_guard lock(state->mutex_);
+        nruEvictLocked(state);
+    }
+}
+
 ChunkResult ChunkCache::getChunkBlocking(int level, int iz, int iy, int ix)
 {
     auto state = state_;
@@ -198,7 +357,7 @@ ChunkResult ChunkCache::getChunkBlocking(int level, int iz, int iy, int ix)
     auto [it, inserted] = state->entries_.emplace(key, Entry{});
     if (inserted)
         queueFetchLocked(state, key, state->generation_, 0);
-    waitForResolvedLocked(*state, lock, key);
+    waitForResolvedLocked(state, lock, key);
     it = state->entries_.find(key);
     if (it == state->entries_.end())
         return ChunkResult{ChunkStatus::Error, state->dtype_, state->levels_[level].chunkShape, {}, "chunk invalidated"};
@@ -469,7 +628,25 @@ void ChunkCache::fetchAndStore(const std::shared_ptr<State>& state,
         auto it = state->entries_.find(key);
         if (it == state->entries_.end() || it->second.fetchSerial != fetchSerial)
             return;
-        storeFetchResultLocked(state, key, std::move(fetch), loadedFromPersistentCache);
+
+        // tick/settle: if frozen (a frame is rendering), park in staging so we do
+        // not mutate entries_ while readResident reads it lock-free. If not frozen
+        // (between frames / non-tick callers), fold immediately under the mutex.
+        const int fs = static_cast<int>(fetch.status);
+        if (state->frozen_.load(std::memory_order_acquire)) {
+            std::lock_guard staging(state->stagingMutex_);
+            state->stagedFetches_.push_back(
+                StagedFetch{key, std::move(fetch), generation, fetchSerial,
+                            loadedFromPersistentCache});
+            if (tickDbg())
+                fprintf(stderr, "[ts] fetch->STAGING %d/%d/%d/%d status=%d\n",
+                        key.level, key.iz, key.iy, key.ix, fs);
+        } else {
+            storeFetchResultLocked(state, key, std::move(fetch), loadedFromPersistentCache);
+            if (tickDbg())
+                fprintf(stderr, "[ts] fetch->FOLD %d/%d/%d/%d status=%d\n",
+                        key.level, key.iz, key.iy, key.ix, fs);
+        }
     }
     state->cv_.notify_all();
     notifyListeners(state);
@@ -747,6 +924,58 @@ void ChunkCache::enforceCapacityLocked(const std::shared_ptr<State>& state)
     }
 }
 
+void ChunkCache::nruEvictLocked(const std::shared_ptr<State>& state)
+{
+    // Clock / second-chance eviction run at the tick. One pass over resident
+    // Data entries: a referenced entry survives but loses its bit (second
+    // chance); an unreferenced entry is evicted while we are over budget. The
+    // NRU bit was set lock-free by readResident during the frame; we consume it
+    // here. Replaces per-access LRU touches.
+    auto overBudget = [&] {
+        return state->decodedBytes_ > state->options_.decodedByteCapacity ||
+               state->entries_.size() > state->options_.metadataEntryCapacity;
+    };
+    if (!overBudget())
+        return;
+
+    for (auto it = state->entries_.begin(); it != state->entries_.end(); ) {
+        Entry& entry = it->second;
+        if (entry.status != EntryStatus::Data) { ++it; continue; }
+        if (entry.referenced) {
+            entry.referenced = false;       // second chance
+            ++it;
+            continue;
+        }
+        if (!overBudget()) { ++it; continue; }
+        if (entry.bytes && !entry.persisted)
+            (void)queuePersistentWrite(state, it->first, entry.bytes);
+        state->decodedBytes_ -= entry.decodedBytes;
+        if (entry.inLru) {
+            state->lru_.erase(entry.lruIt);
+            entry.inLru = false;
+        }
+        it = state->entries_.erase(it);
+    }
+
+    // Still over the metadata cap? Drop resolved non-Data entries (cheap to
+    // recompute/refetch).
+    for (auto it = state->entries_.begin();
+         it != state->entries_.end() &&
+         state->entries_.size() > state->options_.metadataEntryCapacity; ) {
+        const EntryStatus s = it->second.status;
+        if (s == EntryStatus::Missing || s == EntryStatus::AllFill ||
+            s == EntryStatus::Error) {
+            if (it->second.inLru) {
+                state->lru_.erase(it->second.lruIt);
+                it->second.inLru = false;
+            }
+            it = state->entries_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
 bool ChunkCache::isValidKey(const State& state, const ChunkKey& key)
 {
     if (key.level < 0 || key.level >= static_cast<int>(state.levels_.size()))
@@ -823,11 +1052,38 @@ void ChunkCache::notifyListeners(const std::shared_ptr<State>& state)
     }
 }
 
-void ChunkCache::waitForResolvedLocked(State& state, std::unique_lock<std::mutex>& lock, const ChunkKey& key)
+void ChunkCache::drainStagingLocked(const std::shared_ptr<State>& state)
 {
-    state.cv_.wait(lock, [&] {
-        auto it = state.entries_.find(key);
-        return it == state.entries_.end() || it->second.status != EntryStatus::InFlight;
+    // Fold staged fetch results into entries_. Caller holds state->mutex_. Used
+    // by blocking/CLI callers (which don't run the render tick) so a staged
+    // result still resolves their entry. Same body as tick() step 1.
+    std::vector<StagedFetch> staged;
+    {
+        std::lock_guard s(state->stagingMutex_);
+        staged.swap(state->stagedFetches_);
+    }
+    for (auto& sf : staged) {
+        if (sf.generation != state->generation_)
+            continue;
+        auto it = state->entries_.find(sf.key);
+        if (it == state->entries_.end() || it->second.fetchSerial != sf.fetchSerial)
+            continue;
+        storeFetchResultLocked(state, sf.key, std::move(sf.fetch),
+                               sf.loadedFromPersistentCache);
+    }
+}
+
+void ChunkCache::waitForResolvedLocked(const std::shared_ptr<State>& state,
+                                       std::unique_lock<std::mutex>& lock,
+                                       const ChunkKey& key)
+{
+    // Blocking callers run between frames (frozen_ == false), so their fetch
+    // results fold immediately in fetchAndStore. Drain any staged results too in
+    // case a frame froze concurrently, then wait for this key to resolve.
+    state->cv_.wait(lock, [&] {
+        drainStagingLocked(state);
+        auto it = state->entries_.find(key);
+        return it == state->entries_.end() || it->second.status != EntryStatus::InFlight;
     });
 }
 

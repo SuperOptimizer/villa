@@ -2,6 +2,7 @@
 
 #include "vc/core/render/IChunkedArray.hpp"
 
+#include <atomic>
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
@@ -76,6 +77,32 @@ public:
     void invalidate();
     void beginViewRequest();
 
+    // --- tick/settle phase control --------------------------------------
+    // The cache has two phases. During SETTLE (a frame rendering) the cache is
+    // frozen: read-only, sampled lock-free via readResident(), and fetch results
+    // that arrive are parked in a staging queue instead of mutating entries_.
+    // During the TICK (between frames, single-threaded, no render running) the
+    // cache is mutable: tick() folds the staging queue into entries_, issues
+    // fetches for the chunks the last frame missed, evicts to budget, and
+    // refreshes the cached stats. This is the "don't mutate at the wrong time"
+    // discipline -- mutation only happens inside tick().
+    //
+    // freeze()/thaw() bracket a render. tick() does the between-frame work and
+    // leaves the cache frozen again for the next render. requestChunks() records
+    // the keys a frame wanted but missed, so the next tick fetches them.
+    void freeze();
+    void thaw();
+    void tick();
+    void requestChunks(const std::vector<ChunkKey>& keys);
+
+    // Lock-free resident read used by the sampler during SETTLE. Returns the
+    // resident status/bytes for a chunk WITHOUT mutating (no fetch queue, no LRU
+    // touch, no lock). Marks the entry referenced (NRU) for tick-time eviction.
+    // Safe only while frozen() (nothing writes entries_). A miss returns
+    // MissQueued but queues nothing -- the caller records it via requestChunks().
+    ChunkResult readResident(int level, int iz, int iy, int ix) const override;
+    bool frozen() const;
+
 private:
     enum class EntryStatus {
         InFlight,
@@ -96,6 +123,23 @@ private:
         std::int64_t priority = 0;
         std::uint64_t fetchSerial = 0;
         std::list<ChunkKey>::iterator lruIt;
+        // NRU "referenced" bit: set (lock-free, monotonic) by readResident when a
+        // frame reads this chunk; cleared by the tick's clock sweep. Replaces the
+        // per-access LRU list move. Plain bool (so Entry stays movable for the
+        // map); the const lock-free reader sets it via std::atomic_ref. A benign
+        // race across viewers (set-to-1 only) at worst keeps a chunk one extra
+        // cycle. Reads/writes outside readResident happen under mutex_.
+        bool referenced = false;
+    };
+
+    // A fetch result parked in staging while the cache is frozen. Folded into
+    // entries_ at the next tick (mutation only happens then).
+    struct StagedFetch {
+        ChunkKey key;
+        ChunkFetchResult fetch;
+        std::uint64_t generation = 0;
+        std::uint64_t fetchSerial = 0;
+        bool loadedFromPersistentCache = false;
     };
 
     struct State {
@@ -131,6 +175,17 @@ private:
         std::deque<std::pair<std::chrono::steady_clock::time_point, std::size_t>> remoteDownloadHistory_;
         std::chrono::steady_clock::time_point lastPersistentCacheSizeScan_{};
         std::size_t cachedPersistentCacheBytes_ = 0;
+
+        // --- tick/settle phase ------------------------------------------
+        // frozen_: true during SETTLE (render). While true, entries_ must not be
+        // mutated; fetch completions park in stagedFetches_ instead. assertMutable
+        // (in the .cpp) checks this on every mutation path so a discipline
+        // violation fails loudly in debug instead of racing.
+        std::atomic<bool> frozen_{false};
+        std::mutex stagingMutex_;                  // guards stagedFetches_ only
+        std::vector<StagedFetch> stagedFetches_;   // fetch results awaiting a tick
+        std::mutex requestMutex_;                  // guards requestedThisCycle_
+        std::vector<ChunkKey> requestedThisCycle_; // chunks a frame missed -> fetch at tick
     };
 
     static ChunkResult resultFromEntryLocked(State& state, const ChunkKey& key, Entry& entry);
@@ -161,12 +216,20 @@ private:
     static void pruneDownloadHistoryLocked(State& state, std::chrono::steady_clock::time_point now);
     static void touchLocked(State& state, const ChunkKey& key, Entry& entry);
     static void enforceCapacityLocked(const std::shared_ptr<State>& state);
+    // NRU (clock) eviction run at the tick: evict Data entries whose referenced
+    // bit is clear until under budget, clearing the bit on survivors (second
+    // chance). Replaces per-access LRU touches. Mutates entries_/decodedBytes_,
+    // so it must run inside tick() (cache not frozen).
+    static void nruEvictLocked(const std::shared_ptr<State>& state);
     static bool isValidKey(const State& state, const ChunkKey& key);
     static bool isAllFill(const State& state, const std::vector<std::byte>& bytes);
     static std::size_t dtypeSize(ChunkDtype dtype);
     static std::size_t expectedChunkBytes(const State& state, const ChunkKey& key);
     static void notifyListeners(const std::shared_ptr<State>& state);
-    static void waitForResolvedLocked(State& state, std::unique_lock<std::mutex>& lock, const ChunkKey& key);
+    static void drainStagingLocked(const std::shared_ptr<State>& state);
+    static void waitForResolvedLocked(const std::shared_ptr<State>& state,
+                                      std::unique_lock<std::mutex>& lock,
+                                      const ChunkKey& key);
 
     std::shared_ptr<State> state_;
 };
