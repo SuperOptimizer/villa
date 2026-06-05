@@ -656,6 +656,20 @@ ChunkedPlaneSampler::Stats maxCompositeTileRange(
     // A resolved chunk: bytes == kAllFill means an all-fill chunk (no buffer).
     static const std::vector<std::byte> kAllFillTag;
 
+    // Precompute the level transform ONCE as float scalars (it's constant for the
+    // whole call). The per-pixel toLevelCoord/toLevelVector were doing double-
+    // precision math + a per-pixel "offset == 0?" check; here that check is hoisted
+    // and the per-pixel transform is a plain float multiply (+ optional add).
+    const auto& tf = access.transform;
+    const float tsx = float(tf.scaleFromLevel0[0]);
+    const float tsy = float(tf.scaleFromLevel0[1]);
+    const float tsz = float(tf.scaleFromLevel0[2]);
+    const float tox = float(tf.offsetFromLevel0[0]);
+    const float toy = float(tf.offsetFromLevel0[1]);
+    const float toz = float(tf.offsetFromLevel0[2]);
+    const bool zeroOffset = tf.offsetFromLevel0[0] == 0.0 &&
+                            tf.offsetFromLevel0[1] == 0.0 && tf.offsetFromLevel0[2] == 0.0;
+
     ChunkedPlaneSampler::Stats localStats;
     LocalChunkCache chunkCache(array, std::max<std::size_t>(16, (end - begin) * 4));
 
@@ -671,8 +685,11 @@ ChunkedPlaneSampler::Stats maxCompositeTileRange(
                 if (surfaceSentinel(base))
                     continue;
                 const cv::Vec3f nrm = normalRow[x];
-                const cv::Vec3f baseL = toLevelCoord(access, base);
-                const cv::Vec3f nrmL = toLevelVector(access, nrm);
+                // base/normal -> level space using the hoisted float scalars.
+                const cv::Vec3f baseL = zeroOffset
+                    ? cv::Vec3f(base[0]*tsx, base[1]*tsy, base[2]*tsz)
+                    : cv::Vec3f(base[0]*tsx+tox, base[1]*tsy+toy, base[2]*tsz+toz);
+                const cv::Vec3f nrmL(nrm[0]*tsx, nrm[1]*tsy, nrm[2]*tsz);
 
                 int lastCz = INT_MIN, lastCy = INT_MIN, lastCx = INT_MIN;
                 // curBytes: nullptr=unusable, &kAllFillTag=all-fill, else the
