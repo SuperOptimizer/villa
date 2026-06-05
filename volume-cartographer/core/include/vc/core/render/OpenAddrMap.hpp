@@ -102,24 +102,31 @@ public:
 
     iterator erase(iterator it)
     {
-        std::size_t hole = it.index();
-        std::size_t next = (hole + 1) & mask_;
-        while (!(keys_[next] == KeyTraits::empty())) {
-            const std::size_t ideal = Hash{}(keys_[next]) & mask_;
-            const bool movable =
-                (hole <= next) ? (ideal <= hole || ideal > next)
-                               : (ideal <= hole && ideal > next);
-            if (movable) {
-                keys_[hole] = keys_[next];
-                values_[hole] = std::move(values_[next]);
-                hole = next;
-            }
-            next = (next + 1) & mask_;
-        }
-        keys_[hole] = KeyTraits::empty();
-        values_[hole] = Value{};
+        // Empty the slot, then RE-INSERT every following element in the same
+        // cluster (up to the next empty slot). This is the provably-correct
+        // deletion for linear probing: any element whose probe chain passed
+        // through the hole is reinserted at its proper position. Simpler and
+        // safer than hand-rolled backward-shift (a subtle wrap-around bug there
+        // mis-associated keys with values -> chunks read with the wrong status).
+        const std::size_t start = it.index();
+        keys_[start] = KeyTraits::empty();
+        values_[start] = Value{};
         --size_;
-        return iterator(this, hole);
+
+        std::size_t i = (start + 1) & mask_;
+        while (!(keys_[i] == KeyTraits::empty())) {
+            Key k = keys_[i];
+            Value v = std::move(values_[i]);
+            keys_[i] = KeyTraits::empty();
+            // reinsert (size_ unchanged: it's already counted)
+            std::size_t j = Hash{}(k) & mask_;
+            while (!(keys_[j] == KeyTraits::empty()))
+                j = (j + 1) & mask_;
+            keys_[j] = k;
+            values_[j] = std::move(v);
+            i = (i + 1) & mask_;
+        }
+        return iterator(this, start);
     }
 
     void clear()

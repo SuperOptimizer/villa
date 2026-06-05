@@ -25,7 +25,7 @@ namespace {
 // resident map directly. Misses are deduped into requestedKeys for the tick.
 struct ChunkProbe {
     explicit ChunkProbe(IChunkedArray& a, std::size_t expectedChunks = 0)
-        : array(a)
+        : array(a), pin(a.makeResidentPin())
     {
         if (expectedChunks > 0)
             requestedKeys.reserve(expectedChunks);
@@ -40,7 +40,7 @@ struct ChunkProbe {
     {
         if (haveLast && lastKey == key)
             return last;
-        const auto rv = array.readResidentRaw(key.level, key.iz, key.iy, key.ix);
+        const auto rv = pin->lookup(key.level, key.iz, key.iy, key.ix);
         last.status = rv.status;
         last.bytes = rv.bytes;
         if (rv.status == ChunkStatus::MissQueued && requestedKeys.insert(key).second)
@@ -61,6 +61,7 @@ struct ChunkProbe {
     }
 
     IChunkedArray& array;
+    std::unique_ptr<IChunkedArray::IResidentPin> pin;  // keeps the resident map alive
     std::unordered_set<ChunkKey, ChunkKeyHash> requestedKeys;
     ChunkKey lastKey{};
     View last;
@@ -690,10 +691,11 @@ ChunkedPlaneSampler::Stats maxCompositeTileRange(
                             tf.offsetFromLevel0[1] == 0.0 && tf.offsetFromLevel0[2] == 0.0;
 
     ChunkedPlaneSampler::Stats localStats;
-    // tick/settle: no ChunkProbe here. readResident is already a lock-free
-    // O(1) probe into the cache's own map, so the second local hashmap was pure
-    // overhead (it existed to shield the old mutex'd tryGetChunk). We keep only a
-    // missed-key dedup set so a missing chunk isn't requested once per pixel.
+    // Pin the resident map for the whole tile range so the raw byte pointers from
+    // lookup() stay valid even if the tick swaps in a new map concurrently (the
+    // cache is shared across viewers). No ChunkProbe layer -- lookup is already a
+    // lock-free O(1) probe; we keep only a missed-key dedup set.
+    auto pin = array.makeResidentPin();
     std::unordered_set<ChunkKey, ChunkKeyHash> missedSet;
     missedSet.reserve(std::max<std::size_t>(16, (end - begin) * 4));
 
@@ -764,7 +766,7 @@ ChunkedPlaneSampler::Stats maxCompositeTileRange(
                         lastChunk = chunkKey;
                         // Raw lock-free resident read -- no ChunkProbe layer,
                         // no shared_ptr copy (the tick won't evict mid-frame).
-                        const auto rv = array.readResidentRaw(level, cz, cy, cx);
+                        const auto rv = pin->lookup(level, cz, cy, cx);
                         if (rv.status == ChunkStatus::AllFill) {
                             curBytes = &kAllFillTag;
                         } else if (rv.status == ChunkStatus::Data && rv.bytes) {

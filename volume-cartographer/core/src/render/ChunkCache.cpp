@@ -261,14 +261,43 @@ IChunkedArray::ResidentView ChunkCache::readResidentRaw(int level, int iz, int i
     if (!isValidKey(state, key))
         return ResidentView{ChunkStatus::AllFill, nullptr};
 
-    const ResidentMap& rm = *state.resident_;
-    auto it = rm.find(key);
-    if (it == rm.end())
+    // Pin the resident map for this call (atomic load of the shared_ptr): the tick
+    // may swap in a new map concurrently from another viewer's thread, but the one
+    // we loaded stays alive (and its bytes valid) until we return.
+    std::shared_ptr<const ResidentMap> rm = std::atomic_load(&state.resident_);
+    auto it = rm->find(key);
+    if (it == rm->end())
         return ResidentView{ChunkStatus::MissQueued, nullptr};
     const ResidentEntry& e = it->second;
     if (e.status == ChunkStatus::Data)
         return ResidentView{ChunkStatus::Data, e.bytes.get()};
     return ResidentView{e.status, nullptr};   // AllFill (or Missing, if carried)
+}
+
+std::unique_ptr<IChunkedArray::IResidentPin> ChunkCache::makeResidentPin() const
+{
+    auto pin = std::make_unique<ResidentPin>();
+    pin->map_ = std::atomic_load(&state_->resident_);
+    pin->cache_ = this;
+    return pin;
+}
+
+IChunkedArray::ResidentView ChunkCache::ResidentPin::lookup(int level, int iz, int iy, int ix) const
+{
+    const auto& state = *cache_->state_;
+    const ChunkKey key{level, iz, iy, ix};
+    if (level >= 0 && level < static_cast<int>(state.fetchers_.size()) &&
+        !state.fetchers_[static_cast<std::size_t>(level)])
+        return ResidentView{ChunkStatus::Missing, nullptr};
+    if (!isValidKey(state, key))
+        return ResidentView{ChunkStatus::AllFill, nullptr};
+    auto it = map_->find(key);
+    if (it == map_->end())
+        return ResidentView{ChunkStatus::MissQueued, nullptr};
+    const ResidentEntry& e = it->second;
+    if (e.status == ChunkStatus::Data)
+        return ResidentView{ChunkStatus::Data, e.bytes.get()};
+    return ResidentView{e.status, nullptr};
 }
 
 void ChunkCache::requestChunks(const std::vector<ChunkKey>& keys)
@@ -362,10 +391,13 @@ void ChunkCache::rebuildResidentLocked(const std::shared_ptr<State>& state)
     // (single owner, no copy, no refcount); chunks newly resolved this cycle are
     // moved out of the working Entry. The old resident map is then dropped, freeing
     // any buffers not carried over. Caller holds mutex_.
-    auto next = std::make_unique<ResidentMap>();
+    auto next = std::make_shared<ResidentMap>();
     next->reserve(state->entries_.size());
 
-    ResidentMap& old = const_cast<ResidentMap&>(*state->resident_);
+    // The working entries_ hold the bytes as shared_ptr; the resident map SHARES
+    // them (copy the shared_ptr -- one refcount bump, no buffer copy). The old map
+    // stays fully intact (another viewer may still be reading it via its pin); it
+    // and its buffers free when the last reader's pin drops.
     for (auto kv : state->entries_) {
         const ChunkKey& key = kv.first;
         Entry& e = kv.second;
@@ -373,27 +405,19 @@ void ChunkCache::rebuildResidentLocked(const std::shared_ptr<State>& state)
             ResidentEntry re;
             re.status = ChunkStatus::AllFill;
             next->emplace(key, std::move(re));
-            continue;
+        } else if (e.status == EntryStatus::Data && e.bytes) {
+            ResidentEntry re;
+            re.status = ChunkStatus::Data;
+            re.bytes = e.bytes;                  // share the buffer (refcount bump)
+            next->emplace(key, std::move(re));
         }
-        if (e.status != EntryStatus::Data || !e.bytes)
-            continue;  // InFlight / Missing / Error -> not resident
-
-        ResidentEntry re;
-        re.status = ChunkStatus::Data;
-        // Single-owner buffer: MOVE the survivor's buffer out of the OLD resident
-        // map (no copy). Only a chunk newly resolved this cycle (not yet in the old
-        // map) is materialized from the working Entry's bytes -- once.
-        auto oit = old.find(key);
-        if (oit != old.end() && oit->second.bytes) {
-            re.bytes = std::move(oit->second.bytes);   // move survivor, no copy
-        } else {
-            re.bytes = std::make_unique<std::vector<std::byte>>(*e.bytes);  // first publish
-        }
-        next->emplace(key, std::move(re));
+        // InFlight / Missing / Error -> not resident.
     }
 
-    std::lock_guard swap(state->residentSwapMutex_);
-    state->resident_ = std::move(next);
+    // Atomically publish. Readers that loaded the previous pointer keep their map
+    // alive until they drop it; this store is lock-free.
+    std::atomic_store(&state->resident_,
+                      std::shared_ptr<const ResidentMap>(std::move(next)));
 }
 
 ChunkResult ChunkCache::getChunkBlocking(int level, int iz, int iy, int ix)
@@ -997,40 +1021,56 @@ void ChunkCache::nruEvictLocked(const std::shared_ptr<State>& state)
     if (!overBudget())
         return;
 
-    for (auto it = state->entries_.begin(); it != state->entries_.end(); ) {
-        Entry& entry = it->second;
-        if (entry.status != EntryStatus::Data) { ++it; continue; }
+    // Collect victims in a first pass, then erase in a second pass. Erasing an
+    // open-addressing entry during iteration reinserts later cluster elements and
+    // can move unvisited entries behind the iterator -> skipped/revisited slots.
+    // So never erase while iterating: gather keys, then erase them.
+    std::vector<ChunkKey> victims;
+    for (auto kv : state->entries_) {
+        Entry& entry = kv.second;
+        if (entry.status != EntryStatus::Data)
+            continue;
         if (entry.referenced) {
             entry.referenced = false;       // second chance
-            ++it;
             continue;
         }
-        if (!overBudget()) { ++it; continue; }
+        if (!overBudget())
+            continue;
         if (entry.bytes && !entry.persisted)
-            (void)queuePersistentWrite(state, it->first, entry.bytes);
+            (void)queuePersistentWrite(state, kv.first, entry.bytes);
         state->decodedBytes_ -= entry.decodedBytes;
         if (entry.inLru) {
             state->lru_.erase(entry.lruIt);
             entry.inLru = false;
         }
-        it = state->entries_.erase(it);
+        victims.push_back(kv.first);
+    }
+    for (const auto& k : victims) {
+        auto it = state->entries_.find(k);
+        if (it != state->entries_.end())
+            state->entries_.erase(it);
     }
 
-    // Still over the metadata cap? Drop resolved non-Data entries (cheap to
-    // recompute/refetch).
-    for (auto it = state->entries_.begin();
-         it != state->entries_.end() &&
-         state->entries_.size() > state->options_.metadataEntryCapacity; ) {
-        const EntryStatus s = it->second.status;
-        if (s == EntryStatus::Missing || s == EntryStatus::AllFill ||
-            s == EntryStatus::Error) {
-            if (it->second.inLru) {
-                state->lru_.erase(it->second.lruIt);
-                it->second.inLru = false;
+    // Still over the metadata cap? Drop resolved non-Data entries.
+    if (state->entries_.size() > state->options_.metadataEntryCapacity) {
+        victims.clear();
+        for (auto kv : state->entries_) {
+            if (state->entries_.size() - victims.size() <= state->options_.metadataEntryCapacity)
+                break;
+            const EntryStatus s = kv.second.status;
+            if (s == EntryStatus::Missing || s == EntryStatus::AllFill ||
+                s == EntryStatus::Error) {
+                if (kv.second.inLru) {
+                    state->lru_.erase(kv.second.lruIt);
+                    kv.second.inLru = false;
+                }
+                victims.push_back(kv.first);
             }
-            it = state->entries_.erase(it);
-        } else {
-            ++it;
+        }
+        for (const auto& k : victims) {
+            auto it = state->entries_.find(k);
+            if (it != state->entries_.end())
+                state->entries_.erase(it);
         }
     }
 }

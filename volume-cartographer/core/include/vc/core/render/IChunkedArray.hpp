@@ -84,6 +84,31 @@ public:
         return ResidentView{r.status, r.bytes ? r.bytes.get() : nullptr};
     }
 
+    // A pin holds the current resident map alive for the lifetime of a sampling
+    // pass so the raw byte pointers from lookup() stay valid even if the owner
+    // swaps in a new map concurrently (multiple viewers share a cache). A render
+    // worker creates ONE pin and does all its raw lookups through it. The default
+    // pin just forwards per-call to readResidentRaw (no extra lifetime guarantee,
+    // adequate for arrays that don't swap maps).
+    class IResidentPin {
+    public:
+        virtual ~IResidentPin() = default;
+        virtual ResidentView lookup(int level, int iz, int iy, int ix) const = 0;
+    };
+    struct ForwardingPin : IResidentPin {
+        const IChunkedArray* arr;
+        ResidentView lookup(int level, int iz, int iy, int ix) const override
+        {
+            return arr->readResidentRaw(level, iz, iy, ix);
+        }
+    };
+    virtual std::unique_ptr<IResidentPin> makeResidentPin() const
+    {
+        auto p = std::make_unique<ForwardingPin>();
+        p->arr = this;
+        return p;
+    }
+
     // Blocking access is for CLI, batch, optimization, and prefetch callers.
     // Viewer rendering paths must not call this on the Qt/main thread.
     virtual ChunkResult getChunkBlocking(int level, int iz, int iy, int ix) = 0;

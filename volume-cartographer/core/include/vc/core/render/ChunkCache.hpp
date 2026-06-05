@@ -21,6 +21,26 @@ namespace vc::render {
 
 class ChunkCache final : public IChunkedArray {
 public:
+    // --- immutable resident map (render-visible) ------------------------
+    struct ChunkKeyEmpty {
+        static ChunkKey empty()
+        {
+            constexpr int k = -2147483647 - 1;  // INT_MIN; real keys have level>=0
+            return ChunkKey{k, k, k, k};
+        }
+    };
+    // What a sample needs: status (Data/AllFill) + the decoded bytes. The render
+    // reads a shared_ptr<const ResidentMap> (pinned for the frame); the tick
+    // rebuilds a fresh one from the working entries_ and atomically swaps it in.
+    // Buffers are shared_ptr: the working store, the old map and the new map can
+    // reference the same buffer (no copy), and concurrent viewers on a shared
+    // cache are genuine co-owners while they read.
+    struct ResidentEntry {
+        ChunkStatus status = ChunkStatus::Missing;             // Data | AllFill
+        std::shared_ptr<const std::vector<std::byte>> bytes;   // valid iff Data
+    };
+    using ResidentMap = OpenAddrMap<ChunkKey, ResidentEntry, ChunkKeyHash, ChunkKeyEmpty>;
+
     struct LevelInfo {
         std::array<int, 3> shape{};
         std::array<int, 3> chunkShape{};
@@ -109,6 +129,22 @@ public:
     ResidentView readResidentRaw(int level, int iz, int iy, int ix) const override;
     bool frozen() const;
 
+    // Pin the current resident map for the lifetime of a sampling pass. A render
+    // worker calls this ONCE, holds the returned handle for its whole run, and
+    // does raw lookups through it; the raw byte pointers stay valid because the
+    // handle keeps that map generation (and its buffers) alive even if the tick
+    // swaps in a new map meanwhile. This is the lifetime guarantee for the raw
+    // read path with multiple concurrent viewers on a shared cache.
+    class ResidentPin final : public IResidentPin {
+    public:
+        ResidentView lookup(int level, int iz, int iy, int ix) const override;
+    private:
+        friend class ChunkCache;
+        std::shared_ptr<const ResidentMap> map_;
+        const ChunkCache* cache_ = nullptr;
+    };
+    std::unique_ptr<IResidentPin> makeResidentPin() const override;
+
 private:
     enum class EntryStatus {
         InFlight,
@@ -148,31 +184,6 @@ private:
         bool loadedFromPersistentCache = false;
     };
 
-    struct ChunkKeyEmpty {
-        static ChunkKey empty()
-        {
-            constexpr int k = -2147483647 - 1;  // INT_MIN; real keys have level>=0
-            return ChunkKey{k, k, k, k};
-        }
-    };
-
-    // The IMMUTABLE render-visible resident set. The render reads a
-    // shared_ptr<const ResidentMap> lock-free; it never mutates. Holds only what
-    // a sample needs: status (Data/AllFill) + the decoded bytes. The tick rebuilds
-    // a fresh ResidentMap from the working entries_ and atomically swaps it in --
-    // the single coalesced update per cycle. Because the map is const-by-type,
-    // mutation-during-render is impossible by construction, not just discipline.
-    // The cache OWNS the decoded bytes outright -- no shared_ptr. Survivors are
-    // MOVED from the old resident map into the new one each tick (single owner,
-    // no refcount, no buffer copy); evicted entries are simply not carried over
-    // and their buffers free deterministically when the old map is destroyed.
-    // Safe because the render worker that read the old map has already finished
-    // before the tick rebuilds (finishRenderOnMainThread runs post-worker).
-    struct ResidentEntry {
-        ChunkStatus status = ChunkStatus::Missing;          // Data | AllFill
-        std::unique_ptr<std::vector<std::byte>> bytes;      // valid iff Data; sole owner
-    };
-    using ResidentMap = OpenAddrMap<ChunkKey, ResidentEntry, ChunkKeyHash, ChunkKeyEmpty>;
 
     struct State {
         State(std::vector<LevelInfo> levels,
@@ -196,12 +207,12 @@ private:
         mutable std::mutex mutex_;
         std::condition_variable cv_;
 
-        // The IMMUTABLE render-visible resident map. The render reads it lock-free
-        // via a raw const* (see residentView()); it is replaced wholesale by the
-        // tick (build next, swap). Owned outright -- no shared_ptr. residentSwapMutex_
-        // guards only the pointer swap, held for the length of one pointer store.
-        std::unique_ptr<const ResidentMap> resident_ = std::make_unique<const ResidentMap>();
-        mutable std::mutex residentSwapMutex_;
+        // The IMMUTABLE render-visible resident map, published via shared_ptr so a
+        // render worker on ANY viewer can pin the map it reads for the whole frame
+        // while the tick (on another viewer's thread) builds + atomically swaps in
+        // the next one. Read with std::atomic_load, swapped with std::atomic_store
+        // (lock-free). The old map stays alive until the last reader drops it.
+        std::shared_ptr<const ResidentMap> resident_ = std::make_shared<const ResidentMap>();
 
         // entries_ is the tick-only WORKING store: it tracks InFlight fetches,
         // fetchSerial, eviction metadata, etc. The render never touches it. The
