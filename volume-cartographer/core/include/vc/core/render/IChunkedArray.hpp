@@ -68,6 +68,22 @@ public:
         return const_cast<IChunkedArray*>(this)->tryGetChunk(level, iz, iy, ix);
     }
 
+    // Raw resident read for the innermost render loop. Returns status + a RAW
+    // pointer to the decoded bytes for Data (no shared_ptr copy -> no atomic
+    // refcount per chunk). The pointer is valid only for the current frozen
+    // frame: the tick/settle discipline guarantees no eviction runs while a frame
+    // reads, so the buffer cannot be freed underneath. Default forwards to
+    // readResident for arrays that don't implement the raw path.
+    struct ResidentView {
+        ChunkStatus status = ChunkStatus::MissQueued;
+        const std::vector<std::byte>* bytes = nullptr;  // valid iff status==Data
+    };
+    virtual ResidentView readResidentRaw(int level, int iz, int iy, int ix) const
+    {
+        ChunkResult r = readResident(level, iz, iy, ix);
+        return ResidentView{r.status, r.bytes ? r.bytes.get() : nullptr};
+    }
+
     // Blocking access is for CLI, batch, optimization, and prefetch callers.
     // Viewer rendering paths must not call this on the Qt/main thread.
     virtual ChunkResult getChunkBlocking(int level, int iz, int iy, int ix) = 0;

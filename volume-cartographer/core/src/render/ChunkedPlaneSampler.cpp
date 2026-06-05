@@ -696,7 +696,12 @@ ChunkedPlaneSampler::Stats maxCompositeTileRange(
                             tf.offsetFromLevel0[1] == 0.0 && tf.offsetFromLevel0[2] == 0.0;
 
     ChunkedPlaneSampler::Stats localStats;
-    LocalChunkCache chunkCache(array, std::max<std::size_t>(16, (end - begin) * 4));
+    // tick/settle: no LocalChunkCache here. readResident is already a lock-free
+    // O(1) probe into the cache's own map, so the second local hashmap was pure
+    // overhead (it existed to shield the old mutex'd tryGetChunk). We keep only a
+    // missed-key dedup set so a missing chunk isn't requested once per pixel.
+    std::unordered_set<ChunkKey, ChunkKeyHash> missedSet;
+    missedSet.reserve(std::max<std::size_t>(16, (end - begin) * 4));
 
     for (std::size_t i = begin; i < end; ++i) {
         const SampleTile& st = tiles[i];
@@ -763,15 +768,21 @@ ChunkedPlaneSampler::Stats maxCompositeTileRange(
                                                  |  std::uint64_t(unsigned(cx));
                     if (chunkKey != lastChunk) {
                         lastChunk = chunkKey;
-                        const ChunkResult& r = chunkCache.get(
-                            {level, cz, cy, cx},
-                            localStats.requestedChunks, localStats.errorChunks);
-                        if (r.status == ChunkStatus::AllFill)
+                        // Raw lock-free resident read -- no LocalChunkCache layer,
+                        // no shared_ptr copy (the tick won't evict mid-frame).
+                        const auto rv = array.readResidentRaw(level, cz, cy, cx);
+                        if (rv.status == ChunkStatus::AllFill) {
                             curBytes = &kAllFillTag;
-                        else if (r.status == ChunkStatus::Data && r.bytes)
-                            curBytes = r.bytes.get();
-                        else
+                        } else if (rv.status == ChunkStatus::Data && rv.bytes) {
+                            curBytes = rv.bytes;
+                        } else {
                             curBytes = nullptr;
+                            if (rv.status == ChunkStatus::MissQueued &&
+                                missedSet.insert({level, cz, cy, cx}).second)
+                                ++localStats.requestedChunks;
+                            else if (rv.status == ChunkStatus::Error)
+                                ++localStats.errorChunks;
+                        }
                     }
 
                     uint8_t value;
@@ -808,7 +819,9 @@ ChunkedPlaneSampler::Stats maxCompositeTileRange(
             }
         }
     }
-    chunkCache.flushMissedKeys(localStats.missedKeys);
+    localStats.missedKeys.insert(localStats.missedKeys.end(),
+        std::make_move_iterator(missedSet.begin()),
+        std::make_move_iterator(missedSet.end()));
     return localStats;
 }
 

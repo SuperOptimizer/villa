@@ -22,15 +22,20 @@ struct ChunkKey {
 struct ChunkKeyHash {
     std::size_t operator()(const ChunkKey& key) const noexcept
     {
-        std::size_t seed = 0;
-        auto combine = [&seed](int value) {
-            seed ^= std::hash<int>{}(value) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
-        };
-        combine(key.level);
-        combine(key.iz);
-        combine(key.iy);
-        combine(key.ix);
-        return seed;
+        // Hot path: probed on every chunk lookup in the render read path. Pack the
+        // four small fields (level < 64, coords < 2^21 for any real volume) into a
+        // single 64-bit word and apply one finalizer mix, instead of four
+        // sequential hash-combine rounds. This is the dominant cost of entries_
+        // .find; a single multiply-xorshift is far cheaper and spreads bits well.
+        std::uint64_t h = (std::uint64_t(std::uint32_t(key.level)) << 60)
+                        ^ (std::uint64_t(std::uint32_t(key.iz)) << 40)
+                        ^ (std::uint64_t(std::uint32_t(key.iy)) << 20)
+                        ^  std::uint64_t(std::uint32_t(key.ix));
+        // splitmix64 finalizer
+        h ^= h >> 30; h *= 0xbf58476d1ce4e5b9ULL;
+        h ^= h >> 27; h *= 0x94d049bb133111ebULL;
+        h ^= h >> 31;
+        return std::size_t(h);
     }
 };
 

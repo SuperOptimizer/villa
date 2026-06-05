@@ -111,6 +111,10 @@ ChunkCache::ChunkCache(std::vector<LevelInfo> levels,
             if (dim <= 0)
                 throw std::invalid_argument("ChunkCache chunk shape must be positive");
         }
+        // Precompute chunk-grid extent so isValidKey avoids per-call division.
+        auto& lvl = state_->levels_[i];
+        for (int a = 0; a < 3; ++a)
+            lvl.chunkGrid[a] = (lvl.shape[a] + lvl.chunkShape[a] - 1) / lvl.chunkShape[a];
     }
 }
 
@@ -251,6 +255,43 @@ ChunkResult ChunkCache::readResident(int level, int iz, int iy, int ix) const
     default:
         return ChunkResult{ChunkStatus::MissQueued, state.dtype_,
                            state.levels_[level].chunkShape, {}, {}};
+    }
+}
+
+IChunkedArray::ResidentView ChunkCache::readResidentRaw(int level, int iz, int iy, int ix) const
+{
+    // Raw variant of readResident: returns a RAW pointer to the resident bytes
+    // (no shared_ptr copy, no atomic refcount). Valid only this frozen frame --
+    // the tick never evicts while a render reads. This is the innermost render
+    // read; avoiding the refcount matters because it runs once per chunk per
+    // pixel-column in the composite/sample loops.
+    auto& state = *state_;
+    const ChunkKey key{level, iz, iy, ix};
+    if (level >= 0 && level < static_cast<int>(state.fetchers_.size()) &&
+        !state.fetchers_[static_cast<std::size_t>(level)])
+        return ResidentView{ChunkStatus::Missing, nullptr};
+    if (!isValidKey(state, key))
+        return ResidentView{ChunkStatus::AllFill, nullptr};
+
+    auto it = state.entries_.find(key);
+    if (it == state.entries_.end())
+        return ResidentView{ChunkStatus::MissQueued, nullptr};
+
+    const Entry& entry = it->second;
+    std::atomic_ref<bool>(const_cast<bool&>(entry.referenced))
+        .store(true, std::memory_order_relaxed);  // NRU mark
+    switch (entry.status) {
+    case EntryStatus::Data:
+        return ResidentView{ChunkStatus::Data, entry.bytes.get()};
+    case EntryStatus::AllFill:
+        return ResidentView{ChunkStatus::AllFill, nullptr};
+    case EntryStatus::Missing:
+        return ResidentView{ChunkStatus::Missing, nullptr};
+    case EntryStatus::Error:
+        return ResidentView{ChunkStatus::Error, nullptr};
+    case EntryStatus::InFlight:
+    default:
+        return ResidentView{ChunkStatus::MissQueued, nullptr};
     }
 }
 
@@ -983,15 +1024,10 @@ bool ChunkCache::isValidKey(const State& state, const ChunkKey& key)
     if (!state.fetchers_[static_cast<std::size_t>(key.level)])
         return false;
     const auto& level = state.levels_[static_cast<std::size_t>(key.level)];
-    const std::array<int, 3> coords{key.iz, key.iy, key.ix};
-    for (int axis = 0; axis < 3; ++axis) {
-        if (coords[axis] < 0)
-            return false;
-        const int chunks = (level.shape[axis] + level.chunkShape[axis] - 1) / level.chunkShape[axis];
-        if (coords[axis] >= chunks)
-            return false;
-    }
-    return true;
+    // chunkGrid is precomputed (ceil(shape/chunkShape)); no per-call division.
+    return unsigned(key.iz) < unsigned(level.chunkGrid[0])
+        && unsigned(key.iy) < unsigned(level.chunkGrid[1])
+        && unsigned(key.ix) < unsigned(level.chunkGrid[2]);
 }
 
 bool ChunkCache::isAllFill(const State& state, const std::vector<std::byte>& bytes)

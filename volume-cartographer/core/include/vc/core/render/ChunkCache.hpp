@@ -24,6 +24,10 @@ public:
         std::array<int, 3> shape{};
         std::array<int, 3> chunkShape{};
         LevelTransform transform{};
+        // Precomputed chunk-grid extent = ceil(shape/chunkShape) per axis. Filled
+        // by the ctor so isValidKey is 3 compares, not 3 integer divisions per
+        // call (it runs once per chunk-change in the render read path).
+        std::array<int, 3> chunkGrid{};
     };
 
     struct Options {
@@ -101,6 +105,7 @@ public:
     // Safe only while frozen() (nothing writes entries_). A miss returns
     // MissQueued but queues nothing -- the caller records it via requestChunks().
     ChunkResult readResident(int level, int iz, int iy, int ix) const override;
+    ResidentView readResidentRaw(int level, int iz, int iy, int ix) const override;
     bool frozen() const;
 
 private:
