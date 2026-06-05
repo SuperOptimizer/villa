@@ -1,8 +1,10 @@
 #include "LineAnnotationController.hpp"
 
 #include "CState.hpp"
+#include "LineAnnotationFiberNaming.hpp"
 #include "LineAnnotationDialog.hpp"
 #include "SurfacePanelController.hpp"
+#include "VCSettings.hpp"
 #include "ViewerManager.hpp"
 #include "vc/core/types/VolumePkg.hpp"
 #include "vc/core/util/Logging.hpp"
@@ -21,6 +23,7 @@
 #include <QMessageBox>
 #include <QPointF>
 #include <QDateTime>
+#include <QSettings>
 #include <QStringList>
 #include <QtConcurrent/QtConcurrent>
 #include <QWidget>
@@ -70,6 +73,11 @@ struct LineAnnotationController::LineAnnotationSession {
     std::string error;
     QPointer<QFutureWatcher<OptimizationTaskResult>> watcher;
     uint64_t fiberId = 0;
+    std::string fiberUsername;
+    std::string fiberStartedAt;
+    uint64_t fiberSequence = 0;
+    std::string fiberFileName;
+    std::string fiberManualHvTag;
     bool suppressFiberSave = false;
 };
 
@@ -105,6 +113,11 @@ cv::Vec3d normalizedOrZero(const cv::Vec3d& v)
 bool finitePoint(const cv::Vec3d& v)
 {
     return std::isfinite(v[0]) && std::isfinite(v[1]) && std::isfinite(v[2]);
+}
+
+bool approximatelyEqual(double a, double b)
+{
+    return std::abs(a - b) <= 1.0e-9;
 }
 
 nlohmann::json pointToJson(const cv::Vec3d& point)
@@ -599,6 +612,11 @@ void LineAnnotationController::openFiber(uint64_t fiberId)
 
     auto session = std::make_shared<LineAnnotationSession>();
     session->fiberId = it->id;
+    session->fiberUsername = it->username;
+    session->fiberStartedAt = it->startedAt;
+    session->fiberSequence = it->sequence;
+    session->fiberFileName = it->fileName;
+    session->fiberManualHvTag = it->manualHvTag;
     session->focusedLinePosition = static_cast<double>(it->linePoints.size() / 2);
     session->focusedControlPoint = it->controlPoints.empty()
         ? std::optional<cv::Vec3d>{}
@@ -702,6 +720,89 @@ void LineAnnotationController::deleteFiber(uint64_t fiberId)
     emitFiberSummaries();
 }
 
+void LineAnnotationController::setFiberManualHvTag(uint64_t fiberId, const QString& tag)
+{
+    const auto normalizedTag = vc3d::line_annotation::fiberHvTagToString(
+        vc3d::line_annotation::fiberHvTagFromString(tag.toStdString()));
+    const std::string manualTag = normalizedTag == "unknown" ? std::string{} : normalizedTag;
+
+    auto it = std::find_if(_fibers.begin(), _fibers.end(), [fiberId](const StoredFiber& fiber) {
+        return fiber.id == fiberId;
+    });
+    if (it == _fibers.end()) {
+        showError(tr("Fiber %1 is not loaded.").arg(fiberId));
+        return;
+    }
+
+    const std::string previousManualTag = it->manualHvTag;
+    it->manualHvTag = manualTag;
+    it->needsSave = false;
+    try {
+        saveFiber(*it);
+    } catch (const std::exception& ex) {
+        it->manualHvTag = previousManualTag;
+        showError(tr("Could not save fiber %1: %2")
+                      .arg(fiberId)
+                      .arg(QString::fromStdString(ex.what())));
+        return;
+    }
+
+    for (const auto& pane : _panes) {
+        if (pane.session && pane.session->fiberId == fiberId) {
+            pane.session->fiberManualHvTag = manualTag;
+        }
+    }
+    emitFiberSummaries();
+}
+
+void LineAnnotationController::recalculateFiberHvClassification(uint64_t fiberId)
+{
+    auto it = std::find_if(_fibers.begin(), _fibers.end(), [fiberId](const StoredFiber& fiber) {
+        return fiber.id == fiberId;
+    });
+    if (it == _fibers.end()) {
+        showError(tr("Fiber %1 is not loaded.").arg(fiberId));
+        return;
+    }
+
+    const auto previousClassification = it->hvClassification;
+    it->hvClassification = vc3d::line_annotation::classifyFiberHv(it->controlPoints);
+    it->needsSave = false;
+    try {
+        saveFiber(*it);
+    } catch (const std::exception& ex) {
+        it->hvClassification = previousClassification;
+        showError(tr("Could not save fiber %1: %2")
+                      .arg(fiberId)
+                      .arg(QString::fromStdString(ex.what())));
+        return;
+    }
+    emitFiberSummaries();
+}
+
+void LineAnnotationController::recalculateAllFiberHvClassifications()
+{
+    bool changed = false;
+    for (auto& fiber : _fibers) {
+        const auto previousClassification = fiber.hvClassification;
+        fiber.hvClassification = vc3d::line_annotation::classifyFiberHv(fiber.controlPoints);
+        fiber.needsSave = false;
+        try {
+            saveFiber(fiber);
+            changed = true;
+        } catch (const std::exception& ex) {
+            fiber.hvClassification = previousClassification;
+            fiber.needsSave = true;
+            Logger()->warn("Could not save recalculated VC3D fiber {}: {}",
+                           fiberPath(fiber).string(),
+                           ex.what());
+        }
+    }
+    if (changed) {
+        emitFiberSummaries();
+    }
+}
+
 void LineAnnotationController::saveOpenFibers()
 {
     for (const auto& pane : _panes) {
@@ -728,6 +829,13 @@ std::vector<LineAnnotationController::FiberSummary> LineAnnotationController::fi
             static_cast<int>(fiber.controlPoints.size()),
             static_cast<int>(fiber.linePoints.size()),
             lineLengthVx(fiber.linePoints),
+            fiber.hvClassification.zDistance,
+            fiber.hvClassification.fiberLength,
+            fiber.hvClassification.horizontalScore,
+            fiber.hvClassification.verticalScore,
+            fiber.hvClassification.automaticCertainty,
+            vc3d::line_annotation::fiberHvTagToString(fiber.hvClassification.automaticTag),
+            fiber.manualHvTag,
         });
     }
     std::sort(summaries.begin(), summaries.end(), [](const FiberSummary& a, const FiberSummary& b) {
@@ -775,6 +883,7 @@ void LineAnnotationController::handleLineSeed(const std::string& surfaceName,
     }
 
     session.initialDirectionMode = directionMode;
+    ensureSessionFiberIdentity(session);
     const cv::Vec3d seedPoint(volumePoint[0], volumePoint[1], volumePoint[2]);
     session.seedPoint = seedPoint;
     session.focusedLinePosition = 0.0;
@@ -1497,6 +1606,17 @@ void LineAnnotationController::loadFibersForCurrentPackage()
         }
         try {
             if (auto fiber = loadFiberFile(entry.path())) {
+                if (fiber->needsSave) {
+                    try {
+                        fiber->needsSave = false;
+                        saveFiber(*fiber);
+                    } catch (const std::exception& ex) {
+                        fiber->needsSave = true;
+                        Logger()->warn("Could not update VC3D fiber metadata {}: {}",
+                                       entry.path().string(),
+                                       ex.what());
+                    }
+                }
                 _fibers.push_back(std::move(*fiber));
             }
         } catch (const std::exception& ex) {
@@ -1531,7 +1651,25 @@ fs::path LineAnnotationController::fibersDir() const
 
 fs::path LineAnnotationController::fiberPath(uint64_t fiberId) const
 {
+    const auto it = std::find_if(_fibers.begin(), _fibers.end(), [fiberId](const StoredFiber& fiber) {
+        return fiber.id == fiberId;
+    });
+    if (it != _fibers.end()) {
+        return fiberPath(*it);
+    }
     return fibersDir() / (std::to_string(fiberId) + ".json");
+}
+
+fs::path LineAnnotationController::fiberPath(const StoredFiber& fiber) const
+{
+    if (!fiber.fileName.empty()) {
+        return fibersDir() / fiber.fileName;
+    }
+    if (!fiber.username.empty() && !fiber.startedAt.empty() && fiber.sequence > 0) {
+        return fibersDir() / vc3d::line_annotation::fiberFileName(
+            fiber.username, fiber.startedAt, fiber.sequence);
+    }
+    return fibersDir() / (std::to_string(fiber.id) + ".json");
 }
 
 uint64_t LineAnnotationController::nextFiberId() const
@@ -1543,17 +1681,63 @@ uint64_t LineAnnotationController::nextFiberId() const
     return id;
 }
 
-double LineAnnotationController::lineLengthVx(const std::vector<cv::Vec3d>& points)
+uint64_t LineAnnotationController::nextFiberSequenceForUsername(const std::string& username) const
 {
-    double length = 0.0;
-    for (size_t i = 1; i < points.size(); ++i) {
-        const cv::Vec3d delta = points[i] - points[i - 1];
-        const double step = std::sqrt(delta.dot(delta));
-        if (std::isfinite(step)) {
-            length += step;
+    const std::string normalized = vc3d::line_annotation::normalizedFiberUsername(username);
+    uint64_t sequence = 1;
+    for (const auto& fiber : _fibers) {
+        if (vc3d::line_annotation::normalizedFiberUsername(fiber.username) == normalized) {
+            sequence = std::max(sequence, fiber.sequence + 1);
         }
     }
-    return length;
+    for (const auto& pane : _panes) {
+        if (!pane.session || pane.session->fiberSequence == 0) {
+            continue;
+        }
+        if (vc3d::line_annotation::normalizedFiberUsername(pane.session->fiberUsername) == normalized) {
+            sequence = std::max(sequence, pane.session->fiberSequence + 1);
+        }
+    }
+    return sequence;
+}
+
+std::string LineAnnotationController::currentFiberUsername() const
+{
+    QSettings settings(vc3d::settingsFilePath(), QSettings::IniFormat);
+    return vc3d::line_annotation::normalizedFiberUsername(
+        settings.value(vc3d::settings::viewer::USERNAME,
+                       vc3d::settings::viewer::USERNAME_DEFAULT).toString().toStdString());
+}
+
+std::string LineAnnotationController::currentFiberDateTimeString()
+{
+    return QDateTime::currentDateTimeUtc()
+        .toString(QStringLiteral("yyyyMMddTHHmmsszzz"))
+        .toStdString();
+}
+
+void LineAnnotationController::ensureSessionFiberIdentity(LineAnnotationSession& session)
+{
+    if (!session.fiberFileName.empty()) {
+        if (session.fiberUsername.empty()) {
+            session.fiberUsername = "anon";
+        }
+        if (session.fiberSequence == 0 && session.fiberId != 0) {
+            session.fiberSequence = session.fiberId;
+        }
+        return;
+    }
+
+    session.fiberUsername = currentFiberUsername();
+    session.fiberStartedAt = currentFiberDateTimeString();
+    session.fiberSequence = nextFiberSequenceForUsername(session.fiberUsername);
+    session.fiberFileName = vc3d::line_annotation::fiberFileName(
+        session.fiberUsername, session.fiberStartedAt, session.fiberSequence);
+}
+
+double LineAnnotationController::lineLengthVx(const std::vector<cv::Vec3d>& points)
+{
+    return vc3d::line_annotation::fiberLineLengthVx(points);
 }
 
 vc::lasagna::LineModel LineAnnotationController::lineModelFromPoints(
@@ -1608,8 +1792,13 @@ vc::lasagna::LineModel LineAnnotationController::lineModelFromPoints(
 void LineAnnotationController::saveSessionAsFiber(LineAnnotationSession& session)
 {
     try {
+        ensureSessionFiberIdentity(session);
         StoredFiber fiber;
         fiber.id = session.fiberId == 0 ? nextFiberId() : session.fiberId;
+        fiber.username = session.fiberUsername;
+        fiber.startedAt = session.fiberStartedAt;
+        fiber.sequence = session.fiberSequence;
+        fiber.fileName = session.fiberFileName;
         fiber.controlPoints.reserve(session.controlPoints.size());
         auto controls = session.controlPoints;
         std::stable_sort(controls.begin(),
@@ -1625,8 +1814,14 @@ void LineAnnotationController::saveSessionAsFiber(LineAnnotationSession& session
         for (const auto& point : session.optimizedLine.points) {
             fiber.linePoints.push_back(point.position);
         }
+        fiber.hvClassification = vc3d::line_annotation::classifyFiberHv(fiber.controlPoints);
+        fiber.manualHvTag = session.fiberManualHvTag;
         saveFiber(fiber);
         session.fiberId = fiber.id;
+        session.fiberUsername = fiber.username;
+        session.fiberStartedAt = fiber.startedAt;
+        session.fiberSequence = fiber.sequence;
+        session.fiberFileName = fiber.fileName;
 
         auto it = std::find_if(_fibers.begin(), _fibers.end(), [&fiber](const StoredFiber& existing) {
             return existing.id == fiber.id;
@@ -1659,6 +1854,20 @@ void LineAnnotationController::saveFiber(const StoredFiber& fiber) const
     nlohmann::json root = nlohmann::json::object();
     root["type"] = "vc3d_fiber";
     root["version"] = 1;
+    root["id"] = fiber.id;
+    root["username"] = fiber.username;
+    root["started_at"] = fiber.startedAt;
+    root["sequence"] = fiber.sequence;
+    root["filename"] = fiber.fileName;
+    root["hv_classification"] = {
+        {"z_distance", fiber.hvClassification.zDistance},
+        {"control_point_length", fiber.hvClassification.fiberLength},
+        {"horizontal_score", fiber.hvClassification.horizontalScore},
+        {"vertical_score", fiber.hvClassification.verticalScore},
+        {"automatic_tag", vc3d::line_annotation::fiberHvTagToString(fiber.hvClassification.automaticTag)},
+        {"automatic_certainty", fiber.hvClassification.automaticCertainty},
+        {"manual_tag", fiber.manualHvTag},
+    };
     root["control_points"] = nlohmann::json::array();
     root["line_points"] = nlohmann::json::array();
     for (const auto& point : fiber.controlPoints) {
@@ -1668,7 +1877,7 @@ void LineAnnotationController::saveFiber(const StoredFiber& fiber) const
         root["line_points"].push_back(pointToJson(point));
     }
 
-    const fs::path finalPath = fiberPath(fiber.id);
+    const fs::path finalPath = fiberPath(fiber);
     const fs::path tempPath = finalPath.string() + ".tmp";
     {
         std::ofstream out(tempPath);
@@ -1688,17 +1897,14 @@ std::optional<LineAnnotationController::StoredFiber> LineAnnotationController::l
     const fs::path& path) const
 {
     std::string stem = path.stem().string();
+    const std::string originalStem = stem;
     if (stem.rfind("fiber_", 0) == 0) {
         stem = stem.substr(6);
     }
-    if (stem.empty() || !std::all_of(stem.begin(), stem.end(), [](char ch) {
+    const bool hasLegacyNumericStem = !stem.empty() &&
+        std::all_of(stem.begin(), stem.end(), [](char ch) {
             return ch >= '0' && ch <= '9';
-        })) {
-        return std::nullopt;
-    }
-
-    StoredFiber fiber;
-    fiber.id = std::stoull(stem);
+        });
 
     std::ifstream in(path);
     if (!in) {
@@ -1711,6 +1917,37 @@ std::optional<LineAnnotationController::StoredFiber> LineAnnotationController::l
     }
     if (root.value("version", 0) != 1) {
         throw std::runtime_error("Unsupported vc3d_fiber version");
+    }
+
+    StoredFiber fiber;
+    if (root.contains("id")) {
+        fiber.id = root.at("id").get<uint64_t>();
+    } else if (hasLegacyNumericStem) {
+        fiber.id = std::stoull(stem);
+    } else {
+        return std::nullopt;
+    }
+    fiber.username = vc3d::line_annotation::normalizedFiberUsername(
+        root.value("username", std::string{"anon"}));
+    fiber.startedAt = root.value("started_at", std::string{});
+    if (root.contains("sequence")) {
+        fiber.sequence = root.at("sequence").get<uint64_t>();
+    } else if (hasLegacyNumericStem) {
+        fiber.sequence = fiber.id;
+    }
+    fiber.fileName = path.filename().string();
+    if (fiber.fileName.empty() && !fiber.startedAt.empty() && fiber.sequence > 0) {
+        fiber.fileName = vc3d::line_annotation::fiberFileName(
+            fiber.username, fiber.startedAt, fiber.sequence);
+    }
+    if (fiber.startedAt.empty() && !hasLegacyNumericStem) {
+        Logger()->warn("VC3D fiber file {} has no started_at metadata", path.string());
+    }
+    if (fiber.sequence == 0 && !hasLegacyNumericStem) {
+        Logger()->warn("VC3D fiber file {} has no sequence metadata", path.string());
+    }
+    if (fiber.fileName.empty()) {
+        fiber.fileName = originalStem + ".json";
     }
 
     const auto& controls = root.at("control_points");
@@ -1726,6 +1963,45 @@ std::optional<LineAnnotationController::StoredFiber> LineAnnotationController::l
     fiber.linePoints.reserve(linePoints.size());
     for (const auto& point : linePoints) {
         fiber.linePoints.push_back(pointFromJson(point));
+    }
+
+    fiber.hvClassification = vc3d::line_annotation::classifyFiberHv(fiber.controlPoints);
+    fiber.manualHvTag.clear();
+    bool hasHvClassification = false;
+    if (root.contains("hv_classification") && root.at("hv_classification").is_object()) {
+        const auto& hv = root.at("hv_classification");
+        hasHvClassification =
+            hv.contains("z_distance") &&
+            hv.contains("control_point_length") &&
+            hv.contains("horizontal_score") &&
+            hv.contains("vertical_score") &&
+            hv.contains("automatic_tag") &&
+            hv.contains("automatic_certainty") &&
+            hv.contains("manual_tag");
+        if (hv.contains("manual_tag")) {
+            const std::string manualTag = vc3d::line_annotation::fiberHvTagToString(
+                vc3d::line_annotation::fiberHvTagFromString(hv.value("manual_tag", std::string{})));
+            fiber.manualHvTag = manualTag == "unknown" ? std::string{} : manualTag;
+        }
+        if (hasHvClassification) {
+            const auto storedAutoTag = vc3d::line_annotation::fiberHvTagFromString(
+                hv.value("automatic_tag", std::string{}));
+            hasHvClassification =
+                approximatelyEqual(hv.value("z_distance", -1.0),
+                                   fiber.hvClassification.zDistance) &&
+                approximatelyEqual(hv.value("control_point_length", -1.0),
+                                   fiber.hvClassification.fiberLength) &&
+                approximatelyEqual(hv.value("horizontal_score", -1.0),
+                                   fiber.hvClassification.horizontalScore) &&
+                approximatelyEqual(hv.value("vertical_score", -1.0),
+                                   fiber.hvClassification.verticalScore) &&
+                approximatelyEqual(hv.value("automatic_certainty", -1.0),
+                                   fiber.hvClassification.automaticCertainty) &&
+                storedAutoTag == fiber.hvClassification.automaticTag;
+        }
+    }
+    if (!hasHvClassification) {
+        fiber.needsSave = true;
     }
     return fiber;
 }
