@@ -1,4 +1,5 @@
 #include "vc/core/render/ChunkedPlaneSampler.hpp"
+#include "vc/core/render/ChunkCache.hpp"
 
 #include <utils/thread_pool.hpp>
 
@@ -650,9 +651,9 @@ namespace {
 // chunkShape values -- which also frees the registers those values occupied,
 // cutting the spilling in this hot loop. CHUNK_LOG2 == -1 selects a generic
 // runtime path (non-power-of-two or non-cubic chunk shapes; not hit in practice).
-template <int CHUNK_LOG2>
+template <int CHUNK_LOG2, typename ArrayT>
 ChunkedPlaneSampler::Stats maxCompositeTileRange(
-    IChunkedArray& array,
+    ArrayT& array,
     const LevelAccess& access,
     int level,
     const cv::Mat_<cv::Vec3f>& coords,
@@ -867,17 +868,28 @@ ChunkedPlaneSampler::Stats ChunkedPlaneSampler::sampleCoordsMaxComposite(
                            access.chunkShape[1] == cs0 && access.chunkShape[2] == cs0;
     const int chunkLog = cubicPow2 ? __builtin_ctz(unsigned(cs0)) : -1;
 
+    // Devirtualize the hot per-chunk readResidentRaw call: the array is always a
+    // ChunkCache in practice. Downcast ONCE here so the templated kernel makes
+    // direct (inlinable) calls instead of virtual dispatch through IChunkedArray.
+    // Falls back to the virtual path for any other array type.
+    ChunkCache* cc = dynamic_cast<ChunkCache*>(&array);
+
     auto runRange = [&](std::size_t begin, std::size_t end) {
-        switch (chunkLog) {
-            case 5:  return maxCompositeTileRange<5>(array, access, level, coords, normals,
-                         out, coverage, tiles, begin, end, layerStart, numLayers, layerStep, isoCutoff);
-            case 4:  return maxCompositeTileRange<4>(array, access, level, coords, normals,
-                         out, coverage, tiles, begin, end, layerStart, numLayers, layerStep, isoCutoff);
-            case 6:  return maxCompositeTileRange<6>(array, access, level, coords, normals,
-                         out, coverage, tiles, begin, end, layerStart, numLayers, layerStep, isoCutoff);
-            default: return maxCompositeTileRange<-1>(array, access, level, coords, normals,
-                         out, coverage, tiles, begin, end, layerStart, numLayers, layerStep, isoCutoff);
-        }
+        auto dispatch = [&](auto& arr) -> ChunkedPlaneSampler::Stats {
+            switch (chunkLog) {
+                case 5:  return maxCompositeTileRange<5>(arr, access, level, coords, normals,
+                             out, coverage, tiles, begin, end, layerStart, numLayers, layerStep, isoCutoff);
+                case 4:  return maxCompositeTileRange<4>(arr, access, level, coords, normals,
+                             out, coverage, tiles, begin, end, layerStart, numLayers, layerStep, isoCutoff);
+                case 6:  return maxCompositeTileRange<6>(arr, access, level, coords, normals,
+                             out, coverage, tiles, begin, end, layerStart, numLayers, layerStep, isoCutoff);
+                default: return maxCompositeTileRange<-1>(arr, access, level, coords, normals,
+                             out, coverage, tiles, begin, end, layerStart, numLayers, layerStep, isoCutoff);
+            }
+        };
+        if (cc)
+            return dispatch(*cc);    // concrete ChunkCache -> direct calls
+        return dispatch(array);      // generic IChunkedArray -> virtual
     };
 
     if (!shouldParallelizeSamples(h, w) || tiles.size() <= 1)
