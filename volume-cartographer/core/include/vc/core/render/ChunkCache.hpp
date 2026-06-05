@@ -25,8 +25,11 @@ public:
     struct ChunkKeyEmpty {
         static ChunkKey empty()
         {
-            constexpr int k = -2147483647 - 1;  // INT_MIN; real keys have level>=0
-            return ChunkKey{k, k, k, k};
+            // The empty sentinel sets the high (bit-63) flag, which no real key
+            // ever sets -- so it can never collide with a valid (lod,z,y,x).
+            ChunkKey k;
+            k.empty = 1;
+            return k;
         }
     };
     // What a sample needs: status (Data/AllFill) + the decoded bytes. The render
