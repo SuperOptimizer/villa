@@ -1,18 +1,19 @@
 #pragma once
 
 // A small open-addressing hash map (linear probing, power-of-two capacity,
-// backward-shift deletion -> no tombstones) tailored for the chunk cache.
+// reinsert-cluster deletion -> no tombstones) tailored for the chunk cache.
 //
-// Storage is SPLIT: a dense array of keys (probed) parallel to an array of
-// values. The find loop scans only the key array, so more keys fit per cache
-// line and the probe touches far fewer cache lines than a node-based
-// std::unordered_map (pointer-per-node) or an inline {key,value} slot array
-// (value bloats the stride). Values can be move-only (e.g. hold a unique_ptr);
-// they are relocated by move on grow / backward-shift delete.
+// The PROBE array holds 8-byte PACKED keys (KeyTraits::pack), not the 16-byte
+// full keys: 8 packs per cache line vs 4 full keys, and the slot match is a
+// single 64-bit compare. The full key array is parallel (for iteration / exact
+// rehash) but the hot find() touches only the pack array. Values can be move-only
+// (they hold a shared_ptr); they are relocated by move on grow / delete.
 //
-// API surface mirrors the std::unordered_map operations the cache uses:
-// find / emplace / erase / iterate (structured bindings) / size / clear /
-// reserve, with it->first, it->second.
+// KeyTraits must provide: Key empty(); uint64_t pack(const Key&). pack must be a
+// bijection on real keys and pack(empty()) must be a value no real key produces.
+//
+// API mirrors the std::unordered_map operations the cache uses: find / emplace /
+// erase / iterate (structured bindings) / size / clear / reserve.
 
 #include <cstddef>
 #include <cstdint>
@@ -23,6 +24,8 @@ namespace vc::render {
 
 template <typename Key, typename Value, typename Hash, typename KeyTraits>
 class OpenAddrMap {
+    static std::uint64_t emptyPack() { return KeyTraits::pack(KeyTraits::empty()); }
+
 public:
     OpenAddrMap() { allocate(kInitialCapacity); }
 
@@ -34,7 +37,8 @@ public:
 
         void skipEmpty()
         {
-            while (i_ < m_->cap_ && m_->keys_[i_] == KeyTraits::empty())
+            const std::uint64_t e = emptyPack();
+            while (i_ < m_->cap_ && m_->packed_[i_] == e)
                 ++i_;
         }
 
@@ -72,13 +76,13 @@ public:
 
     iterator find(const Key& key)
     {
-        const std::size_t idx = probe(key);
-        return keys_[idx] == key ? iterator(this, idx) : end();
+        const std::size_t idx = probe(KeyTraits::pack(key));
+        return idx != kNpos ? iterator(this, idx) : end();
     }
     const_iterator find(const Key& key) const
     {
-        const std::size_t idx = probe(key);
-        return keys_[idx] == key ? const_iterator(this, idx) : end();
+        const std::size_t idx = probe(KeyTraits::pack(key));
+        return idx != kNpos ? const_iterator(this, idx) : end();
     }
 
     template <typename... Args>
@@ -86,15 +90,18 @@ public:
     {
         if ((size_ + 1) * 4 >= cap_ * 3)   // load factor > 0.75 -> grow
             grow();
-        std::size_t i = Hash{}(key) & mask_;
+        const std::uint64_t p = KeyTraits::pack(key);
+        const std::uint64_t e = emptyPack();
+        std::size_t i = std::size_t(p) & mask_;
         for (;;) {
-            if (keys_[i] == KeyTraits::empty()) {
+            if (packed_[i] == e) {
+                packed_[i] = p;
                 keys_[i] = key;
                 values_[i] = Value(std::forward<Args>(args)...);
                 ++size_;
                 return {iterator(this, i), true};
             }
-            if (keys_[i] == key)
+            if (packed_[i] == p)
                 return {iterator(this, i), false};
             i = (i + 1) & mask_;
         }
@@ -102,26 +109,27 @@ public:
 
     iterator erase(iterator it)
     {
-        // Empty the slot, then RE-INSERT every following element in the same
-        // cluster (up to the next empty slot). This is the provably-correct
-        // deletion for linear probing: any element whose probe chain passed
-        // through the hole is reinserted at its proper position. Simpler and
-        // safer than hand-rolled backward-shift (a subtle wrap-around bug there
-        // mis-associated keys with values -> chunks read with the wrong status).
+        // Empty the slot, then RE-INSERT every following element in the cluster
+        // (up to the next empty slot) at its proper position. Provably correct for
+        // linear probing; avoids the subtle backward-shift wrap bugs.
+        const std::uint64_t e = emptyPack();
         const std::size_t start = it.index();
+        packed_[start] = e;
         keys_[start] = KeyTraits::empty();
         values_[start] = Value{};
         --size_;
 
         std::size_t i = (start + 1) & mask_;
-        while (!(keys_[i] == KeyTraits::empty())) {
+        while (packed_[i] != e) {
+            const std::uint64_t p = packed_[i];
             Key k = keys_[i];
             Value v = std::move(values_[i]);
+            packed_[i] = e;
             keys_[i] = KeyTraits::empty();
-            // reinsert (size_ unchanged: it's already counted)
-            std::size_t j = Hash{}(k) & mask_;
-            while (!(keys_[j] == KeyTraits::empty()))
+            std::size_t j = std::size_t(p) & mask_;
+            while (packed_[j] != e)
                 j = (j + 1) & mask_;
+            packed_[j] = p;
             keys_[j] = k;
             values_[j] = std::move(v);
             i = (i + 1) & mask_;
@@ -131,8 +139,10 @@ public:
 
     void clear()
     {
+        const std::uint64_t e = emptyPack();
         for (std::size_t i = 0; i < cap_; ++i) {
-            if (!(keys_[i] == KeyTraits::empty())) {
+            if (packed_[i] != e) {
+                packed_[i] = e;
                 keys_[i] = KeyTraits::empty();
                 values_[i] = Value{};
             }
@@ -151,24 +161,31 @@ public:
 
 private:
     static constexpr std::size_t kInitialCapacity = 64;
+    static constexpr std::size_t kNpos = ~std::size_t(0);
 
     void allocate(std::size_t cap)
     {
         cap_ = cap;
         mask_ = cap - 1;
         size_ = 0;
+        packed_.assign(cap, emptyPack());
         keys_.assign(cap, KeyTraits::empty());
         values_.clear();
         values_.resize(cap);
     }
 
-    // Probe to the slot holding `key`, or the first empty slot in its chain.
-    std::size_t probe(const Key& key) const
+    // Probe the PACKED array only (8B/slot, cache-dense). Returns the slot index
+    // holding `p`, or kNpos if the chain ends at an empty slot without a match.
+    std::size_t probe(std::uint64_t p) const
     {
-        std::size_t i = Hash{}(key) & mask_;
+        const std::uint64_t e = emptyPack();
+        std::size_t i = std::size_t(p) & mask_;
         for (;;) {
-            if (keys_[i] == key || keys_[i] == KeyTraits::empty())
+            const std::uint64_t s = packed_[i];
+            if (s == p)
                 return i;
+            if (s == e)
+                return kNpos;
             i = (i + 1) & mask_;
         }
     }
@@ -177,15 +194,18 @@ private:
 
     void rehash(std::size_t newCap)
     {
+        std::vector<std::uint64_t> oldPacked = std::move(packed_);
         std::vector<Key> oldKeys = std::move(keys_);
         std::vector<Value> oldValues = std::move(values_);
         const std::size_t oldCap = cap_;
+        const std::uint64_t e = emptyPack();
         allocate(newCap);
         for (std::size_t j = 0; j < oldCap; ++j) {
-            if (!(oldKeys[j] == KeyTraits::empty())) {
-                std::size_t i = Hash{}(oldKeys[j]) & mask_;
-                while (!(keys_[i] == KeyTraits::empty()))
+            if (oldPacked[j] != e) {
+                std::size_t i = std::size_t(oldPacked[j]) & mask_;
+                while (packed_[i] != e)
                     i = (i + 1) & mask_;
+                packed_[i] = oldPacked[j];
                 keys_[i] = oldKeys[j];
                 values_[i] = std::move(oldValues[j]);
                 ++size_;
@@ -193,8 +213,9 @@ private:
         }
     }
 
-    std::vector<Key> keys_;       // dense, probed -- the hot array
-    std::vector<Value> values_;   // parallel to keys_
+    std::vector<std::uint64_t> packed_;  // 8B packed keys -- the hot probe array
+    std::vector<Key> keys_;              // full keys, parallel (iteration/exact)
+    std::vector<Value> values_;          // parallel to packed_/keys_
     std::size_t cap_ = 0;
     std::size_t mask_ = 0;
     std::size_t size_ = 0;

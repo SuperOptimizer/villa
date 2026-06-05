@@ -693,9 +693,17 @@ ChunkedPlaneSampler::Stats maxCompositeTileRange(
     ChunkedPlaneSampler::Stats localStats;
     // Pin the resident map for the whole tile range so the raw byte pointers from
     // lookup() stay valid even if the tick swaps in a new map concurrently (the
-    // cache is shared across viewers). No ChunkProbe layer -- lookup is already a
-    // lock-free O(1) probe; we keep only a missed-key dedup set.
-    auto pin = array.makeResidentPin();
+    // cache is shared across viewers). For a concrete ChunkCache we take a by-value
+    // ResidentPin so lookup() is a direct (inlinable) call -- no virtual dispatch.
+    constexpr bool kConcrete = std::is_same_v<ArrayT, ChunkCache>;
+    auto pin = [&] {
+        if constexpr (kConcrete) return array.pinConcrete();
+        else return array.makeResidentPin();
+    }();
+    auto doLookup = [&](int lv, int z, int y, int x) {
+        if constexpr (kConcrete) return pin.lookup(lv, z, y, x);     // direct
+        else return pin->lookup(lv, z, y, x);                        // virtual
+    };
     std::unordered_set<ChunkKey, ChunkKeyHash> missedSet;
     missedSet.reserve(std::max<std::size_t>(16, (end - begin) * 4));
 
@@ -766,7 +774,7 @@ ChunkedPlaneSampler::Stats maxCompositeTileRange(
                         lastChunk = chunkKey;
                         // Raw lock-free resident read -- no ChunkProbe layer,
                         // no shared_ptr copy (the tick won't evict mid-frame).
-                        const auto rv = pin->lookup(level, cz, cy, cx);
+                        const auto rv = doLookup(level, cz, cy, cx);
                         if (rv.status == ChunkStatus::AllFill) {
                             curBytes = &kAllFillTag;
                         } else if (rv.status == ChunkStatus::Data && rv.bytes) {

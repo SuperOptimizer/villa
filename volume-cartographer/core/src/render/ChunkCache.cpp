@@ -282,6 +282,14 @@ std::unique_ptr<IChunkedArray::IResidentPin> ChunkCache::makeResidentPin() const
     return pin;
 }
 
+ChunkCache::ResidentPin ChunkCache::pinConcrete() const
+{
+    ResidentPin pin;
+    pin.map_ = std::atomic_load(&state_->resident_);
+    pin.cache_ = this;
+    return pin;
+}
+
 IChunkedArray::ResidentView ChunkCache::ResidentPin::lookup(int level, int iz, int iy, int ix) const
 {
     const auto& state = *cache_->state_;

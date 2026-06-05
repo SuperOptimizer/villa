@@ -28,6 +28,21 @@ public:
             constexpr int k = -2147483647 - 1;  // INT_MIN; real keys have level>=0
             return ChunkKey{k, k, k, k};
         }
+        // Pack a key into 8 bytes for the cache-dense probe array. Real keys have
+        // level in [0,8) and coords in [0,2^20), so a real pack uses bits 0..43
+        // and 60..63 (=level). The empty sentinel ({INT_MIN,..}) is mapped to
+        // all-ones, which no real key produces (it would need level==15). Two real
+        // keys are equal iff their packs are equal, so the probe compares 8-byte
+        // packs (8/cache-line) and never reads the full 16-byte ChunkKey.
+        static std::uint64_t pack(const ChunkKey& k)
+        {
+            if (k.level < 0)                    // the empty sentinel
+                return ~std::uint64_t(0);
+            return (std::uint64_t(std::uint32_t(k.level) & 0xF) << 60)
+                 | ((std::uint64_t(std::uint32_t(k.iz)) & 0xFFFFF) << 40)
+                 | ((std::uint64_t(std::uint32_t(k.iy)) & 0xFFFFF) << 20)
+                 |  (std::uint64_t(std::uint32_t(k.ix)) & 0xFFFFF);
+        }
     };
     // What a sample needs: status (Data/AllFill) + the decoded bytes. The render
     // reads a shared_ptr<const ResidentMap> (pinned for the frame); the tick
@@ -144,6 +159,10 @@ public:
         const ChunkCache* cache_ = nullptr;
     };
     std::unique_ptr<IResidentPin> makeResidentPin() const override;
+    // Non-virtual concrete pin: returned by value so the hot sampler (which knows
+    // it has a ChunkCache) calls lookup() directly -- no virtual dispatch, lets
+    // lookup + isValidKey + the map find inline into the kernel.
+    ResidentPin pinConcrete() const;
 
 private:
     enum class EntryStatus {
