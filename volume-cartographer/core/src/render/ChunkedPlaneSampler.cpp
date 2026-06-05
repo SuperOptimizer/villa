@@ -691,7 +691,12 @@ ChunkedPlaneSampler::Stats maxCompositeTileRange(
                     : cv::Vec3f(base[0]*tsx+tox, base[1]*tsy+toy, base[2]*tsz+toz);
                 const cv::Vec3f nrmL(nrm[0]*tsx, nrm[1]*tsy, nrm[2]*tsz);
 
-                int lastCz = INT_MIN, lastCy = INT_MIN, lastCx = INT_MIN;
+                // Track the current chunk as ONE packed 64-bit key instead of
+                // three lastCz/Cy/Cx ints -- a single compare per depth, and one
+                // live value instead of three (cuts the register spilling the
+                // 3-int compare caused in the inner loop). Chunk coords are < 2^21
+                // for any real volume, so 21 bits per axis is ample.
+                std::uint64_t lastChunk = ~std::uint64_t(0);
                 // curBytes: nullptr=unusable, &kAllFillTag=all-fill, else the
                 // resident chunk buffer. One pointer carries the chunk state, so
                 // the per-depth fast path stays in registers.
@@ -721,8 +726,11 @@ ChunkedPlaneSampler::Stats maxCompositeTileRange(
                         lz = iz - cz * csh; ly = iy - cy * cshY; lx = ix - cx * cshX;
                     }
 
-                    if (cz != lastCz || cy != lastCy || cx != lastCx) {
-                        lastCz = cz; lastCy = cy; lastCx = cx;
+                    const std::uint64_t chunkKey = (std::uint64_t(unsigned(cz)) << 42)
+                                                 | (std::uint64_t(unsigned(cy)) << 21)
+                                                 |  std::uint64_t(unsigned(cx));
+                    if (chunkKey != lastChunk) {
+                        lastChunk = chunkKey;
                         const ChunkResult& r = chunkCache.get(
                             {level, cz, cy, cx},
                             localStats.requestedChunks, localStats.errorChunks);
