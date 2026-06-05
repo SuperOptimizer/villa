@@ -291,6 +291,7 @@ protected:
 
     // Remote volume state
     bool isRemote_ = false;
+    bool isRemoteVca_ = false;   // remote .vca streamed via vc_open_streaming
     std::string remoteUrl_;
     vc::HttpAuth remoteAuth_;
     std::filesystem::path remoteCacheRoot_;

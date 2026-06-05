@@ -26,6 +26,7 @@
 #include "vc/core/types/VcDataset.hpp"
 #include "vc/core/render/ZarrChunkFetcher.hpp"
 #include "vc/core/render/VcaChunkFetcher.hpp"
+#include "vc/core/render/VcaHttpChunkFetcher.hpp"
 #include "vc/core/util/HttpFetch.hpp"
 #include "vc/core/util/RemoteUrl.hpp"
 #include "vc/core/util/PostProcess.hpp"
@@ -1305,9 +1306,29 @@ std::shared_ptr<Volume> Volume::NewFromUrl(
         auth.region = resolved.awsRegion;
     }
 
-    const std::string remoteUrl = normalizeRemoteVolumeUrl(resolved.httpsUrl);
+    // A remote .vca is a single streamable archive, not a zarr directory. Stream
+    // it via libvc's on-demand reader + a persistent block cache. The block cache
+    // uses libs3, which does s3:// -> virtual-hosted-HTTPS + SigV4 itself, so pass
+    // the ORIGINAL url (s3://...) through, NOT the pre-resolved https form, and
+    // skip normalizeRemoteVolumeUrl (which appends zarr-ish suffixes).
+    auto endsWithVca = [](const std::string& s) {
+        return s.size() >= 4 && s.compare(s.size() - 4, 4, ".vca") == 0;
+    };
+    const bool remoteVca = endsWithVca(url) || endsWithVca(resolved.httpsUrl);
+    const std::string remoteUrl =
+        remoteVca ? url : normalizeRemoteVolumeUrl(resolved.httpsUrl);
 
     vc::render::OpenedChunkedZarr opened;
+    if (remoteVca) {
+        try {
+            opened = vc::render::openHttpVcaArchive(remoteUrl, auth, cacheRoot);
+        } catch (const std::exception& e) {
+            if (!resolved.useAwsSigv4 || auth.empty() || !isRemoteAuthError(e)) throw;
+            vc::HttpAuth anonymousAuth;
+            opened = vc::render::openHttpVcaArchive(remoteUrl, anonymousAuth, cacheRoot);
+            auth = std::move(anonymousAuth);
+        }
+    } else
     // Open the zarr metadata in memory. This performs the normal zarr metadata
     // reads, but does not stage .zarray/meta.json files on disk.
     // If stale AWS credentials are present, public buckets may reject the
@@ -1341,6 +1362,7 @@ std::shared_ptr<Volume> Volume::NewFromUrl(
     auto vol = std::make_shared<Volume>(std::filesystem::path{}, RemoteConstructTag{});
 
     vol->isRemote_ = true;
+    vol->isRemoteVca_ = remoteVca;
     vol->remoteUrl_ = remoteUrl;
     vol->remoteAuth_ = auth;
     vol->remoteCacheRoot_ = cacheRoot;
@@ -1538,14 +1560,18 @@ vc::render::IChunkedArray* Volume::chunkedCache()
 std::shared_ptr<vc::render::ChunkCache> Volume::createChunkCache(
     vc::render::ChunkCache::Options options) const
 {
-    if (isRemote_ && !remoteCacheRoot_.empty())
+    // Remote .vca self-caches in its own persistent block cache; the zarr
+    // persistent-chunk layer is only for the http-zarr path.
+    if (isRemote_ && !isRemoteVca_ && !remoteCacheRoot_.empty())
         options.persistentCachePath = remotePersistentCachePath();
 
-    vc::render::OpenedChunkedZarr opened = isRemote_
-        ? vc::render::openHttpZarrPyramid(remoteUrl_, remoteAuth_)
-        : (!vcaPath_.empty()
-               ? vc::render::openVcaArchive(vcaPath_)
-               : vc::render::openLocalZarrPyramid(path_));
+    vc::render::OpenedChunkedZarr opened = isRemoteVca_
+        ? vc::render::openHttpVcaArchive(remoteUrl_, remoteAuth_, remoteCacheRoot_)
+        : (isRemote_
+               ? vc::render::openHttpZarrPyramid(remoteUrl_, remoteAuth_)
+               : (!vcaPath_.empty()
+                      ? vc::render::openVcaArchive(vcaPath_)
+                      : vc::render::openLocalZarrPyramid(path_)));
 
     if (opened.fetchers.empty()) {
         return nullptr;

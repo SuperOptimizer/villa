@@ -96,6 +96,21 @@ void vc_writer_close(vc_writer *w);
 // that want to address regions for vc_mark_zero_region.
 uint32_t vc_region_atoms(void);
 
+// ---------------------------------------------------------------------------
+// v2 writer — emits the region-contiguous v2 container DIRECTLY (no repack).
+// A region (1024^3 voxels) is built start-to-finish by ONE thread: vc_begin_region,
+// then vc_append_atom / vc_mark_zero_atom for its atoms, then vc_end_region, which
+// assigns the region a contiguous on-disk blob ([512KB slots][payloads]) and writes
+// its directory entry. Many threads may each have one open region concurrently (the
+// open region is thread-local). vc_mark_zero_region marks a whole region KNOWN_ZERO
+// without a blob. vc_set_base_q must be called per LOD before appending, as in v1.
+// vc_writer_close finalizes the header (total length) + truncates. Read back with
+// the same vc_open / vc_decode_atom (they dispatch on container version).
+// ---------------------------------------------------------------------------
+vc_writer *vc_create_v2(const char *path, vc_dims lod0_dims, float target_ratio);
+vc_status vc_begin_region(vc_writer *w, int lod, uint32_t rz, uint32_t ry, uint32_t rx);
+vc_status vc_end_region(vc_writer *w);
+
 // ===========================================================================
 // Reader — random-access decode from an mmap'd archive.
 // ===========================================================================
@@ -104,6 +119,19 @@ typedef struct vc_archive vc_archive;
 // Open an archive from an in-memory buffer (typically an mmap of the file).
 // Borrows the buffer — it must outlive the handle.
 vc_archive *vc_open(const uint8_t *archive, size_t len);
+
+// Byte-source callback for streaming open: fill dst with exactly `len` bytes
+// starting at `off` in the archive. Return VC_OK on success. The implementation
+// typically range-fetches + caches (e.g. from S3) behind this. Called on demand
+// for the header, L1 index probes, L2 slots, and atom payloads.
+typedef vc_status (*vc_read_fn)(void *ud, uint64_t off, uint32_t len, uint8_t *dst);
+
+// Open an archive WITHOUT holding it whole in memory: libvc walks its index and
+// decodes by pulling byte ranges through `read` on demand. `total_len` is the
+// true archive size. Decode results are identical to vc_open on the same bytes;
+// only the byte source differs. The callback must outlive the handle.
+vc_archive *vc_open_streaming(vc_read_fn read, void *ud, uint64_t total_len);
+
 void        vc_close(vc_archive *a);
 
 // LOD0 dims, and derived dims of any LOD (strict 2x pyramid).
@@ -119,6 +147,25 @@ vc_status vc_decode_region(vc_archive *a, int lod, vc_box box, uint8_t *out);
 // Coverage of an atom without decoding it (ABSENT vs KNOWN_ZERO vs PRESENT).
 vc_cover vc_atom_coverage(const vc_archive *a, int lod,
                           uint32_t az, uint32_t ay, uint32_t ax);
+
+// Resolve an atom to its compressed payload byte range [*off,*off+*len) WITHOUT
+// decoding (also returns coverage). Lets a streaming reader fetch exact bytes or a
+// repacker copy payloads verbatim. *off/*len are 0 for ABSENT/KNOWN_ZERO.
+vc_cover vc_atom_payload_range(const vc_archive *a, int lod,
+                               uint32_t az, uint32_t ay, uint32_t ax,
+                               uint64_t *off, uint32_t *len);
+
+// Container version: 1 = v1 (sparse hash index), 2 = v2 (region-contiguous +
+// directory). 0 if a is NULL.
+int vc_archive_version(const vc_archive *a);
+
+// v2 only: the contiguous on-disk blob [*off,*off+*len) holding a whole region's
+// slots + payloads — a streaming reader fetches it in ONE range-GET to serve every
+// atom in the region. Returns region coverage; *off/*len are 0 unless PRESENT (and
+// always 0 for a v1 archive). Region coords are in index-region units.
+vc_cover vc_region_blob_range(const vc_archive *a, int lod,
+                              uint32_t rz, uint32_t ry, uint32_t rx,
+                              uint64_t *off, uint64_t *len);
 
 // Override the fail-fast panic hook (default aborts).
 void vc_set_panic_hook(void (*hook)(const char *msg));

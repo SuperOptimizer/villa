@@ -106,6 +106,15 @@ bool isNormalGridDir(const fs::path& dir)
         && fs::exists(dir / "metadata.json");
 }
 
+static bool hasSuffix(const std::string& s, std::string_view suffix)
+{
+    return s.size() >= suffix.size()
+        && s.compare(s.size() - suffix.size(), suffix.size(), suffix) == 0;
+}
+
+// A remote location Volume::NewFromUrl can open directly: a .zarr pyramid or a
+// single streamable .vca archive. (Remote directory *listings* are still
+// unsupported; this is one named volume.)
 bool isDirectRemoteZarrLocation(std::string location)
 {
     location = asciiLower(std::move(location));
@@ -114,9 +123,7 @@ bool isDirectRemoteZarrLocation(std::string location)
     const auto query = location.find('?');
     if (query != std::string::npos) location.erase(query);
     while (!location.empty() && location.back() == '/') location.pop_back();
-    constexpr std::string_view suffix = ".zarr";
-    return location.size() >= suffix.size()
-        && location.compare(location.size() - suffix.size(), suffix.size(), suffix) == 0;
+    return hasSuffix(location, ".zarr") || hasSuffix(location, ".vca");
 }
 
 std::vector<fs::path> immediateSubdirs(const fs::path& dir)

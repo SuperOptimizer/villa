@@ -38,6 +38,7 @@ add_library(vc_core
         src/render/PostProcess.cpp
         src/render/ZarrChunkFetcher.cpp
         src/render/VcaChunkFetcher.cpp
+        src/render/VcaHttpChunkFetcher.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/../apps/src/vc_merge_tifxyz_grid.cpp
         ${CMAKE_CURRENT_BINARY_DIR}/Version.cpp
 )
@@ -69,6 +70,7 @@ target_link_libraries(vc_core PUBLIC
 target_link_libraries(vc_core PRIVATE
     Blosc::blosc
     ${VC_LIBBACKTRACE}
+    libs3
 )
 
 # PCH on vc_core; downstream libs/apps/tests REUSE_FROM it. CXX-gated as a

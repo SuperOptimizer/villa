@@ -43,6 +43,11 @@ static void *vc_xcalloc(size_t n, size_t sz) {
     VC_CHECK(p, "out of memory");
     return p;
 }
+static void *vc_xrealloc(void *p, size_t n) {
+    void *q = realloc(p, n ? n : 1);
+    VC_CHECK(q, "out of memory");
+    return q;
+}
 
 // ---------------------------------------------------------------------------
 // Compile-time layout constants (plan.txt §1)
@@ -147,12 +152,14 @@ VC_MULTIVERSION static void dctA_lines_fwd(i32 *restrict blk) {
         { int nz = 0; for (u32 i = 0; i < A; ++i) if (v[i]) { nz = 1; break; } if (!nz) continue; }
         i32 s[HALF], d[HALF];
         for (u32 n = 0; n < HALF; ++n) { s[n] = v[n] + v[A-1-n]; d[n] = v[n] - v[A-1-n]; }
-#if defined(__clang__)
-        // clang lowers the reduction-over-n form below into a slow horizontal
-        // reduction (3.5× slower encode). The mathematically-identical k-parallel
-        // form — outputs as the vectorized axis, broadcast s[n]/d[n], no per-output
-        // reduction — fixes clang (63→154 MB/s). gcc, however, is FASTER with the
-        // reduction form (230 vs 165), so we pick per-compiler. Same results.
+#if defined(__clang__) || defined(__aarch64__)
+        // clang (any arch) and gcc-on-aarch64 lower the reduction-over-n form
+        // below into a slow scalar/horizontal reduction. The mathematically-
+        // identical k-parallel form — outputs as the vectorized axis, broadcast
+        // s[n]/d[n], no per-output reduction — vectorizes cleanly: ~4.3× faster
+        // on Neoverse-V2 (gcc) and fixes clang on x86. gcc-on-x86 is instead
+        // FASTER with the reduction form (230 vs 165 MB/s) so it keeps it below.
+        // Bit-identical either way.
         i32 acc[A]; for (u32 k = 0; k < A; ++k) acc[k] = rnd;
         for (u32 n = 0; n < HALF; ++n) {
             i32 sn = s[n], dn = d[n];
@@ -701,6 +708,20 @@ uint32_t vc_region_atoms(void) { return R_ATOMS; }
 #define FH_BASEQ 72
 #define FILE_HDR 128u
 
+// v2 container: region-contiguous layout + a direct-indexed region directory
+// (no hash). Same 128B header, same MAGIC/ATOM/RGN/NLOD/NX/NY/NZ/TRATIO/BASEQ
+// fields; the v1 L1 fields (40..71) are repurposed. Codec/payloads identical to
+// v1 (vc_repack copies them verbatim). See vc_repack + resolve_atom v2 branch.
+#define VC_VERSION2 2u
+#define FH2_DIROFF  40   // u64: file offset of the region directory
+#define FH2_DIRCNT  48   // u64: directory entry count (== total regions, all LODs)
+#define FH2_TOTLEN  56   // u64: total archive length (bytes)
+// Region directory entry (16B): [u64 blob_off][u32 blob_len][u32 flags]
+#define V2_DIR_ENTRY 16u
+#define V2_RGN_ABSENT 0u   // region never written (no blob)
+#define V2_RGN_ZERO   1u   // whole region known-zero (no blob)
+#define V2_RGN_DATA   2u   // present: blob_off/blob_len point to its [slots|payloads]
+
 // split-mix64 finalizer — good integer hash for the packed region key.
 static inline u64 mix64(u64 x) {
     x += 0x9E3779B97F4A7C15ull;
@@ -721,6 +742,28 @@ static vc_dims lod_dims_of(vc_dims d0, int lod) {
     }
     return d;
 }
+
+// v2 region grid: region count per axis at a LOD (1024-voxel regions). Same math
+// as the writer's max_regions tally (atoms = ceil(dim/A); regions = ceil(atoms/R)).
+static void lod_region_grid(vc_dims d0, int lod, u32 *nrz, u32 *nry, u32 *nrx) {
+    vc_dims d = lod_dims_of(d0, lod);
+    *nrx = ((d.nx + A - 1)/A + R_ATOMS - 1)/R_ATOMS;
+    *nry = ((d.ny + A - 1)/A + R_ATOMS - 1)/R_ATOMS;
+    *nrz = ((d.nz + A - 1)/A + R_ATOMS - 1)/R_ATOMS;
+}
+// Linear region index across the whole pyramid (LOD-major, then z,y,x within a
+// LOD). `prefix[lod]` is the running sum of region counts of LODs < lod; build it
+// once with lod_region_prefix. Used to index the v2 directory directly (no hash).
+static u64 lod_region_prefix(vc_dims d0, int nlod, u64 prefix[VC_NLOD + 1]) {
+    u64 acc = 0;
+    for (int l = 0; l < nlod; ++l) {
+        prefix[l] = acc;
+        u32 nrz, nry, nrx; lod_region_grid(d0, l, &nrz, &nry, &nrx);
+        acc += (u64)nrz * nry * nrx;
+    }
+    prefix[nlod] = acc;
+    return acc;   // total region count across all LODs
+}
 static int dims_valid(vc_dims d) {
     return d.nx && d.ny && d.nz &&
            d.nx <= VC_MAX_DIM && d.ny <= VC_MAX_DIM && d.nz <= VC_MAX_DIM;
@@ -740,7 +783,8 @@ struct vc_writer {
     int     fd;
     u8     *map;            // mmap base (stable for the writer's life on Linux)
     u64     map_len;        // mapped length (== reservation on Linux)
-    u64     file_len;       // file length actually backed by ftruncate
+    _Atomic u64 file_len;   // file length backed by ftruncate; read lock-free in
+                            // writer_alloc, written under grow_mu -> must be atomic
     int     fixed_map;      // 1 = base never moves (Linux huge map); 0 = remap mode
     pthread_mutex_t grow_mu;// serializes ftruncate/remap growth
     pthread_rwlock_t lock;  // guards L1 structural mutations (region create/rehash)
@@ -752,6 +796,15 @@ struct vc_writer {
     // auto-calibration). Atomic so the append hot path reads it lock-free and
     // encodes outside the structural lock. 0.0 == not set (appending errors).
     _Atomic float base_q[VC_NLOD];
+
+    // --- v2 writer state (version==2) -------------------------------------
+    // v2 lays each region out as one contiguous blob; a direct-indexed directory
+    // (region linear idx -> blob off/len/flags) replaces the L1 hash. Regions are
+    // built one-thread-each via vc_begin_region/append/vc_end_region: per-thread
+    // staging, then one atomic blob-cursor bump + pwrite + directory write.
+    int     version;                  // 1 = v1 (L1 hash), 2 = v2 (region dir)
+    u64     dir_off;                  // directory file offset (== FILE_HDR)
+    u64     region_prefix[VC_NLOD+1]; // LOD-major region linear-index base
 };
 
 static u32 rd_u32m(const u8 *p){ u32 v; memcpy(&v,p,4); return v; }
@@ -767,23 +820,25 @@ static void wr_f32m(u8 *p, float v){ memcpy(p,&v,4); }
 // In remap mode (macOS) it remaps, which moves the base, so remap-mode callers
 // must hold the rwlock exclusively around any raw-pointer use (see writer_alloc).
 static int writer_ensure(vc_writer *w, u64 need) {
-    if (need <= w->file_len) return 0;
+    if (need <= atomic_load_explicit(&w->file_len, memory_order_acquire)) return 0;
     pthread_mutex_lock(&w->grow_mu);
-    if (need <= w->file_len) { pthread_mutex_unlock(&w->grow_mu); return 0; }
+    u64 cur = atomic_load_explicit(&w->file_len, memory_order_relaxed);
+    if (need <= cur) { pthread_mutex_unlock(&w->grow_mu); return 0; }
     // grow the file in big steps to amortize the metadata ops
-    u64 nl = w->file_len ? w->file_len : FILE_HDR;
+    u64 nl = cur ? cur : FILE_HDR;
     while (nl < need) nl += VC_GROW_STEP;
     if (w->fixed_map) {
         if (nl > w->map_len) nl = w->map_len;   // bounded by the reservation
         if (need > w->map_len) { pthread_mutex_unlock(&w->grow_mu); return -1; } // exceeded 10TB
         if (ftruncate(w->fd, (off_t)nl) != 0) { pthread_mutex_unlock(&w->grow_mu); return -1; }
-        w->file_len = nl;                        // base pointer unchanged
+        atomic_store_explicit(&w->file_len, nl, memory_order_release); // base unchanged
     } else {
         if (ftruncate(w->fd, (off_t)nl) != 0) { pthread_mutex_unlock(&w->grow_mu); return -1; }
         munmap(w->map, w->map_len);
         void *nm = mmap(NULL, nl, PROT_READ|PROT_WRITE, MAP_SHARED, w->fd, 0);
         if (nm == MAP_FAILED) { pthread_mutex_unlock(&w->grow_mu); return -1; }
-        w->map = (u8 *)nm; w->map_len = nl; w->file_len = nl;
+        w->map = (u8 *)nm; w->map_len = nl;
+        atomic_store_explicit(&w->file_len, nl, memory_order_release);
     }
     pthread_mutex_unlock(&w->grow_mu);
     return 0;
@@ -794,7 +849,8 @@ static int writer_ensure(vc_writer *w, u64 need) {
 static u64 writer_alloc(vc_writer *w, u64 n, int have_excl) {
     (void)have_excl;
     u64 off = atomic_fetch_add(&w->cursor, n);
-    if (off + n > w->file_len) writer_ensure(w, off + n);
+    if (off + n > atomic_load_explicit(&w->file_len, memory_order_acquire))
+        writer_ensure(w, off + n);
     return off;
 }
 
@@ -849,6 +905,12 @@ static inline _Atomic u64 *atomptr(u8 *p) { return (_Atomic u64 *)p; }
 // single commit word: a reader that sees block_ref!=0 is guaranteed (via the CAS
 // release) to also see the matching key. We therefore write `key` BEFORE the CAS
 // that publishes block_ref.
+// THREAD-SAFETY: this reads w->map lock-free. Safe in fixed_map mode (Linux huge
+// reservation) where the base NEVER moves. In remap mode (the non-Linux fallback)
+// writer_ensure() can munmap+remap w->map under a concurrent reader here -> a
+// use-after-munmap race (TSan flags it when the 10TB reservation is unavailable,
+// e.g. under TSan's own shadow). Not hit by the Linux/fixed_map exporter. KNOWN:
+// remap-mode parallel append needs the base pinned (rwlock or never-unmap) first.
 static u64 region_block_lockfree(vc_writer *w, u64 key, int create) {
     u64 cap = rd_u64m(w->map + FH_L1CAP);
     u64 off = rd_u64m(w->map + FH_L1OFF);
@@ -1110,12 +1172,27 @@ static vc_status append_one(vc_writer *w, int lod, u32 az, u32 ay, u32 ax,
     return VC_OK;
 }
 
+// Per-thread open-region staging (v2). Defined here so the append/mark-zero
+// dispatch above can reach g_v2cur; the implementation lives below.
+typedef struct {
+    vc_writer *w;
+    int lod; u32 rz, ry, rx;          // region being built
+    u8 *slots;                        // L2_BLOCK_BYTES slot array (abs offsets, filled at end)
+    u8 *pay; size_t pay_len, pay_cap; // accumulated payloads, slot order
+    u32 slot_payoff[R3];              // per-slot payload offset within `pay` (UINT32_MAX = none)
+    int any_present;
+} v2_region;
+static _Thread_local v2_region *g_v2cur = NULL;
+static vc_status v2_append_atom(vc_writer *w, int lod, u32 az, u32 ay, u32 ax,
+                                const u8 vox[VC_ATOM3]);
+
 vc_status vc_append_atom(vc_writer *w, int lod, u32 az, u32 ay, u32 ax,
                          const u8 vox[VC_ATOM3]) {
     if (!w || lod < 0 || lod >= w->nlod) return VC_ERR_RANGE;
     vc_dims d = lod_dims_of(w->dims0, lod);
     u32 acx=(d.nx+A-1)/A, acy=(d.ny+A-1)/A, acz=(d.nz+A-1)/A;
     if (ax >= acx || ay >= acy || az >= acz) return VC_ERR_RANGE;
+    if (w->version == 2) return v2_append_atom(w, lod, az, ay, ax, vox);
     return append_one(w, lod, az, ay, ax, vox);
 }
 
@@ -1142,6 +1219,16 @@ vc_status vc_append_box(vc_writer *w, int lod, vc_box b, const u8 *voxels) {
 
 vc_status vc_mark_zero_atom(vc_writer *w, int lod, u32 az, u32 ay, u32 ax) {
     if (!w || lod < 0 || lod >= w->nlod) return VC_ERR_RANGE;
+    if (w->version == 2) {
+        // v2: set AF_ZERO in the calling thread's open region (KNOWN_ZERO, no payload).
+        v2_region *r = g_v2cur;
+        if (!r || r->w != w || r->lod != lod ||
+            az/R_ATOMS != r->rz || ay/R_ATOMS != r->ry || ax/R_ATOMS != r->rx)
+            return VC_ERR_RANGE;
+        r->slots[slot_index(az,ay,ax)*ATOM_SLOT + 12] = AF_ZERO;
+        r->any_present = 1;   // region has explicit content -> emit a blob, not ABSENT
+        return VC_OK;
+    }
     u64 key = region_key(lod, az/R_ATOMS, ay/R_ATOMS, ax/R_ATOMS);
     // Lock-free find-or-create, then write the explicit AF_ZERO slot. Creating
     // the block guarantees this atom is recorded as KNOWN_ZERO (never left ABSENT)
@@ -1156,8 +1243,18 @@ vc_status vc_mark_zero_atom(vc_writer *w, int lod, u32 az, u32 ay, u32 ax) {
     return VC_OK;
 }
 
+static u64 v2_regidx(const vc_writer *w, int lod, u32 rz, u32 ry, u32 rx);
+static void v2_dir_write(vc_writer *w, u64 regidx, u64 boff, u32 blen, u32 flags);
+
 vc_status vc_mark_zero_region(vc_writer *w, int lod, u32 rz, u32 ry, u32 rx) {
     if (!w || lod < 0 || lod >= w->nlod) return VC_ERR_RANGE;
+    if (w->version == 2) {
+        // v2: a whole region is KNOWN_ZERO -> a ZERO directory entry (no blob).
+        u64 regidx = v2_regidx(w, lod, rz, ry, rx);
+        if (regidx == ~0ull) return VC_ERR_RANGE;
+        v2_dir_write(w, regidx, 0, 0, V2_RGN_ZERO);
+        return VC_OK;
+    }
     u64 key = region_key(lod, rz, ry, rx);
     // Lock-free: CAS the ZERO_REGION sentinel into an empty bucket (preallocated
     // L1, never rehashes). If the region already has a block, leave it (write-
@@ -1180,15 +1277,164 @@ vc_status vc_mark_zero_region(vc_writer *w, int lod, u32 rz, u32 ry, u32 rx) {
     }
 }
 
+// ===========================================================================
+// v2 writer — region-contiguous layout, built one region at a time per thread.
+// ===========================================================================
+// Per-thread open-region staging. A thread calls vc_begin_region, appends its
+// atoms (each encoded into a growable payload buffer + a 512KB slot array), then
+// vc_end_region flushes the region's [slots|payloads] as ONE contiguous blob and
+// writes the directory entry. One thread owns a region start->finish, so the only
+// shared state is the blob cursor (atomic) + the directory (disjoint slots).
+// (v2_region + g_v2cur are declared above, near the append dispatch.)
+
+// directory entry helpers (entry = [u64 blob_off][u32 blob_len][u32 flags])
+static void v2_dir_write(vc_writer *w, u64 regidx, u64 boff, u32 blen, u32 flags) {
+    u8 *e = w->map + w->dir_off + regidx*V2_DIR_ENTRY;
+    wr_u64m(e, boff); wr_u32m(e+8, blen); wr_u32m(e+12, flags);
+}
+static u64 v2_regidx(const vc_writer *w, int lod, u32 rz, u32 ry, u32 rx) {
+    u32 nrz, nry, nrx; lod_region_grid(w->dims0, lod, &nrz, &nry, &nrx);
+    if (rz>=nrz || ry>=nry || rx>=nrx) return ~0ull;
+    return w->region_prefix[lod] + ((u64)rz*nry + ry)*nrx + rx;
+}
+
+// Create a v2 (region-contiguous) writer. Same dims/ratio contract as vc_create;
+// reserves the directory right after the header, blobs append after it.
+vc_writer *vc_create_v2(const char *path, vc_dims lod0_dims, float target_ratio) {
+    build_tables();
+    if (!dims_valid(lod0_dims) || target_ratio < 1.0f) return NULL;
+    int fd = open(path, O_RDWR | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) return NULL;
+    int nlod = 1;
+    for (int l = 1; l < VC_NLOD; ++l) {
+        vc_dims d = lod_dims_of(lod0_dims, l); nlod = l + 1;
+        if (d.nx <= 1 && d.ny <= 1 && d.nz <= 1) break;
+    }
+    u64 prefix[VC_NLOD+1];
+    u64 total_regions = lod_region_prefix(lod0_dims, nlod, prefix);
+    u64 dir_off = FILE_HDR;
+    u64 init_len = dir_off + total_regions * V2_DIR_ENTRY;   // header + directory
+    if (ftruncate(fd, (off_t)init_len) != 0) { close(fd); return NULL; }
+    int fixed = 0; u64 map_len = init_len; u8 *map = MAP_FAILED;
+#if defined(__linux__)
+    map = (u8 *)mmap(NULL, VC_RESERVE, PROT_READ|PROT_WRITE, MAP_SHARED|MAP_NORESERVE, fd, 0);
+    if (map != MAP_FAILED) { fixed = 1; map_len = VC_RESERVE; }
+#endif
+    if (map == MAP_FAILED) {
+        map = (u8 *)mmap(NULL, init_len, PROT_READ|PROT_WRITE, MAP_SHARED, fd, 0);
+        if (map == MAP_FAILED) { close(fd); return NULL; }
+        fixed = 0; map_len = init_len;
+    }
+    memset(map, 0, init_len);   // header + directory zeroed (all entries ABSENT)
+    wr_u32m(map+FH_MAGIC, VC_MAGIC);
+    wr_u32m(map+FH_VER, VC_VERSION2);
+    wr_u32m(map+FH_ATOM, VC_ATOM);
+    wr_u32m(map+FH_RGN, R_ATOMS);
+    wr_u32m(map+FH_NLOD, (u32)nlod);
+    wr_u32m(map+FH_NX, lod0_dims.nx);
+    wr_u32m(map+FH_NY, lod0_dims.ny);
+    wr_u32m(map+FH_NZ, lod0_dims.nz);
+    wr_f32m(map+FH_TRATIO, target_ratio);
+    wr_u64m(map+FH2_DIROFF, dir_off);
+    wr_u64m(map+FH2_DIRCNT, total_regions);
+    vc_writer *w = (vc_writer *)vc_xcalloc(1, sizeof(*w));
+    w->fd = fd; w->map = map; w->map_len = map_len; w->file_len = init_len;
+    w->fixed_map = fixed; w->version = 2; w->dir_off = dir_off;
+    pthread_rwlock_init(&w->lock, NULL);
+    pthread_mutex_init(&w->grow_mu, NULL);
+    atomic_store(&w->cursor, init_len);   // blob cursor starts after the directory
+    w->dims0 = lod0_dims; w->nlod = nlod; w->target_ratio = target_ratio;
+    for (int l=0;l<=nlod;++l) w->region_prefix[l] = prefix[l];
+    return w;
+}
+
+// Begin building region (lod,rz,ry,rx) on the calling thread. The thread then
+// vc_append_atom's its atoms and calls vc_end_region. One open region per thread.
+vc_status vc_begin_region(vc_writer *w, int lod, u32 rz, u32 ry, u32 rx) {
+    if (!w || w->version != 2 || lod < 0 || lod >= w->nlod) return VC_ERR_RANGE;
+    if (g_v2cur) return VC_ERR_RANGE;   // a region is already open on this thread
+    v2_region *r = (v2_region*)vc_xcalloc(1, sizeof(*r));
+    r->w = w; r->lod = lod; r->rz = rz; r->ry = ry; r->rx = rx;
+    r->slots = (u8*)vc_xcalloc(1, L2_BLOCK_BYTES);   // all slots AF_ABSENT
+    r->pay_cap = 1u<<20; r->pay = (u8*)vc_xmalloc(r->pay_cap); r->pay_len = 0;
+    for (u32 i=0;i<R3;++i) r->slot_payoff[i] = 0xFFFFFFFFu;
+    g_v2cur = r;
+    return VC_OK;
+}
+
+// Flush the open region: assign a contiguous blob, pwrite [slots|payloads], write
+// the directory entry. Slot offsets become ABSOLUTE (blob payload base + rel).
+vc_status vc_end_region(vc_writer *w) {
+    v2_region *r = g_v2cur;
+    if (!w || w->version != 2 || !r || r->w != w) return VC_ERR_RANGE;
+    u64 regidx = v2_regidx(w, r->lod, r->rz, r->ry, r->rx);
+    vc_status rc = VC_OK;
+    if (regidx == ~0ull) { rc = VC_ERR_RANGE; goto done; }
+    if (!r->any_present) {
+        // No present atoms -> ABSENT (nothing written). (Callers use
+        // vc_mark_zero_region for a KNOWN-ZERO region.)
+        v2_dir_write(w, regidx, 0, 0, V2_RGN_ABSENT);
+        goto done;
+    }
+    {
+        u64 blob_len = L2_BLOCK_BYTES + r->pay_len;
+        u64 boff = writer_alloc(w, blob_len, 0);          // atomic blob-cursor bump + grow
+        if (boff == 0 || writer_ensure(w, boff + blob_len) != 0) { rc = VC_ERR_OOM; goto done; }
+        u64 pay_base = boff + L2_BLOCK_BYTES;
+        // finalize slot offsets: rel -> absolute (pay_base + rel)
+        for (u32 i=0;i<R3;++i) if (r->slot_payoff[i] != 0xFFFFFFFFu)
+            wr_u64m(r->slots + i*ATOM_SLOT, pay_base + r->slot_payoff[i]);
+        memcpy(w->map + boff, r->slots, L2_BLOCK_BYTES);
+        if (r->pay_len) memcpy(w->map + pay_base, r->pay, r->pay_len);
+        v2_dir_write(w, regidx, boff, (u32)blob_len, V2_RGN_DATA);
+    }
+done:
+    free(r->slots); free(r->pay); free(r);
+    g_v2cur = NULL;
+    return rc;
+}
+
+// Append an atom into the calling thread's open v2 region (encode -> stage).
+static vc_status v2_append_atom(vc_writer *w, int lod, u32 az, u32 ay, u32 ax,
+                                const u8 vox[VC_ATOM3]) {
+    v2_region *r = g_v2cur;
+    if (!r || r->w != w || r->lod != lod ||
+        az/R_ATOMS != r->rz || ay/R_ATOMS != r->ry || ax/R_ATOMS != r->rx)
+        return VC_ERR_RANGE;   // atom outside the open region
+    int is_zero = 1;
+    for (u32 i=0;i<A3;++i) if (vox[i]) { is_zero = 0; break; }
+    u64 si = slot_index(az, ay, ax);
+    u8 *slot = r->slots + si*ATOM_SLOT;
+    if (is_zero) { slot[12] = AF_ZERO; return VC_OK; }
+    float q = atomic_load_explicit(&w->base_q[lod], memory_order_acquire);
+    if (q <= 0.0f) return VC_ERR_RANGE;
+    bbuf pay = {0}; u8 dcv = 0; int z2 = 0;
+    u32 len = encode_atom(vox, q, &pay, &z2, &dcv);   // same codec as v1
+    if (len == 0) { slot[12] = AF_ZERO; free(pay.p); return VC_OK; }  // encoded to zero
+    if (r->pay_len + len > r->pay_cap) {
+        while (r->pay_len + len > r->pay_cap) r->pay_cap <<= 1;
+        r->pay = (u8*)vc_xrealloc(r->pay, r->pay_cap);
+    }
+    u32 rel = (u32)r->pay_len;
+    memcpy(r->pay + r->pay_len, pay.p, len); r->pay_len += len;
+    free(pay.p);
+    r->slot_payoff[si] = rel;
+    wr_u32m(slot+8, len); slot[12] = AF_PRESENT; slot[13] = dcv;  // offset filled at end
+    r->any_present = 1;
+    return VC_OK;
+}
+
 void vc_writer_close(vc_writer *w) {
     if (!w) return;
     // trim the file to the exact used length, persist final cursor.
     u64 used = atomic_load(&w->cursor);
-    wr_u64m(w->map + FH_CURSOR, used);
+    if (w->version == 2) wr_u64m(w->map + FH2_TOTLEN, used);   // v2: total archive length
+    else                 wr_u64m(w->map + FH_CURSOR, used);    // v1: EOF cursor
     // sync only the backed prefix (map_len may be a 10TB reservation).
-    msync(w->map, w->file_len, MS_SYNC);
+    u64 flen = atomic_load(&w->file_len);
+    msync(w->map, flen, MS_SYNC);
     munmap(w->map, w->map_len);
-    if (used && used < w->file_len) { if (ftruncate(w->fd, (off_t)used) != 0) {/*ignore*/} }
+    if (used && used < flen) { if (ftruncate(w->fd, (off_t)used) != 0) {/*ignore*/} }
     close(w->fd);
     pthread_rwlock_destroy(&w->lock);
     pthread_mutex_destroy(&w->grow_mu);
@@ -1199,33 +1445,92 @@ void vc_writer_close(vc_writer *w) {
 // Reader
 // ===========================================================================
 struct vc_archive {
-    const u8 *buf; size_t len;
+    const u8 *buf; size_t len;            // buf==NULL => streaming mode (use read/ud)
+    vc_read_fn read; void *read_ud;       // streaming byte source (NULL => flat buf)
     vc_dims dims0; int nlod;
-    u64 l1_off, l1_cap;
+    int version;                          // 1 = v1 (L1 hash), 2 = v2 (region directory)
+    u64 l1_off, l1_cap;                   // v1 only
+    u64 dir_off;                          // v2 only: region directory file offset
+    u64 region_prefix[VC_NLOD + 1];       // v2 only: LOD-major region linear-index base
     float base_q[VC_NLOD];
 };
+
+// Fetch [off,off+len) into dst. Flat-buffer mode: memcpy from a->buf. Streaming
+// mode: delegate to the caller's read callback (which fetches/caches remotely).
+// Returns 0 on success, nonzero on a short/failed read or out-of-bounds.
+static int rd_bytes(const vc_archive *a, u64 off, u32 len, u8 *dst) {
+    if (a->read) return a->read(a->read_ud, off, len, dst) == VC_OK ? 0 : -1;
+    if (off + len > a->len) return -1;
+    memcpy(dst, a->buf + off, len);
+    return 0;
+}
+
+// Return a readable pointer to a payload [off,len). Flat mode: a->buf+off
+// (zero-copy, unchanged). Streaming mode: fetch into a thread-local scratch
+// (payloads are bounded by the encoder's A3*4+64 max). NULL on failure.
+static const u8 *payload_ptr(const vc_archive *a, u64 off, u32 len) {
+    if (!a->read) return a->buf + off;
+    static _Thread_local u8 paybuf[A3 * 4 + 64];
+    if (len > sizeof paybuf) return NULL;
+    if (rd_bytes(a, off, len, paybuf) != 0) return NULL;
+    return paybuf;
+}
+
+// Parse + validate the 128B header (common to flat and streaming open) into a
+// freshly-zeroed archive `a` whose buf/read/len are already set. Detects v1 vs
+// v2 by FH_VER and fills the version-specific index fields. Returns 0 on success.
+static int archive_parse_header(vc_archive *a, const u8 *hdr, u64 len) {
+    if (rd_u32m(hdr+FH_MAGIC) != VC_MAGIC) return -1;
+    if (rd_u32m(hdr+FH_ATOM)  != VC_ATOM)  return -1;
+    if (rd_u32m(hdr+FH_RGN)   != R_ATOMS)  return -1;
+    u32 ver = rd_u32m(hdr+FH_VER);
+    u32 nlod = rd_u32m(hdr+FH_NLOD);
+    if (nlod == 0 || nlod > VC_NLOD) return -1;
+    a->len = len; a->nlod = (int)nlod;
+    a->dims0.nx = rd_u32m(hdr+FH_NX);
+    a->dims0.ny = rd_u32m(hdr+FH_NY);
+    a->dims0.nz = rd_u32m(hdr+FH_NZ);
+    for (int l=0;l<VC_NLOD;++l) a->base_q[l] = rd_f32m(hdr+FH_BASEQ+l*4);
+    if (ver == VC_VERSION2) {
+        a->version = 2;
+        a->dir_off = rd_u64m(hdr+FH2_DIROFF);
+        u64 dir_cnt = rd_u64m(hdr+FH2_DIRCNT);
+        if (a->dir_off > len || dir_cnt > (len - a->dir_off) / V2_DIR_ENTRY) return -1;
+        u64 total = lod_region_prefix(a->dims0, a->nlod, a->region_prefix);
+        if (total != dir_cnt) return -1;   // directory must cover every region
+        return 0;
+    }
+    if (ver != VC_VERSION) return -1;
+    if (rd_u32m(hdr+FH_LAYOUT) != VC_LAYOUT_SPARSE2) return -1;
+    a->version = 1;
+    a->l1_off = rd_u64m(hdr+FH_L1OFF);
+    a->l1_cap = rd_u64m(hdr+FH_L1CAP);
+    if (a->l1_cap == 0 || (a->l1_cap & (a->l1_cap-1))) return -1;        // power of two
+    if (a->l1_off > len || a->l1_cap > (len - a->l1_off) / L1_ENTRY) return -1;
+    return 0;
+}
 
 vc_archive *vc_open(const u8 *archive, size_t len) {
     build_tables();
     if (!archive || len < FILE_HDR) return NULL;
-    if (rd_u32m(archive+FH_MAGIC) != VC_MAGIC) return NULL;
-    if (rd_u32m(archive+FH_VER) != VC_VERSION) return NULL;
-    if (rd_u32m(archive+FH_ATOM) != VC_ATOM) return NULL;
-    if (rd_u32m(archive+FH_LAYOUT) != VC_LAYOUT_SPARSE2) return NULL;
-    if (rd_u32m(archive+FH_RGN) != R_ATOMS) return NULL;
-    u32 nlod = rd_u32m(archive+FH_NLOD);
-    if (nlod == 0 || nlod > VC_NLOD) return NULL;
-    u64 l1_off = rd_u64m(archive+FH_L1OFF);
-    u64 l1_cap = rd_u64m(archive+FH_L1CAP);
-    if (l1_cap == 0 || (l1_cap & (l1_cap-1))) return NULL;   // power of two
-    if (l1_off > len || l1_cap > (len - l1_off) / L1_ENTRY) return NULL;
     vc_archive *a = (vc_archive *)vc_xcalloc(1, sizeof(*a));
-    a->buf = archive; a->len = len; a->nlod = (int)nlod;
-    a->dims0.nx = rd_u32m(archive+FH_NX);
-    a->dims0.ny = rd_u32m(archive+FH_NY);
-    a->dims0.nz = rd_u32m(archive+FH_NZ);
-    a->l1_off = l1_off; a->l1_cap = l1_cap;
-    for (int l=0;l<VC_NLOD;++l) a->base_q[l] = rd_f32m(archive+FH_BASEQ+l*4);
+    a->buf = archive;
+    if (archive_parse_header(a, archive, len) != 0) { free(a); return NULL; }
+    return a;
+}
+
+// Streaming open: never holds the whole archive. `read` is invoked on demand for
+// the header (here), L1 probe entries, L2 slots, and payloads. `total_len` is the
+// true archive size. Same validation + decode path as vc_open; the only
+// difference is bytes come from the callback (see rd_bytes) instead of a->buf.
+vc_archive *vc_open_streaming(vc_read_fn read, void *ud, uint64_t total_len) {
+    build_tables();
+    if (!read || total_len < FILE_HDR) return NULL;
+    u8 hdr[FILE_HDR];
+    if (read(ud, 0, FILE_HDR, hdr) != VC_OK) return NULL;
+    vc_archive *a = (vc_archive *)vc_xcalloc(1, sizeof(*a));
+    a->buf = NULL; a->read = read; a->read_ud = ud;
+    if (archive_parse_header(a, hdr, total_len) != 0) { free(a); return NULL; }
     return a;
 }
 void vc_close(vc_archive *a) { free(a); }
@@ -1242,7 +1547,8 @@ static u64 reader_block(const vc_archive *a, u64 key) {
     u64 mask = a->l1_cap - 1;
     u64 i = mix64(key) & mask;
     for (;;) {
-        const u8 *e = a->buf + a->l1_off + i*L1_ENTRY;
+        u8 e[L1_ENTRY];   // one bucket: [u64 key][u64 block_ref]
+        if (rd_bytes(a, a->l1_off + i*L1_ENTRY, L1_ENTRY, e) != 0) return 0;
         u64 bref = rd_u64m(e + 8);
         if (bref == 0) return 0;
         if (rd_u64m(e) == key) return bref;
@@ -1251,20 +1557,45 @@ static u64 reader_block(const vc_archive *a, u64 key) {
 }
 
 // Resolve an atom's slot: returns flags, and (offset,len,dc) for PRESENT.
-static u8 resolve_atom(const vc_archive *a, int lod, u32 az, u32 ay, u32 ax,
-                       u64 *off, u32 *len, u8 *dc) {
-    u64 key = region_key(lod, az/R_ATOMS, ay/R_ATOMS, ax/R_ATOMS);
-    u64 blk = reader_block(a, key);
-    if (blk == 0) return AF_ABSENT;
-    if (blk == VC_ZERO_REGION) return AF_ZERO;
-    if (blk + L2_BLOCK_BYTES > a->len) return AF_ABSENT; // corrupt guard
-    const u8 *slot = a->buf + blk + slot_index(az,ay,ax)*ATOM_SLOT;
-    // ACQUIRE-load the commit word (offset) before trusting the other fields.
+// Read one atom slot at `slot_off` (a 16B [u64 off][u32 len][u8 flags][u8 dc][u16])
+// and unpack a PRESENT atom's payload range. Shared by v1 and v2 resolve paths.
+static u8 resolve_slot(const vc_archive *a, u64 slot_off, u64 *off, u32 *len, u8 *dc) {
+    u8 slot[ATOM_SLOT];
+    if (rd_bytes(a, slot_off, ATOM_SLOT, slot) != 0) return AF_ABSENT;
     u64 o = rd_u64m(slot);
     atomic_thread_fence(memory_order_acquire);
     u8 flags = slot[12];
     if (flags == AF_PRESENT) { *off = o; *len = rd_u32m(slot+8); *dc = slot[13]; }
     return flags;
+}
+
+// v2: locate a region's blob via the direct-indexed directory, then read its slot.
+static u8 resolve_atom_v2(const vc_archive *a, int lod, u32 az, u32 ay, u32 ax,
+                          u64 *off, u32 *len, u8 *dc) {
+    u32 nrz, nry, nrx; lod_region_grid(a->dims0, lod, &nrz, &nry, &nrx);
+    u32 rz = az/R_ATOMS, ry = ay/R_ATOMS, rx = ax/R_ATOMS;
+    if (rz >= nrz || ry >= nry || rx >= nrx) return AF_ABSENT;
+    u64 regidx = a->region_prefix[lod] + ((u64)rz*nry + ry)*nrx + rx;
+    if (regidx >= a->region_prefix[a->nlod]) return AF_ABSENT;
+    u8 ent[V2_DIR_ENTRY];   // [u64 blob_off][u32 blob_len][u32 flags]
+    if (rd_bytes(a, a->dir_off + regidx*V2_DIR_ENTRY, V2_DIR_ENTRY, ent) != 0) return AF_ABSENT;
+    u32 flags = rd_u32m(ent + 12);
+    if (flags == V2_RGN_ABSENT) return AF_ABSENT;
+    if (flags == V2_RGN_ZERO)   return AF_ZERO;
+    u64 blob_off = rd_u64m(ent);
+    if (blob_off + L2_BLOCK_BYTES > a->len) return AF_ABSENT;   // corrupt guard
+    return resolve_slot(a, blob_off + slot_index(az,ay,ax)*ATOM_SLOT, off, len, dc);
+}
+
+static u8 resolve_atom(const vc_archive *a, int lod, u32 az, u32 ay, u32 ax,
+                       u64 *off, u32 *len, u8 *dc) {
+    if (a->version == 2) return resolve_atom_v2(a, lod, az, ay, ax, off, len, dc);
+    u64 key = region_key(lod, az/R_ATOMS, ay/R_ATOMS, ax/R_ATOMS);
+    u64 blk = reader_block(a, key);
+    if (blk == 0) return AF_ABSENT;
+    if (blk == VC_ZERO_REGION) return AF_ZERO;
+    if (blk + L2_BLOCK_BYTES > a->len) return AF_ABSENT; // corrupt guard
+    return resolve_slot(a, blk + slot_index(az,ay,ax)*ATOM_SLOT, off, len, dc);
 }
 
 vc_status vc_decode_atom(vc_archive *a, int lod, int ax, int ay, int az,
@@ -1277,7 +1608,9 @@ vc_status vc_decode_atom(vc_archive *a, int lod, int ax, int ay, int az,
     u8 flags = resolve_atom(a, lod, az, ay, ax, &off, &len, &dc);
     if (flags == AF_PRESENT) {
         if (off == ABSENT || len < 1 || off + len > a->len) { memset(out,0,A3); return VC_ERR_FORMAT; }
-        decode_atom_payload(a->buf + off, len, a->base_q[lod], out);
+        const u8 *pay = payload_ptr(a, off, len);
+        if (!pay) { memset(out,0,A3); return VC_ERR_FORMAT; }
+        decode_atom_payload(pay, len, a->base_q[lod], out);
         return VC_OK;
     }
     memset(out, 0, A3);   // ABSENT or ZERO -> zeros
@@ -1293,13 +1626,61 @@ vc_cover vc_atom_coverage(const vc_archive *a, int lod, u32 az, u32 ay, u32 ax) 
     return VC_ABSENT;
 }
 
+// Resolve an atom to its on-disk payload byte range WITHOUT decoding (also returns
+// coverage). For a PRESENT atom *off/*len give the compressed payload extent — what
+// a streaming reader must fetch, or what a repacker copies verbatim. 0 for
+// non-PRESENT. In streaming mode the L2 block/slot must be reachable via the read cb.
+vc_cover vc_atom_payload_range(const vc_archive *a, int lod,
+                               u32 az, u32 ay, u32 ax,
+                               uint64_t *off, uint32_t *len) {
+    if (off) *off = 0; if (len) *len = 0;
+    if (!a || lod < 0 || lod >= a->nlod) return VC_ABSENT;
+    u64 o = 0; u32 l = 0; u8 dc = 0;
+    u8 flags = resolve_atom(a, lod, az, ay, ax, &o, &l, &dc);
+    if (flags == AF_PRESENT) { if (off) *off = o; if (len) *len = l; return VC_PRESENT; }
+    if (flags == AF_ZERO) return VC_KNOWN_ZERO;
+    return VC_ABSENT;
+}
+
+// Archive container version (1 = v1 sparse-hash, 2 = v2 region-contiguous).
+int vc_archive_version(const vc_archive *a) { return a ? a->version : 0; }
+
+// v2 ONLY: the contiguous on-disk blob [*off, *off+*len) holding an entire
+// region's slots + payloads. A streaming reader can fetch this in ONE range-GET
+// to serve every atom in the region. Returns the region's coverage (DATA/ZERO/
+// ABSENT); *off/*len are 0 unless DATA. Returns VC_ABSENT (and 0,0) for v1.
+vc_cover vc_region_blob_range(const vc_archive *a, int lod, u32 rz, u32 ry, u32 rx,
+                              uint64_t *off, uint64_t *len) {
+    if (off) *off = 0; if (len) *len = 0;
+    if (!a || a->version != 2 || lod < 0 || lod >= a->nlod) return VC_ABSENT;
+    u32 nrz, nry, nrx; lod_region_grid(a->dims0, lod, &nrz, &nry, &nrx);
+    if (rz >= nrz || ry >= nry || rx >= nrx) return VC_ABSENT;
+    u64 regidx = a->region_prefix[lod] + ((u64)rz*nry + ry)*nrx + rx;
+    if (regidx >= a->region_prefix[a->nlod]) return VC_ABSENT;
+    u8 ent[V2_DIR_ENTRY];
+    if (rd_bytes(a, a->dir_off + regidx*V2_DIR_ENTRY, V2_DIR_ENTRY, ent) != 0) return VC_ABSENT;
+    u32 flags = rd_u32m(ent + 12);
+    if (flags == V2_RGN_ZERO) return VC_KNOWN_ZERO;
+    if (flags != V2_RGN_DATA) return VC_ABSENT;
+    if (off) *off = rd_u64m(ent);
+    if (len) *len = rd_u32m(ent + 8);
+    return VC_PRESENT;
+}
+
 // Build a transient reader view over the writer's live map. Caller must hold the
 // writer's lock (shared is enough) so the map can't move underfoot.
 static vc_archive writer_view(vc_writer *w) {
-    vc_archive a;
+    vc_archive a = {0};   // read/read_ud must be NULL -> flat-buffer mode
     a.buf = w->map; a.len = w->map_len; a.dims0 = w->dims0; a.nlod = w->nlod;
-    a.l1_off = rd_u64m(w->map + FH_L1OFF);
-    a.l1_cap = rd_u64m(w->map + FH_L1CAP);
+    a.version = w->version;
+    if (w->version == 2) {
+        // v2: resolve through the region directory (no L1 hash).
+        a.dir_off = w->dir_off;
+        for (int l=0;l<=w->nlod;++l) a.region_prefix[l] = w->region_prefix[l];
+    } else {
+        a.l1_off = rd_u64m(w->map + FH_L1OFF);
+        a.l1_cap = rd_u64m(w->map + FH_L1CAP);
+    }
     for (int l=0;l<VC_NLOD;++l) a.base_q[l] = atomic_load_explicit(&w->base_q[l], memory_order_acquire);
     return a;
 }
