@@ -33,36 +33,6 @@ public:
         int errorChunks = 0;
     };
 
-    // Queue chunk dependencies for pixels not already covered. The viewer can
-    // call these before sampling a frame so cache misses start resolving early.
-    static Stats requestPlaneDependencies(IChunkedArray& array,
-                                          int level,
-                                          const cv::Vec3f& origin,
-                                          const cv::Vec3f& vxStep,
-                                          const cv::Vec3f& vyStep,
-                                          const cv::Mat_<uint8_t>& coverage,
-                                          const Options& options = Options());
-
-    static Stats requestCoordsDependencies(IChunkedArray& array,
-                                           int level,
-                                           const cv::Mat_<cv::Vec3f>& coords,
-                                           const cv::Mat_<uint8_t>& coverage,
-                                           const Options& options = Options());
-
-    static std::vector<ChunkKey> collectPlaneDependencies(IChunkedArray& array,
-                                                          int level,
-                                                          const cv::Vec3f& origin,
-                                                          const cv::Vec3f& vxStep,
-                                                          const cv::Vec3f& vyStep,
-                                                          const cv::Mat_<uint8_t>& coverage,
-                                                          const Options& options = Options());
-
-    static std::vector<ChunkKey> collectCoordsDependencies(IChunkedArray& array,
-                                                           int level,
-                                                           const cv::Mat_<cv::Vec3f>& coords,
-                                                           const cv::Mat_<uint8_t>& coverage,
-                                                           const Options& options = Options());
-
     // Samples one pyramid level into `out` for pixels not already marked in
     // `coverage`. Coordinates are logical level-0 XYZ voxel coordinates.
     static Stats samplePlaneLevel(IChunkedArray& array,
@@ -80,6 +50,26 @@ public:
                                    cv::Mat_<uint8_t>& out,
                                    cv::Mat_<uint8_t>& coverage,
                                    const Options& options = Options());
+
+    // Fused max-composite: for each pixel, samples numLayers depths along the
+    // surface normal (coord + normal*(layerStart+i)*layerStep, Nearest) and
+    // writes the MAX over the covered samples whose value >= isoCutoff. Folds
+    // the per-layer offset, sampling and reduction into ONE pass so the chunk
+    // lookup + index math is shared across the depths of a pixel (they almost
+    // always fall in the same chunk) instead of repeated per layer. Output is
+    // identical to sampling each layer separately and taking composite_max.
+    // A pixel with no qualifying sample is left uncovered.
+    static Stats sampleCoordsMaxComposite(IChunkedArray& array,
+                                          int level,
+                                          const cv::Mat_<cv::Vec3f>& coords,
+                                          const cv::Mat_<cv::Vec3f>& normals,
+                                          int layerStart,
+                                          int numLayers,
+                                          float layerStep,
+                                          float isoCutoff,
+                                          cv::Mat_<uint8_t>& out,
+                                          cv::Mat_<uint8_t>& coverage,
+                                          const Options& options = Options());
 
 };
 

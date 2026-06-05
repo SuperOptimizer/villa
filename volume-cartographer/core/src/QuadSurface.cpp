@@ -240,6 +240,16 @@ void warpBilinearReplicateVec3f(const cv::Mat_<cv::Vec3f>& src,
     }
 }
 
+// Round-to-nearest float->int that the compiler inlines to pure arithmetic
+// (no libm call -- std::lround/lrintf are not inlined without -fno-math-errno,
+// and showed up per-pixel in the warp profile). Handles negatives correctly,
+// unlike int(x + 0.5f). Tie behavior (exact .5) is irrelevant for resample
+// indices.
+static inline int roundToNearestInt(float x)
+{
+    return int(x + (x >= 0.0f ? 0.5f : -0.5f));
+}
+
 void warpNearestConstU8(const cv::Mat_<uint8_t>& src,
                         cv::Mat_<uint8_t>& dst,
                         double ox, double oy,
@@ -252,7 +262,7 @@ void warpNearestConstU8(const cv::Mat_<uint8_t>& src,
     const float fsx = float(sx), fsy = float(sy);
     #pragma omp parallel for schedule(dynamic, 8)
     for (int dy = 0; dy < dh; ++dy) {
-        const int sy_i = int(std::lround(foy + float(dy) * fsy));
+        const int sy_i = roundToNearestInt(foy + float(dy) * fsy);
         uint8_t* orow = dst[dy];
         if (sy_i < 0 || sy_i >= sr) {
             std::memset(orow, border, size_t(dw));
@@ -260,7 +270,7 @@ void warpNearestConstU8(const cv::Mat_<uint8_t>& src,
         }
         const uint8_t* srow = src[sy_i];
         for (int dx = 0; dx < dw; ++dx) {
-            const int sx_i = int(std::lround(fox + float(dx) * fsx));
+            const int sx_i = roundToNearestInt(fox + float(dx) * fsx);
             orow[dx] = (sx_i < 0 || sx_i >= sc) ? border : srow[sx_i];
         }
     }
@@ -278,7 +288,7 @@ void warpNearestConstVec3f(const cv::Mat_<cv::Vec3f>& src,
     const float fsx = float(sx), fsy = float(sy);
     #pragma omp parallel for schedule(dynamic, 8)
     for (int dy = 0; dy < dh; ++dy) {
-        const int sy_i = int(std::lround(foy + float(dy) * fsy));
+        const int sy_i = roundToNearestInt(foy + float(dy) * fsy);
         cv::Vec3f* orow = dst[dy];
         if (sy_i < 0 || sy_i >= sr) {
             for (int dx = 0; dx < dw; ++dx) orow[dx] = border;
@@ -286,7 +296,7 @@ void warpNearestConstVec3f(const cv::Mat_<cv::Vec3f>& src,
         }
         const cv::Vec3f* srow = src[sy_i];
         for (int dx = 0; dx < dw; ++dx) {
-            const int sx_i = int(std::lround(fox + float(dx) * fsx));
+            const int sx_i = roundToNearestInt(fox + float(dx) * fsx);
             orow[dx] = (sx_i < 0 || sx_i >= sc) ? border : srow[sx_i];
         }
     }
@@ -764,8 +774,15 @@ void QuadSurface::gen(cv::Mat_<cv::Vec3f>* coords,
     bool skipValidity = _validMaskAllValid;
 
     // --- warp coords and validity ----------------------------------------
-    cv::Mat_<cv::Vec3f>& coords_big = _genCoordsScratch;
-    cv::Mat_<uint8_t>& valid_big = _genValidScratch;
+    // Per-THREAD working buffers: gen() is called concurrently from the render
+    // worker, the prefetch path, segmentation tools, etc. A single shared mutable
+    // scratch raced across those threads -- one thread resized it while another
+    // was mid-crop -> OpenCV ROI assertion / crash. thread_local gives each
+    // caller its own reused buffer: reentrant (no cross-thread race) AND no
+    // per-call (w+8)x(h+8) reallocation (cv::Mat::create reuses when size+type
+    // match), so we keep the allocation-churn win the old shared member had.
+    thread_local cv::Mat_<cv::Vec3f> coords_big;
+    thread_local cv::Mat_<uint8_t> valid_big;
 
     if (!_components.empty()) {
         // Multi-component surface: warp each component separately with
@@ -819,7 +836,7 @@ void QuadSurface::gen(cv::Mat_<cv::Vec3f>* coords,
     }
 
     // --- normals: warp cached source-grid normals -------------------
-    cv::Mat_<cv::Vec3f>& normals_big = _genNormalsScratch;
+    thread_local cv::Mat_<cv::Vec3f> normals_big;
     if (need_normals) {
         // Build source-grid normal cache once per surface. Subsequent gen()
         // calls (panning, zooming) reuse it. Cleared by unloadCaches() when

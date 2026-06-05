@@ -3,6 +3,7 @@
 #include <utils/thread_pool.hpp>
 
 #include <algorithm>
+#include <climits>
 #include <cmath>
 #include <cstddef>
 #include <future>
@@ -108,9 +109,18 @@ bool finiteCoord(const cv::Vec3f& p)
 
 bool surfaceSentinel(const cv::Vec3f& p)
 {
-    return !finiteCoord(p)
-        || p[0] == -1.0f || p[1] == -1.0f || p[2] == -1.0f
-        || (p[0] == 0.0f && p[1] == 0.0f && p[2] == 0.0f);
+    // Hot path: called per screen pixel in the render sampler. gen() marks holes
+    // as (-1,-1,-1); (0,0,0) is the unset marker; NaN comes from bad source data.
+    // Coordinates never reach +/-Inf in the surface pipeline (see QuadSurface),
+    // so we detect NaN with the branchless self-inequality test (x != x) instead
+    // of std::isfinite (a libm classification call) -- the same trick the mask
+    // builder uses. Cheap == checks first so valid pixels exit fast.
+    const float a = p[0], b = p[1], c = p[2];
+    if (a == -1.0f || b == -1.0f || c == -1.0f)
+        return true;
+    if (a == 0.0f && b == 0.0f && c == 0.0f)
+        return true;
+    return a != a || b != b || c != c;   // NaN
 }
 
 LevelAccess makeLevelAccess(IChunkedArray& array, int level)
@@ -131,7 +141,20 @@ bool hasSampleableLevel(const LevelAccess& access)
 
 cv::Vec3f toLevelCoord(const LevelAccess& access, const cv::Vec3f& p0)
 {
+    // Hot path: called per screen pixel. The level transform is a uniform scale
+    // with (almost always) zero offset (offsetFromLevel0 = {0,0,0} for the vca/
+    // zarr fetchers), so the common case is a single float multiply per axis --
+    // skip the double round-trip and the +0 adds. Coordinates stay well within
+    // float's exact-integer range (volumes are < 2^24 voxels), so float scaling
+    // is precise enough here.
     const auto& t = access.transform;
+    const float sx = float(t.scaleFromLevel0[0]);
+    const float sy = float(t.scaleFromLevel0[1]);
+    const float sz = float(t.scaleFromLevel0[2]);
+    if (t.offsetFromLevel0[0] == 0.0 && t.offsetFromLevel0[1] == 0.0 &&
+        t.offsetFromLevel0[2] == 0.0) {
+        return {p0[0] * sx, p0[1] * sy, p0[2] * sz};
+    }
     return {
         float(double(p0[0]) * t.scaleFromLevel0[0] + t.offsetFromLevel0[0]),
         float(double(p0[1]) * t.scaleFromLevel0[1] + t.offsetFromLevel0[1]),
@@ -216,118 +239,6 @@ bool readVoxel(IChunkedArray& array,
 
     out = std::to_integer<uint8_t>((*result.bytes)[offset]);
     return true;
-}
-
-bool addVoxelDependency(IChunkedArray& array,
-                        const LevelAccess& access,
-                        int level,
-                        int iz,
-                        int iy,
-                        int ix,
-                        std::unordered_set<ChunkKey, ChunkKeyHash>& keys)
-{
-    const auto& shape = access.shape;
-    if (unsigned(iz) >= unsigned(shape[0])
-        || unsigned(iy) >= unsigned(shape[1])
-        || unsigned(ix) >= unsigned(shape[2]))
-        return true;
-
-    const auto& chunkShape = access.chunkShape;
-    if (chunkShape[0] <= 0 || chunkShape[1] <= 0 || chunkShape[2] <= 0)
-        return false;
-
-    keys.insert({level, iz / chunkShape[0], iy / chunkShape[1], ix / chunkShape[2]});
-    return true;
-}
-
-bool collectPointDependencies(IChunkedArray& array,
-                              const LevelAccess& access,
-                              int level,
-                              const cv::Vec3f& p0,
-                              vc::Sampling sampling,
-                              bool zeroIsSentinel,
-                              std::unordered_set<ChunkKey, ChunkKeyHash>& keys)
-{
-    if (!finiteCoord(p0) || (zeroIsSentinel && surfaceSentinel(p0)))
-        return true;
-
-    const cv::Vec3f p = toLevelCoord(access, p0);
-    const auto& shape = access.shape;
-    const float x = p[0], y = p[1], z = p[2];
-    if (!inLevelBounds(shape, z, y, x))
-        return true;
-
-    if (sampling == vc::Sampling::Nearest) {
-        int ix = int(x + 0.5f);
-        int iy = int(y + 0.5f);
-        int iz = int(z + 0.5f);
-        ix = std::clamp(ix, 0, shape[2] - 1);
-        iy = std::clamp(iy, 0, shape[1] - 1);
-        iz = std::clamp(iz, 0, shape[0] - 1);
-        return addVoxelDependency(array, access, level, iz, iy, ix, keys);
-    }
-
-    const int ix = int(std::floor(x));
-    const int iy = int(std::floor(y));
-    const int iz = int(std::floor(z));
-    bool ok = true;
-    ok = addVoxelDependency(array, access, level, iz,     iy,     ix,     keys) && ok;
-    ok = addVoxelDependency(array, access, level, iz,     iy,     ix + 1, keys) && ok;
-    ok = addVoxelDependency(array, access, level, iz,     iy + 1, ix,     keys) && ok;
-    ok = addVoxelDependency(array, access, level, iz,     iy + 1, ix + 1, keys) && ok;
-    ok = addVoxelDependency(array, access, level, iz + 1, iy,     ix,     keys) && ok;
-    ok = addVoxelDependency(array, access, level, iz + 1, iy,     ix + 1, keys) && ok;
-    ok = addVoxelDependency(array, access, level, iz + 1, iy + 1, ix,     keys) && ok;
-    ok = addVoxelDependency(array, access, level, iz + 1, iy + 1, ix + 1, keys) && ok;
-    return ok;
-}
-
-bool collectLevelPointDependencies(IChunkedArray& array,
-                                   const LevelAccess& access,
-                                   int level,
-                                   const cv::Vec3f& p,
-                                   vc::Sampling sampling,
-                                   std::unordered_set<ChunkKey, ChunkKeyHash>& keys)
-{
-    if (!finiteCoord(p))
-        return true;
-
-    const auto& shape = access.shape;
-    const float x = p[0], y = p[1], z = p[2];
-    if (!inLevelBounds(shape, z, y, x))
-        return true;
-
-    if (sampling == vc::Sampling::Nearest) {
-        int ix = int(x + 0.5f);
-        int iy = int(y + 0.5f);
-        int iz = int(z + 0.5f);
-        ix = std::clamp(ix, 0, shape[2] - 1);
-        iy = std::clamp(iy, 0, shape[1] - 1);
-        iz = std::clamp(iz, 0, shape[0] - 1);
-        return addVoxelDependency(array, access, level, iz, iy, ix, keys);
-    }
-
-    const int ix = int(std::floor(x));
-    const int iy = int(std::floor(y));
-    const int iz = int(std::floor(z));
-    bool ok = true;
-    ok = addVoxelDependency(array, access, level, iz,     iy,     ix,     keys) && ok;
-    ok = addVoxelDependency(array, access, level, iz,     iy,     ix + 1, keys) && ok;
-    ok = addVoxelDependency(array, access, level, iz,     iy + 1, ix,     keys) && ok;
-    ok = addVoxelDependency(array, access, level, iz,     iy + 1, ix + 1, keys) && ok;
-    ok = addVoxelDependency(array, access, level, iz + 1, iy,     ix,     keys) && ok;
-    ok = addVoxelDependency(array, access, level, iz + 1, iy,     ix + 1, keys) && ok;
-    ok = addVoxelDependency(array, access, level, iz + 1, iy + 1, ix,     keys) && ok;
-    ok = addVoxelDependency(array, access, level, iz + 1, iy + 1, ix + 1, keys) && ok;
-    return ok;
-}
-
-void requestDependencies(LocalChunkCache& cache,
-                         const std::unordered_set<ChunkKey, ChunkKeyHash>& keys,
-                         ChunkedPlaneSampler::Stats& stats)
-{
-    for (const ChunkKey& key : keys)
-        (void)cache.get(key, stats.requestedChunks, stats.errorChunks);
 }
 
 bool sampleNearest(IChunkedArray& array,
@@ -468,9 +379,15 @@ bool samplePoint(IChunkedArray& array,
                  int& requested,
                  int& errors)
 {
-    if (!finiteCoord(p0) || (zeroIsSentinel && surfaceSentinel(p0))) {
-        if (zeroIsSentinel)
+    // surfaceSentinel() already subsumes the NaN/Inf check (it tests x != x and
+    // the pipeline never produces +/-Inf), so when zeroIsSentinel we don't also
+    // run finiteCoord -- that was 3 redundant std::isfinite calls per pixel on
+    // the hot render path. Without the sentinel convention we still need the
+    // explicit finite test.
+    if (zeroIsSentinel) {
+        if (surfaceSentinel(p0))
             return false;
+    } else if (!finiteCoord(p0)) {
         out = access.fill;
         return true;
     }
@@ -508,177 +425,6 @@ void addStats(ChunkedPlaneSampler::Stats& dst, const ChunkedPlaneSampler::Stats&
 }
 
 } // namespace
-
-std::vector<ChunkKey> ChunkedPlaneSampler::collectPlaneDependencies(
-    IChunkedArray& array,
-    int level,
-    const cv::Vec3f& origin,
-    const cv::Vec3f& vxStep,
-    const cv::Vec3f& vyStep,
-    const cv::Mat_<uint8_t>& coverage,
-    const Options& options)
-{
-    std::vector<ChunkKey> result;
-    if (level < 0 || level >= array.numLevels() || coverage.empty())
-        return result;
-
-    const LevelAccess access = makeLevelAccess(array, level);
-    if (!hasSampleableLevel(access))
-        return result;
-    const LevelPlane levelPlane = toLevelPlane(access, origin, vxStep, vyStep);
-    const int tile = std::max(1, options.tileSize);
-    std::unordered_set<ChunkKey, ChunkKeyHash> keys;
-    keys.reserve(std::size_t(coverage.rows / tile + 2) *
-                 std::size_t(coverage.cols / tile + 2) * 4);
-    for (int ty = 0; ty < coverage.rows; ty += tile) {
-        const int yEnd = std::min(ty + tile, coverage.rows);
-        for (int tx = 0; tx < coverage.cols; tx += tile) {
-            const int xEnd = std::min(tx + tile, coverage.cols);
-            for (int y = ty; y < yEnd; ++y) {
-                const uint8_t* coverageRow = coverage.ptr<uint8_t>(y);
-                const cv::Vec3f rowBase = levelPlane.origin + levelPlane.vyStep * float(y);
-                for (int x = tx; x < xEnd; ++x) {
-                    if (coverageRow[x])
-                        continue;
-                    (void)collectLevelPointDependencies(
-                        array, access, level, rowBase + levelPlane.vxStep * float(x),
-                        options.sampling, keys);
-                }
-            }
-        }
-    }
-
-    result.reserve(keys.size());
-    for (const ChunkKey& key : keys)
-        result.push_back(key);
-    return result;
-}
-
-std::vector<ChunkKey> ChunkedPlaneSampler::collectCoordsDependencies(
-    IChunkedArray& array,
-    int level,
-    const cv::Mat_<cv::Vec3f>& coords,
-    const cv::Mat_<uint8_t>& coverage,
-    const Options& options)
-{
-    std::vector<ChunkKey> result;
-    if (level < 0 || level >= array.numLevels() || coords.empty() || coverage.empty())
-        return result;
-
-    const LevelAccess access = makeLevelAccess(array, level);
-    if (!hasSampleableLevel(access))
-        return result;
-    const int tile = std::max(1, options.tileSize);
-    const int h = std::min(coords.rows, coverage.rows);
-    const int w = std::min(coords.cols, coverage.cols);
-    std::unordered_set<ChunkKey, ChunkKeyHash> keys;
-    keys.reserve(std::size_t(h / tile + 2) * std::size_t(w / tile + 2) * 4);
-    for (int ty = 0; ty < h; ty += tile) {
-        const int yEnd = std::min(ty + tile, h);
-        for (int tx = 0; tx < w; tx += tile) {
-            const int xEnd = std::min(tx + tile, w);
-            for (int y = ty; y < yEnd; ++y) {
-                const cv::Vec3f* coordRow = coords.ptr<cv::Vec3f>(y);
-                const uint8_t* coverageRow = coverage.ptr<uint8_t>(y);
-                for (int x = tx; x < xEnd; ++x) {
-                    if (coverageRow[x])
-                        continue;
-                    (void)collectPointDependencies(array, access, level, coordRow[x],
-                                                   options.sampling, true, keys);
-                }
-            }
-        }
-    }
-
-    result.reserve(keys.size());
-    for (const ChunkKey& key : keys)
-        result.push_back(key);
-    return result;
-}
-
-ChunkedPlaneSampler::Stats ChunkedPlaneSampler::requestPlaneDependencies(
-    IChunkedArray& array,
-    int level,
-    const cv::Vec3f& origin,
-    const cv::Vec3f& vxStep,
-    const cv::Vec3f& vyStep,
-    const cv::Mat_<uint8_t>& coverage,
-    const Options& options)
-{
-    Stats stats;
-    if (level < 0 || level >= array.numLevels() || coverage.empty())
-        return stats;
-
-    const LevelAccess access = makeLevelAccess(array, level);
-    if (!hasSampleableLevel(access))
-        return stats;
-    const LevelPlane levelPlane = toLevelPlane(access, origin, vxStep, vyStep);
-    LocalChunkCache chunkCache(array, 64);
-    const int tile = std::max(1, options.tileSize);
-    std::unordered_set<ChunkKey, ChunkKeyHash> tileKeys;
-    tileKeys.reserve(std::size_t(tile) * std::size_t(tile) * 2);
-    for (int ty = 0; ty < coverage.rows; ty += tile) {
-        const int yEnd = std::min(ty + tile, coverage.rows);
-        for (int tx = 0; tx < coverage.cols; tx += tile) {
-            const int xEnd = std::min(tx + tile, coverage.cols);
-            tileKeys.clear();
-            for (int y = ty; y < yEnd; ++y) {
-                const uint8_t* coverageRow = coverage.ptr<uint8_t>(y);
-                const cv::Vec3f rowBase = levelPlane.origin + levelPlane.vyStep * float(y);
-                for (int x = tx; x < xEnd; ++x) {
-                    if (coverageRow[x])
-                        continue;
-                    (void)collectLevelPointDependencies(
-                        array, access, level, rowBase + levelPlane.vxStep * float(x),
-                        options.sampling, tileKeys);
-                }
-            }
-            requestDependencies(chunkCache, tileKeys, stats);
-        }
-    }
-    return stats;
-}
-
-ChunkedPlaneSampler::Stats ChunkedPlaneSampler::requestCoordsDependencies(
-    IChunkedArray& array,
-    int level,
-    const cv::Mat_<cv::Vec3f>& coords,
-    const cv::Mat_<uint8_t>& coverage,
-    const Options& options)
-{
-    Stats stats;
-    if (level < 0 || level >= array.numLevels() || coords.empty() || coverage.empty())
-        return stats;
-
-    const LevelAccess access = makeLevelAccess(array, level);
-    if (!hasSampleableLevel(access))
-        return stats;
-    LocalChunkCache chunkCache(array, 64);
-    const int tile = std::max(1, options.tileSize);
-    const int h = std::min(coords.rows, coverage.rows);
-    const int w = std::min(coords.cols, coverage.cols);
-    std::unordered_set<ChunkKey, ChunkKeyHash> tileKeys;
-    tileKeys.reserve(std::size_t(tile) * std::size_t(tile) * 2);
-    for (int ty = 0; ty < h; ty += tile) {
-        const int yEnd = std::min(ty + tile, h);
-        for (int tx = 0; tx < w; tx += tile) {
-            const int xEnd = std::min(tx + tile, w);
-            tileKeys.clear();
-            for (int y = ty; y < yEnd; ++y) {
-                const cv::Vec3f* coordRow = coords.ptr<cv::Vec3f>(y);
-                const uint8_t* coverageRow = coverage.ptr<uint8_t>(y);
-                for (int x = tx; x < xEnd; ++x) {
-                    if (coverageRow[x])
-                        continue;
-                    (void)collectPointDependencies(array, access, level, coordRow[x],
-                                                   options.sampling, true, tileKeys);
-                }
-            }
-            requestDependencies(chunkCache, tileKeys, stats);
-        }
-    }
-    return stats;
-}
 
 ChunkedPlaneSampler::Stats samplePlaneLevelImpl(
     IChunkedArray& array,
@@ -868,6 +614,185 @@ ChunkedPlaneSampler::Stats ChunkedPlaneSampler::sampleCoordsLevel(
     const Options& options)
 {
     return sampleCoordsLevelImpl(array, level, coords, out, coverage, options, false);
+}
+
+ChunkedPlaneSampler::Stats ChunkedPlaneSampler::sampleCoordsMaxComposite(
+    IChunkedArray& array,
+    int level,
+    const cv::Mat_<cv::Vec3f>& coords,
+    const cv::Mat_<cv::Vec3f>& normals,
+    int layerStart,
+    int numLayers,
+    float layerStep,
+    float isoCutoff,
+    cv::Mat_<uint8_t>& out,
+    cv::Mat_<uint8_t>& coverage,
+    const Options& options)
+{
+    ChunkedPlaneSampler::Stats stats;
+    if (level < 0 || level >= array.numLevels() || coords.empty() || out.empty() ||
+        coverage.empty() || normals.empty() || numLayers <= 0)
+        return stats;
+
+    const LevelAccess access = makeLevelAccess(array, level);
+    if (!hasSampleableLevel(access))
+        return stats;
+
+    const int tile = std::max(1, options.tileSize);
+    const int h = std::min({coords.rows, out.rows, coverage.rows, normals.rows});
+    const int w = std::min({coords.cols, out.cols, coverage.cols, normals.cols});
+
+    // chunkShape is the codec atom (32^3) -- a power of two -- so chunk index =
+    // voxel >> log2(shape) and in-chunk offset = voxel & (shape-1), avoiding the
+    // 3 runtime integer divisions per depth (a real idiv ~20-40 cyc each, N* per
+    // pixel in composite). Fall back to div/mod if a non-pow2 shape ever appears.
+    auto log2pow2 = [](int v) -> int { return (v > 0 && (v & (v - 1)) == 0)
+                                            ? __builtin_ctz(unsigned(v)) : -1; };
+    const int sh0 = log2pow2(access.chunkShape[0]);
+    const int sh1 = log2pow2(access.chunkShape[1]);
+    const int sh2 = log2pow2(access.chunkShape[2]);
+    const bool pow2Chunks = sh0 >= 0 && sh1 >= 0 && sh2 >= 0;
+
+    std::vector<SampleTile> tiles;
+    tiles.reserve(std::size_t((h + tile - 1) / tile) * std::size_t((w + tile - 1) / tile));
+    for (int ty = 0; ty < h; ty += tile)
+        for (int tx = 0; tx < w; tx += tile)
+            tiles.push_back({tx, ty, std::min(tx + tile, w), std::min(ty + tile, h)});
+
+    auto processTileRange = [&](std::size_t begin, std::size_t end) {
+        ChunkedPlaneSampler::Stats localStats;
+        LocalChunkCache chunkCache(array, std::max<std::size_t>(16, (end - begin) * 4));
+        for (std::size_t i = begin; i < end; ++i) {
+            const SampleTile& st = tiles[i];
+            for (int y = st.ty; y < st.yEnd; ++y) {
+                const cv::Vec3f* coordRow = coords.ptr<cv::Vec3f>(y);
+                const cv::Vec3f* normalRow = normals.ptr<cv::Vec3f>(y);
+                uint8_t* outRow = out.ptr<uint8_t>(y);
+                uint8_t* coverageRow = coverage.ptr<uint8_t>(y);
+                for (int x = st.tx; x < st.xEnd; ++x) {
+                    const cv::Vec3f base = coordRow[x];
+                    // Hole pixel -> leave uncovered (matches per-layer sentinel
+                    // skip, where the offset coord stays the sentinel).
+                    if (surfaceSentinel(base))
+                        continue;
+                    const cv::Vec3f nrm = normalRow[x];
+                    // Walk the depths for THIS pixel inline. The N depths are
+                    // offset along the normal by ~1 voxel each, so they almost
+                    // all fall in the SAME chunk -- we resolve the chunk once and
+                    // hold its resident buffer across depths, recomputing only the
+                    // in-chunk offset + byte read per depth. That avoids N chunk
+                    // lookups, N status re-checks and (when the chunk is unchanged)
+                    // the cache.get map probe -- readVoxel/cache.get were the bulk
+                    // of the composite cost. We track max over covered samples
+                    // whose value >= isoCutoff (== composite_max of the layers).
+                    const auto& shp = access.shape;
+                    const auto& csh = access.chunkShape;
+                    const int csh0 = csh[0], csh1 = csh[1], csh2 = csh[2];
+                    // Hoist the level transform out of the depth loop: each depth
+                    // is (base + nrm*off) mapped to level space. Since the
+                    // transform is affine, transform base and nrm ONCE, then each
+                    // depth is baseL + nrmL*off -- no per-depth toLevelCoord call.
+                    const cv::Vec3f baseL = toLevelCoord(access, base);
+                    const cv::Vec3f nrmL = toLevelVector(access, nrm);
+                    int lastCz = INT_MIN, lastCy = INT_MIN, lastCx = INT_MIN;
+                    const std::vector<std::byte>* curBytes = nullptr;
+                    bool curAllFill = false, curUsable = false;
+                    float best = 0.0f;
+                    bool any = false;
+                    // off is an induction variable (off += layerStep) -- avoids the
+                    // per-depth int->float convert + multiply.
+                    float off = float(layerStart) * layerStep;
+                    for (int l = 0; l < numLayers; ++l, off += layerStep) {
+                        const float fx = baseL[0] + nrmL[0] * off;
+                        const float fy = baseL[1] + nrmL[1] * off;
+                        const float fz = baseL[2] + nrmL[2] * off;
+                        // Lower bound via float (a negative coord rounds toward 0
+                        // and would otherwise pass the unsigned check). Upper bound
+                        // is the single unsigned int compare below -- we drop the
+                        // redundant float < float(shape) compares, which forced a
+                        // per-depth int->float convert of each shape dim.
+                        if (fx < 0.0f || fy < 0.0f || fz < 0.0f)
+                            continue;
+                        const int iz = int(fz + 0.5f), iy = int(fy + 0.5f), ix = int(fx + 0.5f);
+                        if (unsigned(iz) >= unsigned(shp[0]) || unsigned(iy) >= unsigned(shp[1]) ||
+                            unsigned(ix) >= unsigned(shp[2]))
+                            continue;
+                        // chunk index + in-chunk coords: shift/mask for pow2 chunk
+                        // shapes (the 32^3 atom), div/mod otherwise.
+                        int cz, cy, cx, lz, ly, lx;
+                        if (pow2Chunks) {
+                            cz = iz >> sh0; cy = iy >> sh1; cx = ix >> sh2;
+                            lz = iz & (csh0 - 1); ly = iy & (csh1 - 1); lx = ix & (csh2 - 1);
+                        } else {
+                            cz = iz / csh0; cy = iy / csh1; cx = ix / csh2;
+                            lz = iz - cz * csh0; ly = iy - cy * csh1; lx = ix - cx * csh2;
+                        }
+                        if (cz != lastCz || cy != lastCy || cx != lastCx) {
+                            lastCz = cz; lastCy = cy; lastCx = cx;
+                            const ChunkResult& r = chunkCache.get(
+                                {level, cz, cy, cx},
+                                localStats.requestedChunks, localStats.errorChunks);
+                            curAllFill = (r.status == ChunkStatus::AllFill);
+                            curUsable = (r.status == ChunkStatus::Data) && r.bytes;
+                            curBytes = curUsable ? r.bytes.get() : nullptr;
+                        }
+                        uint8_t value;
+                        if (curAllFill) {
+                            value = access.fill;
+                        } else if (curUsable) {
+                            // In-chunk byte offset. For the pow2 atom this is a
+                            // pair of shifts, not the two runtime multiplies the
+                            // compiler emits for the generic chunkShape stride.
+                            const std::size_t o = pow2Chunks
+                                ? (((std::size_t(lz) << sh1) + std::size_t(ly)) << sh2)
+                                      + std::size_t(lx)
+                                : (std::size_t(lz) * std::size_t(csh1)
+                                      + std::size_t(ly)) * std::size_t(csh2)
+                                      + std::size_t(lx);
+                            if (o >= curBytes->size())
+                                continue;
+                            value = std::to_integer<uint8_t>((*curBytes)[o]);
+                        } else {
+                            continue;   // missing/queued/error chunk
+                        }
+                        const float fv = float(value);
+                        if (fv < isoCutoff)
+                            continue;
+                        if (!any || fv > best) { best = fv; any = true; }
+                    }
+                    if (any) {
+                        outRow[x] = static_cast<uint8_t>(std::clamp(best, 0.0f, 255.0f));
+                        const bool wasCovered = coverageRow[x] != 0;
+                        coverageRow[x] = 1;
+                        if (!wasCovered)
+                            ++localStats.coveredPixels;
+                    }
+                }
+            }
+        }
+        return localStats;
+    };
+
+    if (!shouldParallelizeSamples(h, w) || tiles.size() <= 1)
+        return processTileRange(0, tiles.size());
+
+    const std::size_t workerCount = std::min<std::size_t>(
+        renderSamplerPool().worker_count(), tiles.size());
+    const std::size_t tilesPerWorker = (tiles.size() + workerCount - 1) / workerCount;
+    std::vector<std::future<ChunkedPlaneSampler::Stats>> futures;
+    futures.reserve(workerCount);
+    for (std::size_t worker = 0; worker < workerCount; ++worker) {
+        const std::size_t begin = worker * tilesPerWorker;
+        const std::size_t end = std::min(begin + tilesPerWorker, tiles.size());
+        if (begin >= end)
+            break;
+        futures.push_back(renderSamplerPool().submit([&, begin, end] {
+            return processTileRange(begin, end);
+        }));
+    }
+    for (auto& future : futures)
+        addStats(stats, future.get());
+    return stats;
 }
 
 

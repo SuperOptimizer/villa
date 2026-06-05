@@ -94,33 +94,6 @@ cv::Mat_<cv::Vec3f> axisAlignedCoords(int rows, int cols, float z = 0.f)
 
 } // namespace
 
-TEST_CASE("collectPlaneDependencies / collectCoordsDependencies enumerate keys")
-{
-    AllDataArray a;
-    cv::Mat_<uint8_t> coverage(4, 4, uint8_t{0});
-    auto keysPlane = ChunkedPlaneSampler::collectPlaneDependencies(
-        a, 0, cv::Vec3f(0, 0, 0), cv::Vec3f(1, 0, 0), cv::Vec3f(0, 1, 0), coverage);
-    CHECK_FALSE(keysPlane.empty());
-
-    auto coords = axisAlignedCoords(4, 4);
-    auto keysCoords = ChunkedPlaneSampler::collectCoordsDependencies(
-        a, 0, coords, coverage);
-    CHECK_FALSE(keysCoords.empty());
-}
-
-TEST_CASE("requestPlaneDependencies / requestCoordsDependencies run without crashing")
-{
-    AllDataArray a;
-    cv::Mat_<uint8_t> coverage(4, 4, uint8_t{0});
-    ChunkedPlaneSampler::requestPlaneDependencies(
-        a, 0, cv::Vec3f(0, 0, 0), cv::Vec3f(1, 0, 0), cv::Vec3f(0, 1, 0), coverage);
-    auto coords = axisAlignedCoords(4, 4);
-    ChunkedPlaneSampler::requestCoordsDependencies(a, 0, coords, coverage);
-    // The exact prefetch count depends on internal heuristics; we just
-    // verify the call surface is reachable and doesn't throw.
-    CHECK(a.prefetchCalls >= 0);
-}
-
 TEST_CASE("samplePlaneLevel: covers all pixels of a fully-resident plane")
 {
     AllDataArray a(42, 0);

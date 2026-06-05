@@ -262,23 +262,8 @@ private:
     void updateContentBounds();
     QPointF surfaceToScene(float surfX, float surfY) const;
     cv::Vec2f sceneToSurface(const QPointF& scenePos) const;
-    void prefetchPlaneHalo(const cv::Vec3f& origin,
-                           const cv::Vec3f& vxStep,
-                           const cv::Vec3f& vyStep,
-                           int startLevel,
-                           const vc::render::ChunkedPlaneSampler::Options& options);
-    void prefetchPlaneNormalNeighbors(PlaneSurface& plane,
-                                      int startLevel,
-                                      const vc::render::ChunkedPlaneSampler::Options& options);
-    void prefetchSurfaceHalo(Surface& surf,
-                             int startLevel,
-                             const vc::render::ChunkedPlaneSampler::Options& options,
-                             int fbW,
-                             int fbH);
-    void prefetchVisibleSurfaceChunks(int priorityOffset = 0);
     struct RenderContext;
     struct RenderResult;
-    struct GeneratedSurfaceCache;
     static RenderResult renderFrame(RenderContext ctx);
     void finishRenderOnMainThread(std::shared_ptr<RenderResult> result);
     int renderStartLevel(bool preferSurfaceResolution = false) const;
@@ -330,18 +315,6 @@ private:
     std::uint64_t _renderSerial = 0;
     cv::Mat_<uint8_t> _values;
     cv::Mat_<uint8_t> _coverage;
-    std::shared_ptr<GeneratedSurfaceCache> _genSurfaceCache;
-    bool _genCacheDirty = true;
-
-    struct SurfaceChunkPrefetchCache {
-        Surface* surface = nullptr;
-        int level = -1;
-        vc::Sampling sampling = vc::Sampling::Trilinear;
-        bool valid = false;
-        cv::Rect prefetchedCellRect;
-        std::unordered_map<std::uint64_t, std::vector<vc::render::ChunkKey>> tileKeys;
-    };
-    SurfaceChunkPrefetchCache _surfaceChunkPrefetchCache;
 
     float _surfacePtrX = 0.0f;
     float _surfacePtrY = 0.0f;

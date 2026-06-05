@@ -165,15 +165,6 @@ TEST_CASE("sampleCoordsLevel with NaN coord is skipped")
     CHECK(cov(0, 0) == 0);
 }
 
-TEST_CASE("collectPlaneDependencies on AllFill returns keys for the chunk")
-{
-    AllFillArray a;
-    cv::Mat_<uint8_t> cov(4, 4, uint8_t{0});
-    auto keys = ChunkedPlaneSampler::collectPlaneDependencies(
-        a, 0, cv::Vec3f(0, 0, 0), cv::Vec3f(1, 0, 0), cv::Vec3f(0, 1, 0), cov);
-    CHECK_FALSE(keys.empty());
-}
-
 TEST_CASE("samplePlaneLevel with non-axis-aligned step vectors")
 {
     GradientArray a;
