@@ -1470,23 +1470,42 @@ namespace {
 // stays as a safety net for prediction gaps. This is cheap: plane = 4 corners,
 // segment = the ~20x-downscaled control-point grid -- never a full-res pixel walk.
 
-// Append the chunk keys enclosing a voxel-space bbox at `level`.
-void appendChunksForBbox(vc::render::ChunkCache& cache, int level,
+// Hard cap on predicted chunks per prefetch. A folded segment (or a wide view) at
+// a fine LOD can have an enormous bounding box -- enumerating + fetching every
+// chunk in it would OOM (the LOD0 grid is billions of chunks). If the chunk box
+// exceeds this, we prefetch NOTHING and fall back to the render's reactive miss
+// healing (which only touches the chunks actually sampled). A real viewport is a
+// few hundred-thousand chunks at most; this budget covers that.
+constexpr std::size_t kMaxPredictedChunks = 32768;
+
+// Append the chunk keys enclosing a voxel-space bbox at `level`. Returns false
+// (and appends nothing) if the box would exceed kMaxPredictedChunks.
+bool appendChunksForBbox(vc::render::ChunkCache& cache, int level,
                          const cv::Vec3f& mn, const cv::Vec3f& mx,
                          std::vector<vc::render::ChunkKey>& out)
 {
     const auto cs = cache.chunkShape(level);
     const auto ls = cache.shape(level);
-    if (cs[0] <= 0 || cs[1] <= 0 || cs[2] <= 0) return;
+    if (cs[0] <= 0 || cs[1] <= 0 || cs[2] <= 0) return false;
     // coords are (x,y,z) in the cv::Vec3f; cache axes are (z,y,x) -> ls[0]=Z etc.
     int iMinZ = std::max(0, int(std::floor(mn[2]))), iMaxZ = std::min(ls[0] - 1, int(std::ceil(mx[2])));
     int iMinY = std::max(0, int(std::floor(mn[1]))), iMaxY = std::min(ls[1] - 1, int(std::ceil(mx[1])));
     int iMinX = std::max(0, int(std::floor(mn[0]))), iMaxX = std::min(ls[2] - 1, int(std::ceil(mx[0])));
-    if (iMinX > iMaxX || iMinY > iMaxY || iMinZ > iMaxZ) return;
-    for (int cz = iMinZ / cs[0]; cz <= iMaxZ / cs[0]; ++cz)
-        for (int cy = iMinY / cs[1]; cy <= iMaxY / cs[1]; ++cy)
-            for (int cx = iMinX / cs[2]; cx <= iMaxX / cs[2]; ++cx)
+    if (iMinX > iMaxX || iMinY > iMaxY || iMinZ > iMaxZ) return false;
+    const int czLo = iMinZ / cs[0], czHi = iMaxZ / cs[0];
+    const int cyLo = iMinY / cs[1], cyHi = iMaxY / cs[1];
+    const int cxLo = iMinX / cs[2], cxHi = iMaxX / cs[2];
+    // Reject pathological boxes up front (don't even allocate / loop).
+    const std::size_t nz = std::size_t(czHi - czLo + 1);
+    const std::size_t ny = std::size_t(cyHi - cyLo + 1);
+    const std::size_t nx = std::size_t(cxHi - cxLo + 1);
+    if (nz * ny * nx > kMaxPredictedChunks)
+        return false;
+    for (int cz = czLo; cz <= czHi; ++cz)
+        for (int cy = cyLo; cy <= cyHi; ++cy)
+            for (int cx = cxLo; cx <= cxHi; ++cx)
                 out.push_back({level, cz, cy, cx});
+    return true;
 }
 
 void predictAndPrefetch(Surface* surf, vc::render::ChunkCache& cache, int level,
@@ -1527,30 +1546,53 @@ void predictAndPrefetch(Surface* surf, vc::render::ChunkCache& cache, int level,
             }
         appendChunksForBbox(cache, level, mn, mx, keys);
     } else if (auto* quad = dynamic_cast<QuadSurface*>(surf)) {
-        // Walk the downscaled control-point grid; bbox the valid points (+ depth
-        // pad along a rough normal estimate via the bbox expansion). This is a
-        // superset of the rendered chunks -- coarse but complete.
+        // Only the VISIBLE window of the surface is on screen -- NOT the whole
+        // folded sheet (whose value-bbox is huge at a fine LOD and would OOM).
+        // Replicate gen()'s exact grid sampling: it walks the _points grid from
+        //   ul = ptr + center*_scale   over   size * (_scale/scale)
+        // (see QuadSurface::gen). We collect the distinct CHUNKS the valid points
+        // in that grid window fall in -- a thin sheet traces few chunks, so we
+        // gather the actual chunk set (not a bbox).
         const cv::Mat_<cv::Vec3f>* pts = quad->rawPointsPtr();
         if (!pts || pts->empty()) return;
-        cv::Vec3f mn(std::numeric_limits<float>::max(), std::numeric_limits<float>::max(),
-                     std::numeric_limits<float>::max());
-        cv::Vec3f mx = -mn;
-        bool any = false;
-        for (int r = 0; r < pts->rows; ++r) {
+        const cv::Vec2f gsc = quad->scale();      // _scale (grid cells per surface unit)
+        const cv::Vec3f center = quad->center();
+        const float ulX = surfacePtrX + center[0] * gsc[0];
+        const float ulY = surfacePtrY + center[1] * gsc[1];
+        const float stepX = gsc[0] / scale, stepY = gsc[1] / scale;   // grid cells per pixel
+        int c0 = std::max(0, int(std::floor(ulX)) - 1);
+        int c1 = std::min(pts->cols - 1, int(std::ceil(ulX + float(fbW) * stepX)) + 1);
+        int r0 = std::max(0, int(std::floor(ulY)) - 1);
+        int r1 = std::min(pts->rows - 1, int(std::ceil(ulY + float(fbH) * stepY)) + 1);
+        if (c0 > c1 || r0 > r1) return;
+
+        const auto cs = cache.chunkShape(level);
+        const auto ls = cache.shape(level);
+        if (cs[0] <= 0) return;
+        const auto s0 = cache.levelTransform(level).scaleFromLevel0;  // L0 voxel -> this-LOD
+        const float pad = std::max(std::abs(depthLo), std::abs(depthHi));
+        std::unordered_set<std::uint64_t> seen;
+        for (int r = r0; r <= r1; ++r) {
             const cv::Vec3f* row = (*pts)[r];
-            for (int c = 0; c < pts->cols; ++c) {
+            for (int c = c0; c <= c1; ++c) {
                 const cv::Vec3f& p = row[c];
                 if (p[0] == -1.f || p[0] != p[0]) continue;   // hole / NaN
-                any = true;
-                for (int k = 0; k < 3; ++k) { mn[k] = std::min(mn[k], p[k]); mx[k] = std::max(mx[k], p[k]); }
+                for (float dz : {-pad, 0.f, pad}) {
+                    const int vz = int((p[2] + dz) * float(s0[2]));
+                    const int vy = int((p[1] + dz) * float(s0[1]));
+                    const int vx = int((p[0] + dz) * float(s0[0]));
+                    if (unsigned(vz) >= unsigned(ls[0]) || unsigned(vy) >= unsigned(ls[1]) ||
+                        unsigned(vx) >= unsigned(ls[2]))
+                        continue;
+                    const int cz = vz / cs[0], cy = vy / cs[1], cx = vx / cs[2];
+                    const std::uint64_t k = (std::uint64_t(cz) << 42) ^ (std::uint64_t(cy) << 21) ^ std::uint64_t(cx);
+                    if (seen.insert(k).second)
+                        keys.push_back({level, cz, cy, cx});
+                }
+                if (keys.size() > kMaxPredictedChunks) { keys.clear(); goto issue; }  // safety
             }
         }
-        if (!any) return;
-        // Pad the bbox by the composite depth (the surface warps, so dilate
-        // isotropically -- cheap and covers the normal offset).
-        const float pad = std::max(std::abs(depthLo), std::abs(depthHi));
-        for (int k = 0; k < 3; ++k) { mn[k] -= pad; mx[k] += pad; }
-        appendChunksForBbox(cache, level, mn, mx, keys);
+    issue:;
     } else {
         return;
     }
@@ -1636,14 +1678,16 @@ void CChunkedVolumeViewer::submitRender(const char* reason, std::source_location
     }
 
     // A-priori prefetch: predict this frame's chunk working set from the surface
-    // geometry and queue the fetches NOW, while the cache is still mutable (before
-    // freeze). By the time the render worker reaches a chunk it is already loading
-    // or resident, so misses (and the clocked re-render to heal them) drop. Cheap:
-    // plane = 4 corners, segment = the downscaled control grid.
-    predictAndPrefetch(ctx.surf.get(), *_chunkArray, ctx.startLevel,
-                       ctx.fbW, ctx.fbH, ctx.scale, ctx.surfacePtrX, ctx.surfacePtrY,
-                       ctx.zOff, ctx.compositeSettings,
-                       ctx.compositeSettings.enabled && !streamingCompositeUnsupported());
+    // geometry and queue the fetches NOW (while the cache is still mutable, before
+    // freeze) so chunks are already loading when the render reaches them. Only the
+    // VISIBLE window is predicted (never the whole sheet). Gated by env var so we
+    // can A/B it; default ON.
+    static const bool kPredictiveFetch = ::getenv("VCA_NO_PREDICT") == nullptr;
+    if (kPredictiveFetch)
+        predictAndPrefetch(ctx.surf.get(), *_chunkArray, ctx.startLevel,
+                           ctx.fbW, ctx.fbH, ctx.scale, ctx.surfacePtrX, ctx.surfacePtrY,
+                           ctx.zOff, ctx.compositeSettings,
+                           ctx.compositeSettings.enabled && !streamingCompositeUnsupported());
 
     // tick/settle: freeze the cache for the SETTLE phase. While frozen the render
     // reads resident-only (lock-free) and completed fetches park in staging
