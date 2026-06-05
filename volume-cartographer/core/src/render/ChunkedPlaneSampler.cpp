@@ -102,12 +102,12 @@ struct SampleTile {
     int yEnd = 0;
 };
 
-bool finiteCoord(const cv::Vec3f& p)
+__attribute__((always_inline)) inline bool finiteCoord(const cv::Vec3f& p)
 {
     return std::isfinite(p[0]) && std::isfinite(p[1]) && std::isfinite(p[2]);
 }
 
-bool surfaceSentinel(const cv::Vec3f& p)
+__attribute__((always_inline)) inline bool surfaceSentinel(const cv::Vec3f& p)
 {
     // Hot path: called per screen pixel in the render sampler. gen() marks holes
     // as (-1,-1,-1); (0,0,0) is the unset marker; NaN comes from bad source data.
@@ -139,7 +139,7 @@ bool hasSampleableLevel(const LevelAccess& access)
         && access.chunkShape[0] > 0 && access.chunkShape[1] > 0 && access.chunkShape[2] > 0;
 }
 
-cv::Vec3f toLevelCoord(const LevelAccess& access, const cv::Vec3f& p0)
+__attribute__((always_inline)) inline cv::Vec3f toLevelCoord(const LevelAccess& access, const cv::Vec3f& p0)
 {
     // Hot path: called per screen pixel. The level transform is a uniform scale
     // with (almost always) zero offset (offsetFromLevel0 = {0,0,0} for the vca/
@@ -162,7 +162,7 @@ cv::Vec3f toLevelCoord(const LevelAccess& access, const cv::Vec3f& p0)
     };
 }
 
-cv::Vec3f toLevelVector(const LevelAccess& access, const cv::Vec3f& v0)
+__attribute__((always_inline)) inline cv::Vec3f toLevelVector(const LevelAccess& access, const cv::Vec3f& v0)
 {
     const auto& t = access.transform;
     return {
@@ -616,6 +616,146 @@ ChunkedPlaneSampler::Stats ChunkedPlaneSampler::sampleCoordsLevel(
     return sampleCoordsLevelImpl(array, level, coords, out, coverage, options, false);
 }
 
+namespace {
+
+// Per-tile-range max-composite kernel, templated on the chunk edge log2 so the
+// chunk-index shift, in-chunk mask and the row/plane strides are COMPILE-TIME
+// constants for the common 32^3 atom (CHUNK_LOG2 == 5). That lets the compiler
+// emit >>5 / &31 and constant-fold the stride math instead of loading runtime
+// chunkShape values -- which also frees the registers those values occupied,
+// cutting the spilling in this hot loop. CHUNK_LOG2 == -1 selects a generic
+// runtime path (non-power-of-two or non-cubic chunk shapes; not hit in practice).
+template <int CHUNK_LOG2>
+ChunkedPlaneSampler::Stats maxCompositeTileRange(
+    IChunkedArray& array,
+    const LevelAccess& access,
+    int level,
+    const cv::Mat_<cv::Vec3f>& coords,
+    const cv::Mat_<cv::Vec3f>& normals,
+    cv::Mat_<uint8_t>& out,
+    cv::Mat_<uint8_t>& coverage,
+    const std::vector<SampleTile>& tiles,
+    std::size_t begin,
+    std::size_t end,
+    int layerStart,
+    int numLayers,
+    float layerStep,
+    float isoCutoff)
+{
+    constexpr bool kStatic = (CHUNK_LOG2 >= 0);
+    // For the static path everything is a compile-time constant; for the generic
+    // path these are the runtime chunk dims.
+    const int dynLog = kStatic ? CHUNK_LOG2 : 0;
+    const int csh = kStatic ? (1 << CHUNK_LOG2) : access.chunkShape[0];
+    const int cshY = kStatic ? (1 << CHUNK_LOG2) : access.chunkShape[1];
+    const int cshX = kStatic ? (1 << CHUNK_LOG2) : access.chunkShape[2];
+    (void)dynLog; (void)csh; (void)cshY; (void)cshX;
+
+    const std::array<int, 3>& shp = access.shape;
+    const uint8_t fillVal = access.fill;
+    // A resolved chunk: bytes == kAllFill means an all-fill chunk (no buffer).
+    static const std::vector<std::byte> kAllFillTag;
+
+    ChunkedPlaneSampler::Stats localStats;
+    LocalChunkCache chunkCache(array, std::max<std::size_t>(16, (end - begin) * 4));
+
+    for (std::size_t i = begin; i < end; ++i) {
+        const SampleTile& st = tiles[i];
+        for (int y = st.ty; y < st.yEnd; ++y) {
+            const cv::Vec3f* coordRow = coords.ptr<cv::Vec3f>(y);
+            const cv::Vec3f* normalRow = normals.ptr<cv::Vec3f>(y);
+            uint8_t* outRow = out.ptr<uint8_t>(y);
+            uint8_t* coverageRow = coverage.ptr<uint8_t>(y);
+            for (int x = st.tx; x < st.xEnd; ++x) {
+                const cv::Vec3f base = coordRow[x];
+                if (surfaceSentinel(base))
+                    continue;
+                const cv::Vec3f nrm = normalRow[x];
+                const cv::Vec3f baseL = toLevelCoord(access, base);
+                const cv::Vec3f nrmL = toLevelVector(access, nrm);
+
+                int lastCz = INT_MIN, lastCy = INT_MIN, lastCx = INT_MIN;
+                // curBytes: nullptr=unusable, &kAllFillTag=all-fill, else the
+                // resident chunk buffer. One pointer carries the chunk state, so
+                // the per-depth fast path stays in registers.
+                const std::vector<std::byte>* curBytes = nullptr;
+                float best = 0.0f;
+                bool any = false;
+                float off = float(layerStart) * layerStep;
+                for (int l = 0; l < numLayers; ++l, off += layerStep) {
+                    const float fx = baseL[0] + nrmL[0] * off;
+                    const float fy = baseL[1] + nrmL[1] * off;
+                    const float fz = baseL[2] + nrmL[2] * off;
+                    if (fx < 0.0f || fy < 0.0f || fz < 0.0f)
+                        continue;
+                    const int iz = int(fz + 0.5f), iy = int(fy + 0.5f), ix = int(fx + 0.5f);
+                    if (unsigned(iz) >= unsigned(shp[0]) || unsigned(iy) >= unsigned(shp[1]) ||
+                        unsigned(ix) >= unsigned(shp[2]))
+                        continue;
+
+                    int cz, cy, cx, lz, ly, lx;
+                    if constexpr (kStatic) {
+                        constexpr int kLog = CHUNK_LOG2;
+                        constexpr int kMask = (1 << CHUNK_LOG2) - 1;
+                        cz = iz >> kLog; cy = iy >> kLog; cx = ix >> kLog;
+                        lz = iz & kMask; ly = iy & kMask; lx = ix & kMask;
+                    } else {
+                        cz = iz / csh; cy = iy / cshY; cx = ix / cshX;
+                        lz = iz - cz * csh; ly = iy - cy * cshY; lx = ix - cx * cshX;
+                    }
+
+                    if (cz != lastCz || cy != lastCy || cx != lastCx) {
+                        lastCz = cz; lastCy = cy; lastCx = cx;
+                        const ChunkResult& r = chunkCache.get(
+                            {level, cz, cy, cx},
+                            localStats.requestedChunks, localStats.errorChunks);
+                        if (r.status == ChunkStatus::AllFill)
+                            curBytes = &kAllFillTag;
+                        else if (r.status == ChunkStatus::Data && r.bytes)
+                            curBytes = r.bytes.get();
+                        else
+                            curBytes = nullptr;
+                    }
+
+                    uint8_t value;
+                    if (curBytes == &kAllFillTag) {
+                        value = fillVal;
+                    } else if (curBytes) {
+                        std::size_t o;
+                        if constexpr (kStatic) {
+                            o = ((std::size_t(lz) << CHUNK_LOG2) + std::size_t(ly)
+                                ) * (std::size_t(1) << CHUNK_LOG2) + std::size_t(lx);
+                        } else {
+                            o = (std::size_t(lz) * std::size_t(cshY)
+                                + std::size_t(ly)) * std::size_t(cshX)
+                                + std::size_t(lx);
+                        }
+                        if (o >= curBytes->size())
+                            continue;
+                        value = std::to_integer<uint8_t>((*curBytes)[o]);
+                    } else {
+                        continue;
+                    }
+
+                    const float fv = float(value);
+                    if (fv < isoCutoff)
+                        continue;
+                    if (!any || fv > best) { best = fv; any = true; }
+                }
+                if (any) {
+                    outRow[x] = static_cast<uint8_t>(std::clamp(best, 0.0f, 255.0f));
+                    if (coverageRow[x] == 0)
+                        ++localStats.coveredPixels;
+                    coverageRow[x] = 1;
+                }
+            }
+        }
+    }
+    return localStats;
+}
+
+}  // namespace
+
 ChunkedPlaneSampler::Stats ChunkedPlaneSampler::sampleCoordsMaxComposite(
     IChunkedArray& array,
     int level,
@@ -642,139 +782,35 @@ ChunkedPlaneSampler::Stats ChunkedPlaneSampler::sampleCoordsMaxComposite(
     const int h = std::min({coords.rows, out.rows, coverage.rows, normals.rows});
     const int w = std::min({coords.cols, out.cols, coverage.cols, normals.cols});
 
-    // chunkShape is the codec atom (32^3) -- a power of two -- so chunk index =
-    // voxel >> log2(shape) and in-chunk offset = voxel & (shape-1), avoiding the
-    // 3 runtime integer divisions per depth (a real idiv ~20-40 cyc each, N* per
-    // pixel in composite). Fall back to div/mod if a non-pow2 shape ever appears.
-    auto log2pow2 = [](int v) -> int { return (v > 0 && (v & (v - 1)) == 0)
-                                            ? __builtin_ctz(unsigned(v)) : -1; };
-    const int sh0 = log2pow2(access.chunkShape[0]);
-    const int sh1 = log2pow2(access.chunkShape[1]);
-    const int sh2 = log2pow2(access.chunkShape[2]);
-    const bool pow2Chunks = sh0 >= 0 && sh1 >= 0 && sh2 >= 0;
-
     std::vector<SampleTile> tiles;
     tiles.reserve(std::size_t((h + tile - 1) / tile) * std::size_t((w + tile - 1) / tile));
     for (int ty = 0; ty < h; ty += tile)
         for (int tx = 0; tx < w; tx += tile)
             tiles.push_back({tx, ty, std::min(tx + tile, w), std::min(ty + tile, h)});
 
-    auto processTileRange = [&](std::size_t begin, std::size_t end) {
-        ChunkedPlaneSampler::Stats localStats;
-        LocalChunkCache chunkCache(array, std::max<std::size_t>(16, (end - begin) * 4));
-        for (std::size_t i = begin; i < end; ++i) {
-            const SampleTile& st = tiles[i];
-            for (int y = st.ty; y < st.yEnd; ++y) {
-                const cv::Vec3f* coordRow = coords.ptr<cv::Vec3f>(y);
-                const cv::Vec3f* normalRow = normals.ptr<cv::Vec3f>(y);
-                uint8_t* outRow = out.ptr<uint8_t>(y);
-                uint8_t* coverageRow = coverage.ptr<uint8_t>(y);
-                for (int x = st.tx; x < st.xEnd; ++x) {
-                    const cv::Vec3f base = coordRow[x];
-                    // Hole pixel -> leave uncovered (matches per-layer sentinel
-                    // skip, where the offset coord stays the sentinel).
-                    if (surfaceSentinel(base))
-                        continue;
-                    const cv::Vec3f nrm = normalRow[x];
-                    // Walk the depths for THIS pixel inline. The N depths are
-                    // offset along the normal by ~1 voxel each, so they almost
-                    // all fall in the SAME chunk -- we resolve the chunk once and
-                    // hold its resident buffer across depths, recomputing only the
-                    // in-chunk offset + byte read per depth. That avoids N chunk
-                    // lookups, N status re-checks and (when the chunk is unchanged)
-                    // the cache.get map probe -- readVoxel/cache.get were the bulk
-                    // of the composite cost. We track max over covered samples
-                    // whose value >= isoCutoff (== composite_max of the layers).
-                    const auto& shp = access.shape;
-                    const auto& csh = access.chunkShape;
-                    const int csh0 = csh[0], csh1 = csh[1], csh2 = csh[2];
-                    // Hoist the level transform out of the depth loop: each depth
-                    // is (base + nrm*off) mapped to level space. Since the
-                    // transform is affine, transform base and nrm ONCE, then each
-                    // depth is baseL + nrmL*off -- no per-depth toLevelCoord call.
-                    const cv::Vec3f baseL = toLevelCoord(access, base);
-                    const cv::Vec3f nrmL = toLevelVector(access, nrm);
-                    int lastCz = INT_MIN, lastCy = INT_MIN, lastCx = INT_MIN;
-                    const std::vector<std::byte>* curBytes = nullptr;
-                    bool curAllFill = false, curUsable = false;
-                    float best = 0.0f;
-                    bool any = false;
-                    // off is an induction variable (off += layerStep) -- avoids the
-                    // per-depth int->float convert + multiply.
-                    float off = float(layerStart) * layerStep;
-                    for (int l = 0; l < numLayers; ++l, off += layerStep) {
-                        const float fx = baseL[0] + nrmL[0] * off;
-                        const float fy = baseL[1] + nrmL[1] * off;
-                        const float fz = baseL[2] + nrmL[2] * off;
-                        // Lower bound via float (a negative coord rounds toward 0
-                        // and would otherwise pass the unsigned check). Upper bound
-                        // is the single unsigned int compare below -- we drop the
-                        // redundant float < float(shape) compares, which forced a
-                        // per-depth int->float convert of each shape dim.
-                        if (fx < 0.0f || fy < 0.0f || fz < 0.0f)
-                            continue;
-                        const int iz = int(fz + 0.5f), iy = int(fy + 0.5f), ix = int(fx + 0.5f);
-                        if (unsigned(iz) >= unsigned(shp[0]) || unsigned(iy) >= unsigned(shp[1]) ||
-                            unsigned(ix) >= unsigned(shp[2]))
-                            continue;
-                        // chunk index + in-chunk coords: shift/mask for pow2 chunk
-                        // shapes (the 32^3 atom), div/mod otherwise.
-                        int cz, cy, cx, lz, ly, lx;
-                        if (pow2Chunks) {
-                            cz = iz >> sh0; cy = iy >> sh1; cx = ix >> sh2;
-                            lz = iz & (csh0 - 1); ly = iy & (csh1 - 1); lx = ix & (csh2 - 1);
-                        } else {
-                            cz = iz / csh0; cy = iy / csh1; cx = ix / csh2;
-                            lz = iz - cz * csh0; ly = iy - cy * csh1; lx = ix - cx * csh2;
-                        }
-                        if (cz != lastCz || cy != lastCy || cx != lastCx) {
-                            lastCz = cz; lastCy = cy; lastCx = cx;
-                            const ChunkResult& r = chunkCache.get(
-                                {level, cz, cy, cx},
-                                localStats.requestedChunks, localStats.errorChunks);
-                            curAllFill = (r.status == ChunkStatus::AllFill);
-                            curUsable = (r.status == ChunkStatus::Data) && r.bytes;
-                            curBytes = curUsable ? r.bytes.get() : nullptr;
-                        }
-                        uint8_t value;
-                        if (curAllFill) {
-                            value = access.fill;
-                        } else if (curUsable) {
-                            // In-chunk byte offset. For the pow2 atom this is a
-                            // pair of shifts, not the two runtime multiplies the
-                            // compiler emits for the generic chunkShape stride.
-                            const std::size_t o = pow2Chunks
-                                ? (((std::size_t(lz) << sh1) + std::size_t(ly)) << sh2)
-                                      + std::size_t(lx)
-                                : (std::size_t(lz) * std::size_t(csh1)
-                                      + std::size_t(ly)) * std::size_t(csh2)
-                                      + std::size_t(lx);
-                            if (o >= curBytes->size())
-                                continue;
-                            value = std::to_integer<uint8_t>((*curBytes)[o]);
-                        } else {
-                            continue;   // missing/queued/error chunk
-                        }
-                        const float fv = float(value);
-                        if (fv < isoCutoff)
-                            continue;
-                        if (!any || fv > best) { best = fv; any = true; }
-                    }
-                    if (any) {
-                        outRow[x] = static_cast<uint8_t>(std::clamp(best, 0.0f, 255.0f));
-                        const bool wasCovered = coverageRow[x] != 0;
-                        coverageRow[x] = 1;
-                        if (!wasCovered)
-                            ++localStats.coveredPixels;
-                    }
-                }
-            }
+    // Pick the compile-time-specialized kernel when the chunk shape is the cubic
+    // power-of-two atom (the only shape in practice, 32^3) so all the chunk-index
+    // math is constant-folded; otherwise the generic runtime kernel.
+    const int cs0 = access.chunkShape[0];
+    const bool cubicPow2 = cs0 > 0 && (cs0 & (cs0 - 1)) == 0 &&
+                           access.chunkShape[1] == cs0 && access.chunkShape[2] == cs0;
+    const int chunkLog = cubicPow2 ? __builtin_ctz(unsigned(cs0)) : -1;
+
+    auto runRange = [&](std::size_t begin, std::size_t end) {
+        switch (chunkLog) {
+            case 5:  return maxCompositeTileRange<5>(array, access, level, coords, normals,
+                         out, coverage, tiles, begin, end, layerStart, numLayers, layerStep, isoCutoff);
+            case 4:  return maxCompositeTileRange<4>(array, access, level, coords, normals,
+                         out, coverage, tiles, begin, end, layerStart, numLayers, layerStep, isoCutoff);
+            case 6:  return maxCompositeTileRange<6>(array, access, level, coords, normals,
+                         out, coverage, tiles, begin, end, layerStart, numLayers, layerStep, isoCutoff);
+            default: return maxCompositeTileRange<-1>(array, access, level, coords, normals,
+                         out, coverage, tiles, begin, end, layerStart, numLayers, layerStep, isoCutoff);
         }
-        return localStats;
     };
 
     if (!shouldParallelizeSamples(h, w) || tiles.size() <= 1)
-        return processTileRange(0, tiles.size());
+        return runRange(0, tiles.size());
 
     const std::size_t workerCount = std::min<std::size_t>(
         renderSamplerPool().worker_count(), tiles.size());
@@ -787,7 +823,7 @@ ChunkedPlaneSampler::Stats ChunkedPlaneSampler::sampleCoordsMaxComposite(
         if (begin >= end)
             break;
         futures.push_back(renderSamplerPool().submit([&, begin, end] {
-            return processTileRange(begin, end);
+            return runRange(begin, end);
         }));
     }
     for (auto& future : futures)
