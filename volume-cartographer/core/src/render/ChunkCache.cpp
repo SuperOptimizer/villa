@@ -229,42 +229,30 @@ ChunkResult ChunkCache::readResident(int level, int iz, int iy, int ix) const
     if (!isValidKey(state, key))
         return ChunkResult{ChunkStatus::AllFill, state.dtype_, {}, {}, {}};
 
-    auto it = state.entries_.find(key);
-    if (it == state.entries_.end())
+    // Read the immutable resident map. bytes are wrapped in a NON-owning shared_ptr
+    // (aliasing ctor, no deleter) only to satisfy the ChunkResult API -- ownership
+    // stays with the resident map. The hot loop uses readResidentRaw (no wrap).
+    const ResidentMap& rm = *state.resident_;
+    auto it = rm.find(key);
+    if (it == rm.end())
         return ChunkResult{ChunkStatus::MissQueued, state.dtype_,
                            state.levels_[level].chunkShape, {}, {}};
-
-    const Entry& entry = it->second;
-    // NRU mark via atomic_ref on a plain bool (keeps Entry movable for the map).
-    std::atomic_ref<bool>(const_cast<bool&>(entry.referenced))
-        .store(true, std::memory_order_relaxed);
-    switch (entry.status) {
-    case EntryStatus::Data:
+    const ResidentEntry& e = it->second;
+    if (e.status == ChunkStatus::Data) {
+        std::shared_ptr<const std::vector<std::byte>> view(
+            std::shared_ptr<void>{}, e.bytes.get());
         return ChunkResult{ChunkStatus::Data, state.dtype_,
-                           state.levels_[level].chunkShape, entry.bytes, {}};
-    case EntryStatus::AllFill:
-        return ChunkResult{ChunkStatus::AllFill, state.dtype_,
-                           state.levels_[level].chunkShape, {}, {}};
-    case EntryStatus::Missing:
-        return ChunkResult{ChunkStatus::Missing, state.dtype_,
-                           state.levels_[level].chunkShape, {}, {}};
-    case EntryStatus::Error:
-        return ChunkResult{ChunkStatus::Error, state.dtype_,
-                           state.levels_[level].chunkShape, {}, entry.error};
-    case EntryStatus::InFlight:
-    default:
-        return ChunkResult{ChunkStatus::MissQueued, state.dtype_,
-                           state.levels_[level].chunkShape, {}, {}};
+                           state.levels_[level].chunkShape, std::move(view), {}};
     }
+    return ChunkResult{e.status, state.dtype_, state.levels_[level].chunkShape, {}, {}};
 }
 
 IChunkedArray::ResidentView ChunkCache::readResidentRaw(int level, int iz, int iy, int ix) const
 {
-    // Raw variant of readResident: returns a RAW pointer to the resident bytes
-    // (no shared_ptr copy, no atomic refcount). Valid only this frozen frame --
-    // the tick never evicts while a render reads. This is the innermost render
-    // read; avoiding the refcount matters because it runs once per chunk per
-    // pixel-column in the composite/sample loops.
+    // Render read: probe the IMMUTABLE resident map lock-free. No mutation, no
+    // refcount -- the map owns its bytes outright and the tick never rebuilds it
+    // while a render worker reads (the tick runs post-worker). A key not in the
+    // resident map is a miss; the caller records it and the tick fetches it.
     auto& state = *state_;
     const ChunkKey key{level, iz, iy, ix};
     if (level >= 0 && level < static_cast<int>(state.fetchers_.size()) &&
@@ -273,26 +261,14 @@ IChunkedArray::ResidentView ChunkCache::readResidentRaw(int level, int iz, int i
     if (!isValidKey(state, key))
         return ResidentView{ChunkStatus::AllFill, nullptr};
 
-    auto it = state.entries_.find(key);
-    if (it == state.entries_.end())
+    const ResidentMap& rm = *state.resident_;
+    auto it = rm.find(key);
+    if (it == rm.end())
         return ResidentView{ChunkStatus::MissQueued, nullptr};
-
-    const Entry& entry = it->second;
-    std::atomic_ref<bool>(const_cast<bool&>(entry.referenced))
-        .store(true, std::memory_order_relaxed);  // NRU mark
-    switch (entry.status) {
-    case EntryStatus::Data:
-        return ResidentView{ChunkStatus::Data, entry.bytes.get()};
-    case EntryStatus::AllFill:
-        return ResidentView{ChunkStatus::AllFill, nullptr};
-    case EntryStatus::Missing:
-        return ResidentView{ChunkStatus::Missing, nullptr};
-    case EntryStatus::Error:
-        return ResidentView{ChunkStatus::Error, nullptr};
-    case EntryStatus::InFlight:
-    default:
-        return ResidentView{ChunkStatus::MissQueued, nullptr};
-    }
+    const ResidentEntry& e = it->second;
+    if (e.status == ChunkStatus::Data)
+        return ResidentView{ChunkStatus::Data, e.bytes.get()};
+    return ResidentView{e.status, nullptr};   // AllFill (or Missing, if carried)
 }
 
 void ChunkCache::requestChunks(const std::vector<ChunkKey>& keys)
@@ -361,21 +337,63 @@ void ChunkCache::tick()
     }
     if (tickDbg()) {
         std::lock_guard lock(state->mutex_);
-        for (auto& [k, e] : state->entries_)
-            if (e.status == EntryStatus::Data) ++dataResident;
+        for (auto e : state->entries_)
+            if (e.second.status == EntryStatus::Data) ++dataResident;
         fprintf(stderr, "[ts] TICK staged=%zu folded=%d skip=%d | requested=%zu issued=%d "
                 "| entries=%zu dataResident=%d frozen=%d\n",
                 staged.size(), folded, foldSkipped, requested.size(), issued,
                 state->entries_.size(), dataResident, int(state->frozen_.load()));
     }
 
-    // 3) NRU clock sweep: evict to budget using the referenced bits the frame
-    //    set, then clear survivors' bits. This is the only eviction the tick
-    //    model needs -- no per-access LRU touch.
+    // 3) Evict the working store to budget (NRU), THEN project the resolved
+    //    entries into a brand-new immutable resident map and swap it in -- the
+    //    single coalesced update the render sees this cycle.
     {
         std::lock_guard lock(state->mutex_);
         nruEvictLocked(state);
+        rebuildResidentLocked(state);
     }
+}
+
+void ChunkCache::rebuildResidentLocked(const std::shared_ptr<State>& state)
+{
+    // Build a fresh resident map from the resolved (Data/AllFill) working entries.
+    // Survivor byte buffers are MOVED out of the OLD resident map into the new one
+    // (single owner, no copy, no refcount); chunks newly resolved this cycle are
+    // moved out of the working Entry. The old resident map is then dropped, freeing
+    // any buffers not carried over. Caller holds mutex_.
+    auto next = std::make_unique<ResidentMap>();
+    next->reserve(state->entries_.size());
+
+    ResidentMap& old = const_cast<ResidentMap&>(*state->resident_);
+    for (auto kv : state->entries_) {
+        const ChunkKey& key = kv.first;
+        Entry& e = kv.second;
+        if (e.status == EntryStatus::AllFill) {
+            ResidentEntry re;
+            re.status = ChunkStatus::AllFill;
+            next->emplace(key, std::move(re));
+            continue;
+        }
+        if (e.status != EntryStatus::Data || !e.bytes)
+            continue;  // InFlight / Missing / Error -> not resident
+
+        ResidentEntry re;
+        re.status = ChunkStatus::Data;
+        // Single-owner buffer: MOVE the survivor's buffer out of the OLD resident
+        // map (no copy). Only a chunk newly resolved this cycle (not yet in the old
+        // map) is materialized from the working Entry's bytes -- once.
+        auto oit = old.find(key);
+        if (oit != old.end() && oit->second.bytes) {
+            re.bytes = std::move(oit->second.bytes);   // move survivor, no copy
+        } else {
+            re.bytes = std::make_unique<std::vector<std::byte>>(*e.bytes);  // first publish
+        }
+        next->emplace(key, std::move(re));
+    }
+
+    std::lock_guard swap(state->residentSwapMutex_);
+    state->resident_ = std::move(next);
 }
 
 ChunkResult ChunkCache::getChunkBlocking(int level, int iz, int iy, int ix)
