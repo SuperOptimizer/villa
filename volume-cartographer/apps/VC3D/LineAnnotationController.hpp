@@ -16,11 +16,13 @@
 #include <opencv2/core/mat.hpp>
 
 #include "LineAnnotationFiberClassification.hpp"
+#include "vc/atlas/FiberIntersections.hpp"
 #include "vc/lasagna/LineOptimizer.hpp"
 #include "volume_viewers/CChunkedVolumeViewer.hpp"
 
 class CState;
 class LineAnnotationDialog;
+class QPoint;
 class Surface;
 class SurfacePanelController;
 class ViewerManager;
@@ -82,13 +84,21 @@ public:
 
     bool canLaunchFromViewer(const CChunkedVolumeViewer* viewer) const;
     void launchFromViewer(CChunkedVolumeViewer* viewer, const QPointF& scenePoint);
+    void launchFromViewerAtPoint(CChunkedVolumeViewer* viewer, const QPointF& scenePoint);
     void openFiber(uint64_t fiberId);
     void deleteFiber(uint64_t fiberId);
+    void deleteFibers(std::vector<uint64_t> fiberIds);
     void setFiberManualHvTag(uint64_t fiberId, const QString& tag);
     void recalculateFiberHvClassification(uint64_t fiberId);
     void recalculateAllFiberHvClassifications();
+    void createAtlasFromFiber(uint64_t fiberId);
     void saveOpenFibers();
+    void closeFiberWindowForSurface(const std::string& surfaceName);
+    bool showGeneratedControlPointContextMenu(CChunkedVolumeViewer* viewer,
+                                              const QPointF& scenePoint,
+                                              const QPoint& globalPos);
     [[nodiscard]] std::vector<FiberSummary> fiberSummaries() const;
+    [[nodiscard]] std::vector<vc::atlas::FiberPolyline> fiberSnapshots() const;
 
     void setDatasetPickerForTesting(DatasetPicker picker);
     void setOptimizationTaskFactoryForTesting(OptimizationTaskFactory factory);
@@ -96,6 +106,9 @@ public:
 
 signals:
     void fibersChanged(std::vector<LineAnnotationController::FiberSummary> fibers);
+    void fiberSaved(uint64_t fiberId, uint64_t generation);
+    void fibersDeleted(std::vector<uint64_t> fiberIds);
+    void atlasCreated(std::filesystem::path atlasDir);
 
 private slots:
     void onSurfaceChanged(std::string name, std::shared_ptr<Surface> surf, bool isEditUpdate = false);
@@ -114,6 +127,7 @@ private:
         std::string startedAt;
         uint64_t sequence = 0;
         std::string fileName;
+        uint64_t generation = 1;
         std::vector<cv::Vec3d> controlPoints;
         std::vector<cv::Vec3d> linePoints;
         vc3d::line_annotation::FiberHvClassification hvClassification;
@@ -136,13 +150,17 @@ private:
                        std::shared_ptr<Surface> sourceSurface,
                        const CChunkedVolumeViewer::CameraState& camera,
                        cv::Vec3d sourceSliceNormal,
-                       std::shared_ptr<LineAnnotationSession> session);
+                       std::shared_ptr<LineAnnotationSession> session,
+                       bool deferShowUntilGenerated = false);
     void handleLineSeed(const std::string& surfaceName,
                         cv::Vec3f volumePoint,
                         InitialDirectionMode directionMode);
     void handleGeneratedControlPoint(const std::string& surfaceName,
                                      cv::Vec3f volumePoint,
                                      double linePosition);
+    void handleGeneratedControlPointDelete(const std::string& surfaceName,
+                                           double linePosition,
+                                           cv::Vec3f volumePoint);
     bool ensureDatasetForSession(LineAnnotationSession& session);
     void startOptimization(LineAnnotationSession& session,
                            bool fullOptimization = false,

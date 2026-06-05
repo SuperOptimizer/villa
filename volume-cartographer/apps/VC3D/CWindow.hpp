@@ -13,7 +13,9 @@
 #include "ui_VCMain.h"
 
 #include "vc/ui/VCCollection.hpp"
+#include "vc/atlas/FiberIntersections.hpp"
 
+#include <filesystem>
 #include <QShortcut>
 #include <unordered_map>
 #include <map>
@@ -30,6 +32,7 @@
 #include "overlays/VectorOverlayController.hpp"
 #include "overlays/PlaneSlicingOverlayController.hpp"
 #include "overlays/SurfaceRotationOverlayController.hpp"
+#include "overlays/AtlasOverlayController.hpp"
 #include "overlays/VolumeOverlayController.hpp"
 #include "SurfaceAffineTransformController.hpp"
 
@@ -121,6 +124,13 @@ private:
     void CreateWidgets(void);
     QMainWindow* segmentWorkspaceWindow() const { return _segmentWorkspaceWindow; }
     void populateDockToggleMenu(QMenu* menu) const;
+    void createAtlasWorkspace();
+    void displayAtlasFromDirectory(const std::filesystem::path& atlasDir);
+    void refreshAtlasOverviewDocks();
+    void updateAtlasSearchDocks();
+    void startAtlasFiberIntersectionSearch();
+    void cancelAtlasFiberIntersectionSearch();
+    void populateAtlasSearchResults(const std::vector<vc::atlas::FiberIntersectionResult>& results);
     void switchToLasagnaWorkspace();
     void switchToMainWorkspace();
     void repeatLastLasagnaAction();
@@ -229,6 +239,17 @@ private:
     QTabWidget* _workspaceTabs{nullptr};
     QMainWindow* _segmentWorkspaceWindow{nullptr};
     QMainWindow* _lasagnaWorkspaceWindow{nullptr};
+    QMainWindow* _atlasWorkspaceWindow{nullptr};
+    QDockWidget* _atlasOverviewDock{nullptr};
+    QDockWidget* _atlasSearchDock{nullptr};
+    QDockWidget* _atlasWorkspaceOverviewDock{nullptr};
+    QDockWidget* _atlasWorkspaceSearchDock{nullptr};
+    VolumeViewerBase* _atlasViewer{nullptr};
+    std::optional<std::filesystem::path> _currentAtlasDir;
+    std::string _currentAtlasName;
+    vc::atlas::FiberSpatialIndex _fiberIntersectionIndex;
+    vc::atlas::FiberIntersectionCache _fiberIntersectionCache;
+    bool _atlasSearchCancelRequested{false};
     QMdiArea *mdiArea;
 
     bool can_change_volume_();
@@ -255,6 +276,7 @@ private:
     std::unique_ptr<VectorOverlayController> _vectorOverlay;
     std::unique_ptr<PlaneSlicingOverlayController> _planeSlicingOverlay;
     std::unique_ptr<SurfaceRotationOverlayController> _surfaceRotationOverlay;
+    std::unique_ptr<AtlasOverlayController> _atlasOverlay;
     std::unique_ptr<SegmentationModule> _segmentationModule;
     std::unique_ptr<SurfacePanelController> _surfacePanel;
     std::unique_ptr<MenuActionController> _menuController;

@@ -1,6 +1,6 @@
 #pragma once
 
-#include <QDialog>
+#include <QMainWindow>
 #include <QMetaObject>
 #include <QPointer>
 
@@ -20,6 +20,7 @@ class QComboBox;
 class QLabel;
 class QMdiArea;
 class QMdiSubWindow;
+class QPoint;
 class QPushButton;
 class QVBoxLayout;
 class QWheelEvent;
@@ -27,7 +28,7 @@ class ViewerManager;
 class PlaneSurface;
 class QuadSurface;
 
-class LineAnnotationDialog : public QDialog
+class LineAnnotationDialog : public QMainWindow
 {
     Q_OBJECT
 
@@ -35,6 +36,11 @@ public:
     enum class InitialDirectionMode {
         Sideways,
         ZInOut,
+    };
+    enum class GeneratedControlPointContextResult {
+        None,
+        Handled,
+        NewLineAnnotationRequested,
     };
 
     struct Pane {
@@ -96,6 +102,11 @@ public:
         const std::map<std::string, GeneratedOverlay>& overlays = {});
     bool setGeneratedLineViews(const GeneratedViews& views,
                                const CChunkedVolumeViewer::CameraState& camera);
+    GeneratedControlPointContextResult showGeneratedControlPointContextMenu(
+        const std::string& surfaceName,
+        CChunkedVolumeViewer* viewer,
+        const QPointF& scenePoint,
+        const QPoint& globalPos);
     const std::vector<Pane>& panes() const { return _panes; }
     InitialDirectionMode initialDirectionMode() const;
 
@@ -105,6 +116,9 @@ signals:
     void generatedControlPointRequested(const std::string& surfaceName,
                                         cv::Vec3f volumePoint,
                                         double linePosition);
+    void generatedControlPointDeleteRequested(const std::string& surfaceName,
+                                              double linePosition,
+                                              cv::Vec3f volumePoint);
     void showAsMeshRequested();
     void fullOptimizationRequested();
 
@@ -137,8 +151,13 @@ private:
     void applyOverlayForViewer(const std::string& overlayKey,
                                CChunkedVolumeViewer* viewer,
                                const GeneratedOverlay& overlay);
+    void clearControlPointContextPreview(const std::string& surfaceName,
+                                         CChunkedVolumeViewer* viewer);
     GeneratedOverlay stripOverlay() const;
-    GeneratedOverlay zSliceOverlay(double linePosition, bool emphasized) const;
+    GeneratedOverlay zSliceOverlay(double linePosition,
+                                   bool emphasized,
+                                   CChunkedVolumeViewer* viewer,
+                                   PlaneSurface* plane) const;
     cv::Vec3f interpolatedLinePoint(double linePosition) const;
     cv::Vec3f interpolatedLineTangent(double linePosition) const;
     cv::Vec3f interpolatedLineUp(double linePosition, const cv::Vec3f& tangent) const;

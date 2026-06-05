@@ -7,15 +7,18 @@
 #include "vc/core/util/PlaneSurface.hpp"
 #include "vc/core/util/QuadSurface.hpp"
 
+#include <QAction>
 #include <QBrush>
 #include <QComboBox>
 #include <QEvent>
 #include <QKeyEvent>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QMenu>
 #include <QMdiArea>
 #include <QMdiSubWindow>
 #include <QPushButton>
+#include <QRect>
 #include <QVBoxLayout>
 #include <QWidget>
 #include <QWheelEvent>
@@ -23,6 +26,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <optional>
 
 namespace {
 
@@ -77,6 +81,14 @@ bool finiteScenePoint(const QPointF& point)
     return std::isfinite(point.x()) && std::isfinite(point.y());
 }
 
+bool validLinePosition(double position, size_t pointCount)
+{
+    return std::isfinite(position) &&
+           pointCount > 0 &&
+           position >= 0.0 &&
+           position <= static_cast<double>(pointCount - 1);
+}
+
 QPointF quadGridToScene(CChunkedVolumeViewer* viewer, QuadSurface* surface, int row, int col)
 {
     if (!viewer || !surface) {
@@ -95,10 +107,58 @@ QPointF quadGridToScene(CChunkedVolumeViewer* viewer, QuadSurface* surface, int 
     return viewer->surfaceCoordsToScene(surfaceX, surfaceY);
 }
 
+std::optional<float> crossSliceControlPointDistanceThreshold(CChunkedVolumeViewer* viewer)
+{
+    if (!viewer || !viewer->graphicsView() || !viewer->graphicsView()->viewport()) {
+        return std::nullopt;
+    }
+
+    auto* view = viewer->graphicsView();
+    const QRect viewportRect = view->viewport()->rect();
+    if (viewportRect.width() <= 0 || viewportRect.height() <= 0) {
+        return std::nullopt;
+    }
+
+    const QPointF topLeftScene = view->mapToScene(viewportRect.topLeft());
+    const QPointF topRightScene = view->mapToScene(viewportRect.topRight());
+    const QPointF bottomLeftScene = view->mapToScene(viewportRect.bottomLeft());
+    const QPointF bottomRightScene = view->mapToScene(viewportRect.bottomRight());
+    if (!finiteScenePoint(topLeftScene) ||
+        !finiteScenePoint(topRightScene) ||
+        !finiteScenePoint(bottomLeftScene) ||
+        !finiteScenePoint(bottomRightScene)) {
+        return std::nullopt;
+    }
+
+    const cv::Vec3f topLeft = viewer->sceneToVolume(topLeftScene);
+    const cv::Vec3f topRight = viewer->sceneToVolume(topRightScene);
+    const cv::Vec3f bottomLeft = viewer->sceneToVolume(bottomLeftScene);
+    const cv::Vec3f bottomRight = viewer->sceneToVolume(bottomRightScene);
+    if (!finitePoint(topLeft) ||
+        !finitePoint(topRight) ||
+        !finitePoint(bottomLeft) ||
+        !finitePoint(bottomRight)) {
+        return std::nullopt;
+    }
+
+    const float visibleWidthVx = std::max(cv::norm(topRight - topLeft),
+                                          cv::norm(bottomRight - bottomLeft));
+    const float visibleHeightVx = std::max(cv::norm(bottomLeft - topLeft),
+                                           cv::norm(bottomRight - topRight));
+    if (!std::isfinite(visibleWidthVx) ||
+        !std::isfinite(visibleHeightVx) ||
+        visibleWidthVx <= 0.0f ||
+        visibleHeightVx <= 0.0f) {
+        return std::nullopt;
+    }
+
+    return std::min(visibleWidthVx, visibleHeightVx) * 0.05f;
+}
+
 } // namespace
 
 LineAnnotationDialog::LineAnnotationDialog(ViewerManager* viewerManager, QWidget* parent)
-    : QDialog(parent)
+    : QMainWindow(parent)
     , _viewerManager(viewerManager)
 {
     setWindowTitle(tr("Line Annotation"));
@@ -106,11 +166,14 @@ LineAnnotationDialog::LineAnnotationDialog(ViewerManager* viewerManager, QWidget
     resize(900, 700);
     _bottomSliceLineStep = vc3d::line_annotation::kDefaultBottomCrossSliceLineStep;
 
-    _layout = new QVBoxLayout(this);
+    auto* content = new QWidget(this);
+    setCentralWidget(content);
+
+    _layout = new QVBoxLayout(content);
     _layout->setContentsMargins(0, 0, 0, 0);
     _layout->setSpacing(0);
 
-    auto* buttonRow = new QWidget(this);
+    auto* buttonRow = new QWidget(content);
     buttonRow->installEventFilter(this);
     auto* buttonLayout = new QHBoxLayout(buttonRow);
     buttonLayout->setContentsMargins(6, 6, 6, 6);
@@ -156,7 +219,7 @@ LineAnnotationDialog::LineAnnotationDialog(ViewerManager* viewerManager, QWidget
         emit fullOptimizationRequested();
     });
 
-    _mdiArea = new QMdiArea(this);
+    _mdiArea = new QMdiArea(content);
     _mdiArea->installEventFilter(this);
     _layout->addWidget(_mdiArea);
 }
@@ -611,6 +674,128 @@ bool LineAnnotationDialog::setGeneratedLineViews(
     return true;
 }
 
+LineAnnotationDialog::GeneratedControlPointContextResult
+LineAnnotationDialog::showGeneratedControlPointContextMenu(const std::string& surfaceName,
+                                                           CChunkedVolumeViewer* viewer,
+                                                           const QPointF& scenePoint,
+                                                           const QPoint& globalPos)
+{
+    if (!viewer || !_hasGeneratedViews || _generatedViews.controlPoints.empty() ||
+        _generatedViews.linePoints.empty()) {
+        return GeneratedControlPointContextResult::None;
+    }
+
+    double linePosition = std::numeric_limits<double>::quiet_NaN();
+    if (viewer == _currentCutViewer) {
+        linePosition = _currentLinePosition;
+    } else {
+        for (size_t i = 0; i < _stripViewers.size(); ++i) {
+            if (viewer == _stripViewers[i]) {
+                linePosition = linePositionFromStripScene(viewer, scenePoint);
+                break;
+            }
+        }
+        if (!std::isfinite(linePosition)) {
+            const int bottomCount = static_cast<int>(_bottomSliceViewers.size());
+            for (int slot = 0; slot < bottomCount; ++slot) {
+                if (viewer == _bottomSliceViewers[static_cast<size_t>(slot)]) {
+                    linePosition = bottomSliceLinePosition(slot, bottomCount);
+                    break;
+                }
+            }
+        }
+    }
+
+    if (!validLinePosition(linePosition, _generatedViews.linePoints.size())) {
+        return GeneratedControlPointContextResult::None;
+    }
+
+    const bool stripViewer =
+        std::any_of(_stripViewers.begin(),
+                    _stripViewers.end(),
+                    [viewer](const QPointer<CChunkedVolumeViewer>& candidate) {
+                        return candidate == viewer;
+                    });
+
+    size_t selectedIndex = 0;
+    QPointF targetScene;
+    bool haveSelection = false;
+    double bestDistanceSq = std::numeric_limits<double>::infinity();
+    for (size_t i = 0; i < _generatedViews.controlPoints.size(); ++i) {
+        const auto& control = _generatedViews.controlPoints[i];
+        if (!validLinePosition(control.linePosition, _generatedViews.linePoints.size())) {
+            continue;
+        }
+
+        QPointF controlScene;
+        if (stripViewer) {
+            auto* quad = dynamic_cast<QuadSurface*>(viewer->currentSurface());
+            controlScene = stripLinePositionToScene(viewer, quad, control.linePosition);
+        } else {
+            controlScene = viewer->volumeToScene(control.point);
+        }
+        if (!finiteScenePoint(controlScene)) {
+            continue;
+        }
+
+        const QPointF delta = controlScene - scenePoint;
+        const double distanceSq = delta.x() * delta.x() + delta.y() * delta.y();
+        if (distanceSq < bestDistanceSq) {
+            haveSelection = true;
+            bestDistanceSq = distanceSq;
+            selectedIndex = i;
+            targetScene = controlScene;
+        }
+    }
+    if (!haveSelection) {
+        return GeneratedControlPointContextResult::None;
+    }
+    const auto& selectedControl = _generatedViews.controlPoints[selectedIndex];
+
+    clearControlPointContextPreview(surfaceName, viewer);
+    if (finiteScenePoint(scenePoint) && finiteScenePoint(targetScene)) {
+        ViewerOverlayControllerBase::OverlayStyle previewStyle;
+        previewStyle.penColor = QColor(255, 120, 40, 245);
+        previewStyle.brushColor = QColor(255, 120, 40, 190);
+        previewStyle.penWidth = 2.5;
+        previewStyle.z = 180.0;
+
+        std::vector<ViewerOverlayControllerBase::OverlayPrimitive> primitives;
+        primitives.push_back(ViewerOverlayControllerBase::LineStripPrimitive{
+            {scenePoint, targetScene},
+            false,
+            previewStyle});
+        primitives.push_back(ViewerOverlayControllerBase::CirclePrimitive{
+            targetScene,
+            selectedControl.isSeed ? 6.5 : 6.0,
+            true,
+            previewStyle});
+        ViewerOverlayControllerBase::applyPrimitives(
+            viewer,
+            "line_annotation_control_context_" + surfaceName,
+            std::move(primitives));
+    }
+
+    QMenu menu(this);
+    QAction* deleteAction = menu.addAction(tr("Delete control point"));
+    deleteAction->setEnabled(_generatedViews.controlPoints.size() > 1);
+    QAction* newLineAnnotationAction = menu.addAction(tr("New line annotation"));
+    newLineAnnotationAction->setEnabled(viewer->sampleSceneVolume(scenePoint).has_value());
+    QAction* selected = menu.exec(globalPos);
+    clearControlPointContextPreview(surfaceName, viewer);
+
+    if (selected == deleteAction && deleteAction->isEnabled()) {
+        emit generatedControlPointDeleteRequested(surfaceName,
+                                                  selectedControl.linePosition,
+                                                  selectedControl.point);
+        return GeneratedControlPointContextResult::Handled;
+    }
+    if (selected == newLineAnnotationAction && newLineAnnotationAction->isEnabled()) {
+        return GeneratedControlPointContextResult::NewLineAnnotationRequested;
+    }
+    return GeneratedControlPointContextResult::Handled;
+}
+
 void LineAnnotationDialog::applyGeneratedOverlay(const std::string& surfaceName,
                                                  CChunkedVolumeViewer* viewer,
                                                  const GeneratedOverlay& overlay)
@@ -639,7 +824,10 @@ void LineAnnotationDialog::applyOverlayForViewer(const std::string& surfaceName,
     seedStyle.penColor = QColor(255, 230, 0, 220);
     seedStyle.brushColor = QColor(255, 230, 0, 170);
     seedStyle.penWidth = 1.5;
-    seedStyle.z = 152.0;
+    seedStyle.z = 161.0;
+
+    ViewerOverlayControllerBase::OverlayStyle controlPointStyle = seedStyle;
+    controlPointStyle.z = 160.0;
 
     ViewerOverlayControllerBase::OverlayStyle markerStyle;
     markerStyle.penColor = QColor(0, 220, 255, 210);
@@ -726,7 +914,7 @@ void LineAnnotationDialog::applyOverlayForViewer(const std::string& surfaceName,
                         controlScene,
                         control.isSeed ? 5.5 : 5.0,
                         true,
-                        seedStyle});
+                        control.isSeed ? seedStyle : controlPointStyle});
                 }
             }
         }
@@ -745,7 +933,9 @@ void LineAnnotationDialog::applyOverlayForViewer(const std::string& surfaceName,
 
     if (!overlay.useSurfaceCenterLine) {
         for (const auto& control : overlay.controlPoints) {
-            addVolumePointMarker(control.point, control.isSeed ? 5.5 : 5.0, seedStyle);
+            addVolumePointMarker(control.point,
+                                 control.isSeed ? 11.0 : 10.0,
+                                 control.isSeed ? seedStyle : controlPointStyle);
         }
     }
 
@@ -758,7 +948,7 @@ void LineAnnotationDialog::applyOverlayForViewer(const std::string& surfaceName,
 
     if (finitePoint(overlay.pointMarker)) {
         addVolumePointMarker(overlay.pointMarker,
-                             overlay.emphasizedPointMarker ? 6.0 : 4.0,
+                             overlay.emphasizedPointMarker ? 2.5 : 2.0,
                              overlay.emphasizedPointMarker ? currentMarkerStyle : markerStyle);
     }
 
@@ -788,6 +978,18 @@ void LineAnnotationDialog::applyOverlayForViewer(const std::string& surfaceName,
     }
 
     ViewerOverlayControllerBase::applyPrimitives(viewer, key, std::move(primitives));
+}
+
+void LineAnnotationDialog::clearControlPointContextPreview(const std::string& surfaceName,
+                                                           CChunkedVolumeViewer* viewer)
+{
+    if (!viewer) {
+        return;
+    }
+    ViewerOverlayControllerBase::applyPrimitives(
+        viewer,
+        "line_annotation_control_context_" + surfaceName,
+        {});
 }
 
 double LineAnnotationDialog::linePositionFromStripScene(CChunkedVolumeViewer* viewer,
@@ -947,19 +1149,12 @@ double LineAnnotationDialog::snappedControlPointPosition(double position) const
     if (!_hasGeneratedViews || _generatedViews.controlPoints.empty()) {
         return position;
     }
-    double bestPosition = position;
-    double bestDistance = std::numeric_limits<double>::infinity();
+    std::vector<double> controlLinePositions;
+    controlLinePositions.reserve(_generatedViews.controlPoints.size());
     for (const auto& control : _generatedViews.controlPoints) {
-        if (!std::isfinite(control.linePosition)) {
-            continue;
-        }
-        const double distance = std::abs(control.linePosition - position);
-        if (distance < bestDistance) {
-            bestDistance = distance;
-            bestPosition = control.linePosition;
-        }
+        controlLinePositions.push_back(control.linePosition);
     }
-    return bestDistance <= 0.5 ? bestPosition : position;
+    return vc3d::line_annotation::snappedControlPointLinePosition(position, controlLinePositions);
 }
 
 LineAnnotationDialog::GeneratedOverlay LineAnnotationDialog::stripOverlay() const
@@ -984,15 +1179,25 @@ LineAnnotationDialog::GeneratedOverlay LineAnnotationDialog::stripOverlay() cons
 }
 
 LineAnnotationDialog::GeneratedOverlay LineAnnotationDialog::zSliceOverlay(double linePosition,
-                                                                           bool emphasized) const
+                                                                           bool emphasized,
+                                                                           CChunkedVolumeViewer* viewer,
+                                                                           PlaneSurface* plane) const
 {
     GeneratedOverlay overlay;
     overlay.pointMarker = interpolatedLinePoint(linePosition);
     overlay.emphasizedPointMarker = emphasized;
-    for (const auto& control : _generatedViews.controlPoints) {
-        if (std::isfinite(control.linePosition) &&
-            std::abs(control.linePosition - linePosition) <= 0.5) {
-            overlay.controlPoints.push_back(control);
+
+    const std::optional<float> distanceThreshold =
+        plane ? crossSliceControlPointDistanceThreshold(viewer) : std::nullopt;
+    if (distanceThreshold) {
+        for (const auto& control : _generatedViews.controlPoints) {
+            if (!finitePoint(control.point)) {
+                continue;
+            }
+            const float distance = plane->pointDist(control.point);
+            if (std::isfinite(distance) && distance <= *distanceThreshold) {
+                overlay.controlPoints.push_back(control);
+            }
         }
     }
     return overlay;
@@ -1018,7 +1223,10 @@ void LineAnnotationDialog::rebuildGeneratedOverlays()
     if (_currentCutViewer) {
         applyOverlayForViewer("line-z-slice-current",
                               _currentCutViewer,
-                              zSliceOverlay(_currentLinePosition, true));
+                              zSliceOverlay(_currentLinePosition,
+                                            true,
+                                            _currentCutViewer,
+                                            _generatedViews.currentCutSurface.get()));
     }
 
     const int bottomCount = static_cast<int>(_bottomSliceViewers.size());
@@ -1031,9 +1239,10 @@ void LineAnnotationDialog::rebuildGeneratedOverlays()
             continue;
         }
         const double position = bottomSliceLinePosition(slot, bottomCount);
+        const auto& plane = _generatedViews.bottomCutSurfaces[static_cast<size_t>(slot)].second;
         applyOverlayForViewer(_generatedViews.bottomCutSurfaces[static_cast<size_t>(slot)].first,
                               viewer,
-                              zSliceOverlay(position, false));
+                              zSliceOverlay(position, false, viewer, plane.get()));
     }
 }
 
@@ -1182,7 +1391,7 @@ void LineAnnotationDialog::keyPressEvent(QKeyEvent* event)
     if (handleKeyPress(event)) {
         return;
     }
-    QDialog::keyPressEvent(event);
+    QMainWindow::keyPressEvent(event);
 }
 
 bool LineAnnotationDialog::handleKeyPress(QKeyEvent* event)
@@ -1191,7 +1400,12 @@ bool LineAnnotationDialog::handleKeyPress(QKeyEvent* event)
         return false;
     }
     if (event->key() == Qt::Key_Space && event->modifiers() == Qt::NoModifier) {
-        setCurrentCutFollowsStripMouse(!_currentCutFollowsStripMouse);
+        if (_currentCutFollowsStripMouse) {
+            setCurrentLinePosition(snappedControlPointPosition(_currentLinePosition));
+            setCurrentCutFollowsStripMouse(false);
+        } else {
+            setCurrentCutFollowsStripMouse(true);
+        }
         event->accept();
         return true;
     }
@@ -1236,5 +1450,5 @@ bool LineAnnotationDialog::eventFilter(QObject* watched, QEvent* event)
     if (watched == _generatedTopWidget && event->type() == QEvent::Resize && _currentCutViewer) {
         _currentCutViewer->setFixedWidth(std::max(1, _generatedTopWidget->height()));
     }
-    return QDialog::eventFilter(watched, event);
+    return QMainWindow::eventFilter(watched, event);
 }

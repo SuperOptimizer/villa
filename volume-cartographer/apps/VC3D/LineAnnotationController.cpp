@@ -7,10 +7,13 @@
 #include "VCSettings.hpp"
 #include "ViewerManager.hpp"
 #include "vc/core/types/VolumePkg.hpp"
+#include "vc/core/types/Segmentation.hpp"
 #include "vc/core/util/Logging.hpp"
 #include "vc/core/util/PlaneSurface.hpp"
 #include "vc/core/util/QuadSurface.hpp"
 #include "vc/core/util/Surface.hpp"
+#include "vc/core/util/SurfacePatchIndex.hpp"
+#include "vc/atlas/Atlas.hpp"
 #include "vc/lasagna/Dataset.hpp"
 #include "vc/lasagna/LasagnaNormalSampler.hpp"
 #include "vc/lasagna/LineModel.hpp"
@@ -21,6 +24,7 @@
 #include <QFileDialog>
 #include <QFutureWatcher>
 #include <QMessageBox>
+#include <QPoint>
 #include <QPointF>
 #include <QDateTime>
 #include <QSettings>
@@ -39,6 +43,7 @@
 #include <iomanip>
 #include <locale>
 #include <sstream>
+#include <string_view>
 #include <utility>
 
 #include <nlohmann/json.hpp>
@@ -72,6 +77,7 @@ struct LineAnnotationController::LineAnnotationSession {
     std::vector<std::string> generatedSurfaceNames;
     std::string error;
     QPointer<QFutureWatcher<OptimizationTaskResult>> watcher;
+    bool deferShowUntilGenerated = false;
     uint64_t fiberId = 0;
     std::string fiberUsername;
     std::string fiberStartedAt;
@@ -86,6 +92,19 @@ namespace {
 constexpr double kEpsilon = 1.0e-12;
 constexpr double kLineSegmentLength = 32.0;
 using Clock = std::chrono::steady_clock;
+
+bool atlasDebugEnabled()
+{
+    const char* value = std::getenv("VC_ATLAS_DEBUG");
+    return value && *value != '\0' && std::string_view(value) != "0";
+}
+
+void atlasDebug(const std::string& message)
+{
+    if (atlasDebugEnabled()) {
+        Logger()->info("[atlas] {}", message);
+    }
+}
 
 double elapsedMs(Clock::time_point start, Clock::time_point end)
 {
@@ -470,8 +489,12 @@ bool LineAnnotationController::canLaunchFromViewer(const CChunkedVolumeViewer* v
     if (dynamic_cast<PlaneSurface*>(surface)) {
         return true;
     }
-    return viewer->surfName() == "segmentation" &&
-           dynamic_cast<QuadSurface*>(surface) != nullptr;
+    if (!dynamic_cast<QuadSurface*>(surface)) {
+        return false;
+    }
+    const std::string surfaceName = viewer->surfName();
+    return surfaceName == "segmentation" ||
+           surfaceName.rfind("line-", 0) == 0;
 }
 
 void LineAnnotationController::launchFromViewer(CChunkedVolumeViewer* viewer, const QPointF& /*scenePoint*/)
@@ -515,17 +538,67 @@ void LineAnnotationController::launchFromViewer(CChunkedVolumeViewer* viewer, co
                   std::move(session));
 }
 
+void LineAnnotationController::launchFromViewerAtPoint(CChunkedVolumeViewer* viewer, const QPointF& scenePoint)
+{
+    if (!canLaunchFromViewer(viewer)) {
+        return;
+    }
+
+    const auto sample = viewer->sampleSceneVolume(scenePoint);
+    if (!sample) {
+        return;
+    }
+    const std::string clickedSurfaceName = viewer->surfName();
+
+    cv::Vec3f normal = sample->normal;
+    if (!std::isfinite(normal[0]) ||
+        !std::isfinite(normal[1]) ||
+        !std::isfinite(normal[2]) ||
+        cv::norm(normal) <= 0.0f) {
+        normal = {0.0f, 0.0f, 1.0f};
+    }
+    normal *= 1.0f / cv::norm(normal);
+
+    std::string owningSurfaceName;
+    QPointer<LineAnnotationDialog> owningDialog;
+    if (auto* owner = paneForSurface(clickedSurfaceName)) {
+        owningSurfaceName = owner->surfaceName;
+        owningDialog = owner->dialog;
+    }
+    if (!owningSurfaceName.empty()) {
+        cleanupSurfaceName(owningSurfaceName);
+        if (owningDialog) {
+            owningDialog->close();
+        }
+    }
+
+    auto surfaceName = nextSurfaceName();
+    CChunkedVolumeViewer::CameraState camera;
+    auto sourceSurface = std::make_shared<PlaneSurface>(sample->position, normal);
+    auto session = std::make_shared<LineAnnotationSession>();
+    launchSession(SourceKind::Plane,
+                  surfaceName,
+                  std::move(sourceSurface),
+                  camera,
+                  cv::Vec3d{normal[0], normal[1], normal[2]},
+                  session,
+                  true);
+    handleLineSeed(surfaceName, sample->position, InitialDirectionMode::ZInOut);
+}
+
 void LineAnnotationController::launchSession(LineAnnotationController::SourceKind sourceKind,
                                              const std::string& surfaceName,
                                              std::shared_ptr<Surface> sourceSurface,
                                              const CChunkedVolumeViewer::CameraState& camera,
                                              cv::Vec3d sourceSliceNormal,
-                                             std::shared_ptr<LineAnnotationController::LineAnnotationSession> session)
+                                             std::shared_ptr<LineAnnotationController::LineAnnotationSession> session,
+                                             bool deferShowUntilGenerated)
 {
     if (!_state || !session) {
         return;
     }
 
+    session->deferShowUntilGenerated = deferShowUntilGenerated;
     _state->setSurface(surfaceName, std::move(sourceSurface));
     auto* dialog = new LineAnnotationDialog(_viewerManager, nullptr);
     if (!dialog->addPane(surfaceName, tr("Line Annotation Slice"), camera)) {
@@ -533,10 +606,6 @@ void LineAnnotationController::launchSession(LineAnnotationController::SourceKin
         _state->setSurface(surfaceName, nullptr);
         return;
     }
-    dialog->showMaximized();
-    dialog->raise();
-    dialog->activateWindow();
-
     session->surfaceName = surfaceName;
     session->sourceAnnotationSurfaceName = surfaceName;
     session->sourceSliceNormal = finiteDirection(sourceSliceNormal)
@@ -564,6 +633,12 @@ void LineAnnotationController::launchSession(LineAnnotationController::SourceKin
             this,
             [this](const std::string& name, cv::Vec3f volumePoint, double linePosition) {
                 handleGeneratedControlPoint(name, volumePoint, linePosition);
+            });
+    connect(dialog,
+            &LineAnnotationDialog::generatedControlPointDeleteRequested,
+            this,
+            [this](const std::string& name, double linePosition, cv::Vec3f volumePoint) {
+                handleGeneratedControlPointDelete(name, linePosition, volumePoint);
             });
     connect(dialog, &LineAnnotationDialog::showAsMeshRequested, this, [this, surfaceName]() {
         handleShowAsMesh(surfaceName);
@@ -593,6 +668,11 @@ void LineAnnotationController::launchSession(LineAnnotationController::SourceKin
     if (!session->optimizedLine.points.empty()) {
         session->taskState = LineAnnotationSession::TaskState::Succeeded;
         materializeGeneratedViews(*session);
+    }
+    if (!session->deferShowUntilGenerated || !session->optimizedLine.points.empty()) {
+        dialog->showMaximized();
+        dialog->raise();
+        dialog->activateWindow();
     }
 }
 
@@ -696,28 +776,53 @@ void LineAnnotationController::openFiber(uint64_t fiberId)
 
 void LineAnnotationController::deleteFiber(uint64_t fiberId)
 {
-    const auto path = fiberPath(fiberId);
-    std::error_code ec;
-    fs::remove(path, ec);
-    if (ec) {
-        showError(tr("Could not delete fiber %1: %2")
-                      .arg(fiberId)
-                      .arg(QString::fromStdString(ec.message())));
+    deleteFibers({fiberId});
+}
+
+void LineAnnotationController::deleteFibers(std::vector<uint64_t> fiberIds)
+{
+    std::sort(fiberIds.begin(), fiberIds.end());
+    fiberIds.erase(std::unique(fiberIds.begin(), fiberIds.end()), fiberIds.end());
+    fiberIds.erase(std::remove(fiberIds.begin(), fiberIds.end(), uint64_t{0}), fiberIds.end());
+    if (fiberIds.empty()) {
+        return;
+    }
+
+    std::vector<uint64_t> deletedIds;
+    deletedIds.reserve(fiberIds.size());
+    for (uint64_t fiberId : fiberIds) {
+        const auto path = fiberPath(fiberId);
+        std::error_code ec;
+        fs::remove(path, ec);
+        if (ec) {
+            showError(tr("Could not delete fiber %1: %2")
+                          .arg(fiberId)
+                          .arg(QString::fromStdString(ec.message())));
+            continue;
+        }
+        deletedIds.push_back(fiberId);
+    }
+    if (deletedIds.empty()) {
         return;
     }
 
     _fibers.erase(std::remove_if(_fibers.begin(),
                                  _fibers.end(),
-                                 [fiberId](const StoredFiber& fiber) {
-                                     return fiber.id == fiberId;
+                                 [&deletedIds](const StoredFiber& fiber) {
+                                     return std::binary_search(deletedIds.begin(),
+                                                               deletedIds.end(),
+                                                               fiber.id);
                                  }),
                   _fibers.end());
     for (const auto& pane : _panes) {
-        if (pane.session && pane.session->fiberId == fiberId) {
+        if (pane.session && std::binary_search(deletedIds.begin(),
+                                               deletedIds.end(),
+                                               pane.session->fiberId)) {
             pane.session->suppressFiberSave = true;
         }
     }
     emitFiberSummaries();
+    emit fibersDeleted(deletedIds);
 }
 
 void LineAnnotationController::setFiberManualHvTag(uint64_t fiberId, const QString& tag)
@@ -803,6 +908,108 @@ void LineAnnotationController::recalculateAllFiberHvClassifications()
     }
 }
 
+void LineAnnotationController::createAtlasFromFiber(uint64_t fiberId)
+{
+    try {
+        auto vpkg = _state ? _state->vpkg() : nullptr;
+        if (!vpkg) {
+            throw std::runtime_error("No volume package is loaded");
+        }
+        const fs::path volpkgRoot = vpkg->path().empty()
+            ? fs::path(vpkg->getVolpkgDirectory())
+            : vpkg->path().parent_path();
+        if (volpkgRoot.empty()) {
+            throw std::runtime_error("The current volume package has no root directory");
+        }
+
+        auto fiberIt = std::find_if(_fibers.begin(), _fibers.end(), [fiberId](const StoredFiber& fiber) {
+            return fiber.id == fiberId;
+        });
+        if (fiberIt == _fibers.end()) {
+            throw std::runtime_error("Selected fiber is not available");
+        }
+        if (fiberIt->linePoints.empty()) {
+            throw std::runtime_error("Selected fiber has no line points");
+        }
+
+        fs::path manifestPath = vpkg->selectedLasagnaDatasetPath();
+        if (manifestPath.empty()) {
+            const auto picked = pickDataset(_parentWidget.data(), volpkgRoot);
+            if (!picked) {
+                throw std::runtime_error("No Lasagna normal dataset selected");
+            }
+            vpkg->setSelectedLasagnaDataset(*picked);
+            manifestPath = vpkg->selectedLasagnaDatasetPath();
+        }
+        if (manifestPath.empty() || !fs::exists(manifestPath)) {
+            throw std::runtime_error("Selected Lasagna normal dataset does not exist");
+        }
+        vc::lasagna::LasagnaDataset dataset = vc::lasagna::LasagnaDataset::open(manifestPath);
+        vc::lasagna::LasagnaNormalSampler sampler(dataset);
+        const fs::path initShellDir =
+            vc::atlas::initShellDirectoryFromManifest(dataset.manifest());
+        atlasDebug("selected_manifest=" + manifestPath.string());
+        atlasDebug("resolved_init_shell_dir=" + initShellDir.string());
+
+        std::vector<vc::atlas::SurfaceCandidate> candidates =
+            vc::atlas::loadInitShellCandidates(initShellDir);
+        if (atlasDebugEnabled()) {
+            for (const auto& candidate : candidates) {
+                const auto* points = candidate.surface ? candidate.surface->rawPointsPtr() : nullptr;
+                atlasDebug("candidate_shell path=" + candidate.path.string() +
+                           " grid=" + (points
+                               ? std::to_string(points->cols) + "x" + std::to_string(points->rows)
+                               : std::string("invalid")));
+            }
+        }
+
+        vc::atlas::FiberInput input;
+        std::error_code relativeEc;
+        input.fiberPath = fs::relative(fiberPath(fiberId), volpkgRoot, relativeEc);
+        if (relativeEc || input.fiberPath.empty()) {
+            input.fiberPath = fs::path("fibers") / (std::to_string(fiberId) + ".json");
+        }
+        input.controlPoints = fiberIt->controlPoints;
+        input.linePoints = fiberIt->linePoints;
+        atlasDebug("fiber line_points=" + std::to_string(input.linePoints.size()) +
+                   " control_points=" + std::to_string(input.controlPoints.size()));
+
+        SurfacePatchIndex shellIndex;
+        std::vector<SurfacePatchIndex::SurfacePtr> candidateSurfaces;
+        candidateSurfaces.reserve(candidates.size());
+        for (const auto& candidate : candidates) {
+            if (candidate.surface) {
+                candidateSurfaces.push_back(candidate.surface);
+            }
+        }
+        shellIndex.rebuild(candidateSurfaces);
+        const auto selection = vc::atlas::selectBaseSurfaceBySeedRay(
+            input, candidates, shellIndex, sampler);
+        auto& selected = candidates.at(static_cast<size_t>(selection.surfaceIndex));
+        const int zeroWindingColumn = vc::atlas::computeZeroWindingColumn(*selected.surface);
+        atlasDebug("zero_winding_column=" + std::to_string(zeroWindingColumn));
+
+        SurfacePatchIndex baseIndex;
+        baseIndex.rebuild({selected.surface});
+        auto mapping = vc::atlas::mapFiberToBaseSurface(input, *selected.surface, baseIndex, sampler);
+
+        const std::string atlasName = "fiber_" + std::to_string(fiberId);
+        const fs::path atlasDir = vc::atlas::uniqueAtlasDirectory(volpkgRoot, atlasName);
+        auto atlas = vc::atlas::createSingleFiberAtlas(volpkgRoot,
+                                                       atlasDir.filename().string(),
+                                                       input,
+                                                       selected,
+                                                       zeroWindingColumn,
+                                                       std::move(mapping));
+        vc::atlas::saveAtlasBaseMeshCopy(*selected.surface,
+                                         atlasDir / atlas.metadata.baseMeshPath);
+        atlas.save(atlasDir);
+        emit atlasCreated(atlasDir);
+    } catch (const std::exception& ex) {
+        showError(tr("Could not create atlas: %1").arg(QString::fromStdString(ex.what())));
+    }
+}
+
 void LineAnnotationController::saveOpenFibers()
 {
     for (const auto& pane : _panes) {
@@ -817,6 +1024,41 @@ void LineAnnotationController::saveOpenFibers()
         }
         saveSessionAsFiber(session);
     }
+}
+
+void LineAnnotationController::closeFiberWindowForSurface(const std::string& surfaceName)
+{
+    auto* pane = paneForSurface(surfaceName);
+    if (pane && pane->dialog) {
+        pane->dialog->close();
+    }
+}
+
+bool LineAnnotationController::showGeneratedControlPointContextMenu(CChunkedVolumeViewer* viewer,
+                                                                    const QPointF& scenePoint,
+                                                                    const QPoint& globalPos)
+{
+    if (!viewer) {
+        return false;
+    }
+    auto* pane = paneForSurface(viewer->surfName());
+    if (!pane || !pane->dialog || !pane->session) {
+        return false;
+    }
+    if (std::find(pane->session->generatedSurfaceNames.begin(),
+                  pane->session->generatedSurfaceNames.end(),
+                  viewer->surfName()) == pane->session->generatedSurfaceNames.end()) {
+        return false;
+    }
+    const auto result = pane->dialog->showGeneratedControlPointContextMenu(
+        viewer->surfName(),
+        viewer,
+        scenePoint,
+        globalPos);
+    if (result == LineAnnotationDialog::GeneratedControlPointContextResult::NewLineAnnotationRequested) {
+        launchFromViewerAtPoint(viewer, scenePoint);
+    }
+    return result != LineAnnotationDialog::GeneratedControlPointContextResult::None;
 }
 
 std::vector<LineAnnotationController::FiberSummary> LineAnnotationController::fiberSummaries() const
@@ -842,6 +1084,23 @@ std::vector<LineAnnotationController::FiberSummary> LineAnnotationController::fi
         return a.id < b.id;
     });
     return summaries;
+}
+
+std::vector<vc::atlas::FiberPolyline> LineAnnotationController::fiberSnapshots() const
+{
+    std::vector<vc::atlas::FiberPolyline> snapshots;
+    snapshots.reserve(_fibers.size());
+    for (const auto& fiber : _fibers) {
+        vc::atlas::FiberPolyline snapshot;
+        snapshot.id = fiber.id;
+        snapshot.generation = fiber.generation;
+        snapshot.points.reserve(fiber.linePoints.size());
+        for (const auto& point : fiber.linePoints) {
+            snapshot.points.push_back(vc::atlas::FiberPoint{point, std::nullopt});
+        }
+        snapshots.push_back(std::move(snapshot));
+    }
+    return snapshots;
 }
 
 void LineAnnotationController::onSurfaceChanged(std::string name,
@@ -992,6 +1251,100 @@ void LineAnnotationController::handleGeneratedControlPoint(const std::string& su
                        session.controlPoints,
                        linePointsToJson(session.optimizedLine));
     startOptimization(session, false, update.activeStart, update.activeEnd);
+}
+
+void LineAnnotationController::handleGeneratedControlPointDelete(const std::string& surfaceName,
+                                                                double linePosition,
+                                                                cv::Vec3f volumePoint)
+{
+    auto* pane = paneForSurface(surfaceName);
+    if (!pane || !pane->session) {
+        return;
+    }
+
+    auto& session = *pane->session;
+    if (session.taskState == LineAnnotationSession::TaskState::Running) {
+        showError(tr("Line optimization is already running."));
+        return;
+    }
+    if (session.optimizedLine.points.empty() || session.controlPoints.size() <= 1) {
+        return;
+    }
+    if (!ensureDatasetForSession(session)) {
+        return;
+    }
+
+    const double maxPosition = static_cast<double>(session.optimizedLine.points.size() - 1);
+    linePosition = std::clamp(linePosition, 0.0, maxPosition);
+    const cv::Vec3d selectedPoint(volumePoint[0], volumePoint[1], volumePoint[2]);
+
+    auto selected = session.controlPoints.end();
+    double bestScore = std::numeric_limits<double>::infinity();
+    for (auto it = session.controlPoints.begin(); it != session.controlPoints.end(); ++it) {
+        if (!std::isfinite(it->linePosition)) {
+            continue;
+        }
+        const cv::Vec3d delta = it->volumePoint - selectedPoint;
+        const double pointDistanceSq = delta.dot(delta);
+        const double lineDistance = std::abs(it->linePosition - linePosition);
+        const double score = pointDistanceSq + lineDistance * 1.0e-6;
+        if (score < bestScore) {
+            bestScore = score;
+            selected = it;
+        }
+    }
+    if (selected == session.controlPoints.end()) {
+        return;
+    }
+
+    const bool deletedSeed = selected->isSeed;
+    session.controlPoints.erase(selected);
+    if (session.controlPoints.empty()) {
+        return;
+    }
+
+    const bool hasSeed = std::any_of(session.controlPoints.begin(),
+                                     session.controlPoints.end(),
+                                     [](const vc::lasagna::LineControlPoint& control) {
+                                         return control.isSeed;
+                                     });
+    if (deletedSeed || !hasSeed) {
+        auto replacementSeed = session.controlPoints.begin();
+        double replacementDistance = std::numeric_limits<double>::infinity();
+        for (auto it = session.controlPoints.begin(); it != session.controlPoints.end(); ++it) {
+            it->isSeed = false;
+            const double distance = std::isfinite(it->linePosition)
+                ? std::abs(it->linePosition - linePosition)
+                : std::numeric_limits<double>::infinity();
+            if (distance < replacementDistance) {
+                replacementDistance = distance;
+                replacementSeed = it;
+            }
+        }
+        replacementSeed->isSeed = true;
+        session.seedPoint = replacementSeed->volumePoint;
+    }
+
+    auto focus = session.controlPoints.begin();
+    double focusDistance = std::numeric_limits<double>::infinity();
+    for (auto it = session.controlPoints.begin(); it != session.controlPoints.end(); ++it) {
+        const double distance = std::isfinite(it->linePosition)
+            ? std::abs(it->linePosition - linePosition)
+            : std::numeric_limits<double>::infinity();
+        if (distance < focusDistance) {
+            focusDistance = distance;
+            focus = it;
+        }
+    }
+    session.focusedLinePosition = std::isfinite(focus->linePosition)
+        ? focus->linePosition
+        : linePosition;
+    session.focusedControlPoint = focus->volumePoint;
+
+    writeLineDebugJson("control_delete",
+                       session.controlPoints,
+                       linePointsToJson(session.optimizedLine));
+    startOptimization(session, true);
 }
 
 bool LineAnnotationController::ensureDatasetForSession(LineAnnotationSession& session)
@@ -1195,6 +1548,11 @@ void LineAnnotationController::finishOptimization(const std::string& surfaceName
         if (!materializeGeneratedViews(session)) {
             session.taskState = LineAnnotationSession::TaskState::Failed;
             return;
+        }
+        if (session.deferShowUntilGenerated && pane->dialog && !pane->dialog->isVisible()) {
+            pane->dialog->showMaximized();
+            pane->dialog->raise();
+            pane->dialog->activateWindow();
         }
         const double prefetchPrepMs = session.optimizationReport.normalChunkPrefetchMs +
                                       session.optimizationReport.normalMaterializeMs;
@@ -1799,6 +2157,14 @@ void LineAnnotationController::saveSessionAsFiber(LineAnnotationSession& session
         fiber.startedAt = session.fiberStartedAt;
         fiber.sequence = session.fiberSequence;
         fiber.fileName = session.fiberFileName;
+        auto existingIt = std::find_if(_fibers.begin(),
+                                       _fibers.end(),
+                                       [&fiber](const StoredFiber& existing) {
+                                           return existing.id == fiber.id;
+                                       });
+        fiber.generation = existingIt == _fibers.end()
+            ? uint64_t{1}
+            : std::max<uint64_t>(uint64_t{1}, existingIt->generation + 1);
         fiber.controlPoints.reserve(session.controlPoints.size());
         auto controls = session.controlPoints;
         std::stable_sort(controls.begin(),
@@ -1822,6 +2188,8 @@ void LineAnnotationController::saveSessionAsFiber(LineAnnotationSession& session
         session.fiberStartedAt = fiber.startedAt;
         session.fiberSequence = fiber.sequence;
         session.fiberFileName = fiber.fileName;
+        const uint64_t savedFiberId = fiber.id;
+        const uint64_t savedGeneration = fiber.generation;
 
         auto it = std::find_if(_fibers.begin(), _fibers.end(), [&fiber](const StoredFiber& existing) {
             return existing.id == fiber.id;
@@ -1832,6 +2200,7 @@ void LineAnnotationController::saveSessionAsFiber(LineAnnotationSession& session
             *it = std::move(fiber);
         }
         emitFiberSummaries();
+        emit fiberSaved(savedFiberId, savedGeneration);
     } catch (const std::exception& ex) {
         showError(tr("Could not save fiber: %1").arg(QString::fromStdString(ex.what())));
     }
@@ -1859,6 +2228,7 @@ void LineAnnotationController::saveFiber(const StoredFiber& fiber) const
     root["started_at"] = fiber.startedAt;
     root["sequence"] = fiber.sequence;
     root["filename"] = fiber.fileName;
+    root["generation"] = fiber.generation;
     root["hv_classification"] = {
         {"z_distance", fiber.hvClassification.zDistance},
         {"control_point_length", fiber.hvClassification.fiberLength},
@@ -1920,6 +2290,7 @@ std::optional<LineAnnotationController::StoredFiber> LineAnnotationController::l
     }
 
     StoredFiber fiber;
+    fiber.generation = std::max<uint64_t>(uint64_t{1}, root.value("generation", uint64_t{1}));
     if (root.contains("id")) {
         fiber.id = root.at("id").get<uint64_t>();
     } else if (hasLegacyNumericStem) {
