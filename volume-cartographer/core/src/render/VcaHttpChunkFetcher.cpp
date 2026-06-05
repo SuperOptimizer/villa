@@ -105,6 +105,23 @@ public:
 
     std::uint64_t totalLen() const { return totalLen_; }
 
+    // On-disk bytes actually fetched: resident blocks * block size (the final
+    // block is clamped to totalLen_). O(1) from a maintained counter -- no
+    // filesystem walk, no stat of the (sparse, 503 GB) cache file. Used to paint
+    // the HUD cache-size label without touching the per-frame hot path.
+    std::uint64_t residentBytes() const
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        if (residentBlocks_ == 0 || nblocks_ == 0) return 0;
+        std::uint64_t bytes = residentBlocks_ * kBlockSize;
+        // last block may be partial; if it's resident, subtract the overhang.
+        if (resident_.size() == nblocks_ && resident_[nblocks_ - 1]) {
+            std::uint64_t lastLen = totalLen_ - (nblocks_ - 1) * kBlockSize;
+            if (lastLen < kBlockSize) bytes -= (kBlockSize - lastLen);
+        }
+        return bytes;
+    }
+
     // Register the v2 region blobs as fetch spans: a read anywhere in a region's
     // blob fetches the WHOLE blob in one GET (v2 regions are contiguous). Called
     // once after vc_open_streaming, with spans sorted ascending by offset. The
@@ -186,7 +203,9 @@ private:
 
         lk.lock();
         inflight_[fb] = 0;
-        if (ok) for (std::uint64_t b=fb;b<=lb;++b) resident_[b] = 1;
+        if (ok) for (std::uint64_t b=fb;b<=lb;++b) {
+            if (!resident_[b]) { resident_[b] = 1; ++residentBlocks_; }
+        }
         cv_.notify_all();
         return ok;
     }
@@ -216,6 +235,7 @@ private:
     void loadBits()
     {
         resident_.assign(nblocks_, 0);
+        residentBlocks_ = 0;
         int bf = ::open(bitsPath_.c_str(), O_RDONLY);
         if (bf < 0) return;   // no sidecar -> treat all as not-resident (safe; re-fetch)
         std::vector<std::uint8_t> packed((nblocks_ + 7) / 8);
@@ -223,7 +243,7 @@ private:
         ::close(bf);
         if (r == static_cast<ssize_t>(packed.size())) {
             for (std::uint64_t b = 0; b < nblocks_; ++b)
-                resident_[b] = (packed[b / 8] >> (b % 8)) & 1;
+                if ((packed[b / 8] >> (b % 8)) & 1) { resident_[b] = 1; ++residentBlocks_; }
         }
     }
     void saveBits()
@@ -252,9 +272,10 @@ private:
     int fd_ = -1;
     std::filesystem::path dataPath_, bitsPath_;
     std::vector<std::uint8_t> resident_;   // 1 = block fetched
+    std::uint64_t residentBlocks_ = 0;     // popcount(resident_), maintained incrementally
     std::vector<std::uint8_t> inflight_;   // 1 = a thread is fetching the span at this block
     std::vector<std::pair<std::uint64_t,std::uint64_t>> spans_;  // v2 region blobs (sorted), set once
-    std::mutex mu_;                        // guards resident_/inflight_/spans_ + cv_
+    mutable std::mutex mu_;                // guards resident_/residentBlocks_/inflight_/spans_ + cv_
     std::condition_variable cv_;
 };
 
@@ -296,6 +317,9 @@ public:
     VcaHttpArchive& operator=(const VcaHttpArchive&) = delete;
 
     vc_archive* handle() const { return archive_; }
+
+    // On-disk bytes the shared block cache has fetched (O(1), no fs walk).
+    std::uint64_t residentBytes() const { return cache_->residentBytes(); }
 
 private:
     // Enumerate every present v2 region blob (across all LODs) as a fetch span, so
@@ -369,6 +393,15 @@ public:
         result.status = ChunkFetchStatus::Found;
         result.bytes = std::move(bytes);
         return result;
+    }
+
+    // The streaming cache is a single file; report its fetched size from the
+    // block bitmap so ChunkCache::stats() never walks/stats it. All per-LOD
+    // fetchers share one archive/block-cache, so each reports the same total
+    // (ChunkCache takes the max across fetchers, not the sum -- see stats()).
+    std::optional<std::size_t> persistentCacheBytes() const override
+    {
+        return static_cast<std::size_t>(archive_->residentBytes());
     }
 
 private:

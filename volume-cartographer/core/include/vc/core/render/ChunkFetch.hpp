@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -68,6 +69,18 @@ public:
         result.status = ChunkFetchStatus::Found;
         result.bytes = std::move(bytes);
         return result;
+    }
+
+    // On-disk bytes this fetcher's persistent cache occupies, if it can report
+    // that cheaply (O(1)) from its own bookkeeping. Returns nullopt when the
+    // fetcher has no such knowledge, in which case ChunkCache falls back to
+    // walking the persistent-cache directory. The single-file vca streaming
+    // cache overrides this (resident-block count * block size) so the HUD size
+    // label never triggers a recursive_directory_iterator / stat of a 503 GB
+    // sparse cache file on the per-frame stats() path.
+    virtual std::optional<std::size_t> persistentCacheBytes() const
+    {
+        return std::nullopt;
     }
 };
 

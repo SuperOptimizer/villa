@@ -18,7 +18,12 @@ namespace vc::render {
 namespace {
 
 constexpr auto kDownloadStatsWindow = std::chrono::seconds{3};
-constexpr auto kPersistentCacheSizeScanInterval = std::chrono::seconds{2};
+// stats() is called every frame to paint the HUD "disk N GB" label, and each
+// rescan walks the persistent-cache dir (recursive_directory_iterator +
+// file_size per entry). At 2s that walk landed in the profile at ~3% of CPU
+// during active navigation for a purely informational label. The on-disk size
+// changes slowly; 30s freshness is plenty and keeps the walk off the hot path.
+constexpr auto kPersistentCacheSizeScanInterval = std::chrono::seconds{30};
 constexpr int kViewEpochPriorityStride = 1024;
 
 std::size_t normalizedWorkerCount(std::size_t requested)
@@ -271,11 +276,29 @@ ChunkCache::Stats ChunkCache::stats() const
             std::chrono::duration<double>(kDownloadStatsWindow).count();
         result.persistentCacheBytes = state->cachedPersistentCacheBytes_;
         persistentPath = state->options_.persistentCachePath;
-        scanPersistentCacheBytes = persistentPath.has_value() &&
-            (state->lastPersistentCacheSizeScan_ == std::chrono::steady_clock::time_point{} ||
-             now - state->lastPersistentCacheSizeScan_ >= kPersistentCacheSizeScanInterval);
-        if (scanPersistentCacheBytes)
-            state->lastPersistentCacheSizeScan_ = now;
+
+        // Prefer a fetcher's own O(1) accounting (e.g. the single-file vca
+        // streaming cache reports resident-block bytes from its bitmap). When
+        // any fetcher can answer, use it and skip the directory walk entirely --
+        // no fs stat on the per-frame stats() path, no scan throttle needed.
+        // Fetchers over one shared backing cache report the same total, so take
+        // the max rather than summing.
+        std::optional<std::size_t> fetcherBytes;
+        for (const auto& f : state->fetchers_) {
+            if (!f) continue;
+            if (auto b = f->persistentCacheBytes())
+                fetcherBytes = std::max(fetcherBytes.value_or(0), *b);
+        }
+        if (fetcherBytes) {
+            result.persistentCacheBytes = *fetcherBytes;
+            state->cachedPersistentCacheBytes_ = *fetcherBytes;
+        } else {
+            scanPersistentCacheBytes = persistentPath.has_value() &&
+                (state->lastPersistentCacheSizeScan_ == std::chrono::steady_clock::time_point{} ||
+                 now - state->lastPersistentCacheSizeScan_ >= kPersistentCacheSizeScanInterval);
+            if (scanPersistentCacheBytes)
+                state->lastPersistentCacheSizeScan_ = now;
+        }
     }
     if (scanPersistentCacheBytes) {
         result.persistentCacheBytes = persistentCacheBytes(persistentPath);
