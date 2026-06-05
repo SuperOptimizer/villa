@@ -141,12 +141,32 @@ public:
     class ResidentPin final : public IResidentPin {
     public:
         ResidentView lookup(int level, int iz, int iy, int ix) const override;
+
+        // Tiny inlinable lookup for callers that have ALREADY bounds-checked the
+        // chunk coords (the composite/sample kernels do). Skips isValidKey + the
+        // fetcher-presence check -- just probes the resident map. A key not present
+        // (or InFlight) returns {MissQueued,nullptr}; the caller records the miss.
+        ResidentView lookupChecked(int level, int iz, int iy, int ix) const
+        {
+            const ChunkKey key{level, iz, iy, ix};
+            auto it = map_->find(key);
+            if (it == map_->end())
+                return ResidentView{ChunkStatus::MissQueued, nullptr};
+            const ResidentEntry& e = it->second;
+            if (e.status == ChunkStatus::Data)
+                return ResidentView{ChunkStatus::Data, e.bytes.get()};
+            return ResidentView{e.status, nullptr};
+        }
     private:
         friend class ChunkCache;
         std::shared_ptr<const ResidentMap> map_;
         const ChunkCache* cache_ = nullptr;
     };
     std::unique_ptr<IResidentPin> makeResidentPin() const override;
+    // Non-virtual concrete pin (by value): the composite kernel, which knows it
+    // holds a ChunkCache, takes this so pin.lookup() is a direct, inlinable call
+    // instead of virtual dispatch through IResidentPin.
+    ResidentPin pinConcrete() const;
 
 private:
     enum class EntryStatus {

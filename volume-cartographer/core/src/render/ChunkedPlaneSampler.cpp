@@ -693,11 +693,22 @@ ChunkedPlaneSampler::Stats maxCompositeTileRange(
     ChunkedPlaneSampler::Stats localStats;
     // Pin the resident map for the whole tile range so the raw byte pointers from
     // lookup() stay valid even if the tick swaps in a new map concurrently (the
-    // cache is shared across viewers). No ChunkProbe layer -- lookup is already a
-    // lock-free O(1) probe; we keep only a missed-key dedup set.
-    auto pin = array.makeResidentPin();
-    std::unordered_set<ChunkKey, ChunkKeyHash> missedSet;
-    missedSet.reserve(std::max<std::size_t>(16, (end - begin) * 4));
+    // cache is shared across viewers). For a concrete ChunkCache take a by-value
+    // pin so lookup() is a direct (inlinable) call; else the virtual pin.
+    constexpr bool kConcrete = std::is_same_v<ArrayT, ChunkCache>;
+    auto pin = [&] {
+        if constexpr (kConcrete) return array.pinConcrete();
+        else return array.makeResidentPin();
+    }();
+    auto doLookup = [&](int lv, int z, int y, int x) {
+        // Concrete path: lookupChecked is tiny + inlines (the kernel already
+        // bounds-checked the voxel coords, so the chunk coords are in-grid -- skip
+        // isValidKey). Virtual path keeps the full checked lookup.
+        if constexpr (kConcrete) return pin.lookupChecked(lv, z, y, x);
+        else return pin->lookup(lv, z, y, x);
+    };
+    std::vector<ChunkKey> missedVec;   // flat, deduped at flush (no node alloc)
+    missedVec.reserve(std::max<std::size_t>(16, (end - begin) * 4));
 
     for (std::size_t i = begin; i < end; ++i) {
         const SampleTile& st = tiles[i];
@@ -766,16 +777,18 @@ ChunkedPlaneSampler::Stats maxCompositeTileRange(
                         lastChunk = chunkKey;
                         // Raw lock-free resident read -- no ChunkProbe layer,
                         // no shared_ptr copy (the tick won't evict mid-frame).
-                        const auto rv = pin->lookup(level, cz, cy, cx);
+                        const auto rv = doLookup(level, cz, cy, cx);
                         if (rv.status == ChunkStatus::AllFill) {
                             curBytes = &kAllFillTag;
                         } else if (rv.status == ChunkStatus::Data && rv.bytes) {
                             curBytes = rv.bytes;
                         } else {
                             curBytes = nullptr;
-                            if (rv.status == ChunkStatus::MissQueued &&
-                                missedSet.insert({level, cz, cy, cx}).second)
-                                ++localStats.requestedChunks;
+                            // Append misses to a flat vector (no per-insert node
+                            // alloc); deduped once at flush. Gated by chunk-change
+                            // (lastChunk), so at most one push per chunk crossing.
+                            if (rv.status == ChunkStatus::MissQueued)
+                                missedVec.push_back({level, cz, cy, cx});
                             else if (rv.status == ChunkStatus::Error)
                                 ++localStats.errorChunks;
                         }
@@ -815,9 +828,14 @@ ChunkedPlaneSampler::Stats maxCompositeTileRange(
             }
         }
     }
+    // Dedup the flat miss list once (sort by packed word + unique), then hand off.
+    std::sort(missedVec.begin(), missedVec.end(),
+              [](const ChunkKey& a, const ChunkKey& b) { return a.word() < b.word(); });
+    missedVec.erase(std::unique(missedVec.begin(), missedVec.end()), missedVec.end());
+    localStats.requestedChunks += static_cast<int>(missedVec.size());
     localStats.missedKeys.insert(localStats.missedKeys.end(),
-        std::make_move_iterator(missedSet.begin()),
-        std::make_move_iterator(missedSet.end()));
+        std::make_move_iterator(missedVec.begin()),
+        std::make_move_iterator(missedVec.end()));
     return localStats;
 }
 
