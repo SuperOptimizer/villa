@@ -682,7 +682,14 @@ ChunkedPlaneSampler::Stats maxCompositeTileRange(
             uint8_t* coverageRow = coverage.ptr<uint8_t>(y);
             for (int x = st.tx; x < st.xEnd; ++x) {
                 const cv::Vec3f base = coordRow[x];
-                if (surfaceSentinel(base))
+                // QuadSurface::gen() stamps NaN-NaN-NaN wherever the surface does
+                // not exist (its invalidation pass always runs -- single-component
+                // forces it, multi-component uses NaN borders), so for gen() output
+                // a single NaN test per pixel is sufficient. NaN propagates through
+                // all three components, so checking base[0] alone suffices. This
+                // replaces the general surfaceSentinel (-1 / (0,0,0) / NaN) checks
+                // -- those markers only appear in raw _points, never in gen output.
+                if (base[0] != base[0])
                     continue;
                 const cv::Vec3f nrm = normalRow[x];
                 // base/normal -> level space using the hoisted float scalars.
