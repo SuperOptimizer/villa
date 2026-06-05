@@ -1545,7 +1545,30 @@ void CChunkedVolumeViewer::submitRender(const char* reason, std::source_location
 
     QPointer<CChunkedVolumeViewer> guard(this);
     (void)QtConcurrent::run([guard, ctx = std::move(ctx)]() mutable {
+        auto chunkArray = ctx.chunkArray;
+        auto overlayChunkArray = ctx.overlayChunkArray;
         auto result = std::make_shared<RenderResult>(renderFrame(std::move(ctx)));
+
+        // tick OFF the main thread: the render (SETTLE) just finished on THIS
+        // worker, so no render is reading the cache -- safe to mutate. thaw, hand
+        // it this frame's misses, fold completed fetches + evict + rebuild the
+        // resident map. Keeping this off the UI thread is the point: only GUI work
+        // is posted back to main. _renderWorkerBusy stays set until the main-thread
+        // callback clears it, so the next submitRender (which freezes) can't start
+        // mid-tick.
+        if (chunkArray) {
+            chunkArray->thaw();
+            if (!result->missedKeys.empty())
+                chunkArray->requestChunks(result->missedKeys);
+            chunkArray->tick();
+        }
+        if (overlayChunkArray) {
+            overlayChunkArray->thaw();
+            if (!result->overlayMissedKeys.empty())
+                overlayChunkArray->requestChunks(result->overlayMissedKeys);
+            overlayChunkArray->tick();
+        }
+
         QMetaObject::invokeMethod(qApp, [guard, result = std::move(result)]() mutable {
             if (guard)
                 guard->finishRenderOnMainThread(std::move(result));
@@ -1565,13 +1588,11 @@ void CChunkedVolumeViewer::finishRenderOnMainThread(std::shared_ptr<RenderResult
     }
     _renderWorkerBusy.store(false, std::memory_order_release);
 
-    // ===== TICK =====================================================
-    // The render (SETTLE) is done; we're on the main thread with no render
-    // running. This is the one place we let the cache mutate. Thaw, hand it the
-    // chunks this frame missed, then tick() (fold any fetches that completed
-    // during the frame + issue fetches for the misses). Re-freeze happens at the
-    // next submitRender. Do this even for stale/closing results so the cache
-    // never stays frozen.
+    // The tick (thaw -> requestChunks -> fold/evict/rebuild) already ran on the
+    // render WORKER thread before this callback was posted -- it's off the main
+    // thread, which only does GUI here. We just consume the result: display the
+    // framebuffer and, if the frame missed chunks (now requested), reschedule one
+    // re-render to fold them in next cycle.
     if (::getenv("VCA_TICK_DBG")) {
         fprintf(stderr, "[ts] finishRender serial=%llu cur=%llu missed=%zu overlayMissed=%zu\n",
                 (unsigned long long)(result ? result->serial : 0),
@@ -1579,21 +1600,6 @@ void CChunkedVolumeViewer::finishRenderOnMainThread(std::shared_ptr<RenderResult
                 result ? result->missedKeys.size() : std::size_t(0),
                 result ? result->overlayMissedKeys.size() : std::size_t(0));
     }
-    if (_chunkArray) {
-        _chunkArray->thaw();
-        if (result && !result->missedKeys.empty())
-            _chunkArray->requestChunks(result->missedKeys);
-        _chunkArray->tick();
-    }
-    if (_overlayChunkArray) {
-        _overlayChunkArray->thaw();
-        if (result && !result->overlayMissedKeys.empty())
-            _overlayChunkArray->requestChunks(result->overlayMissedKeys);
-        _overlayChunkArray->tick();
-    }
-    // If the frame missed chunks (in either array), schedule one more render for
-    // the next cycle so the now-fetched chunks fill in (clocked self-heal -- one
-    // re-render per cycle instead of one per chunk-ready callback).
     const bool hadMisses = result &&
         (!result->missedKeys.empty() || !result->overlayMissedKeys.empty());
 
