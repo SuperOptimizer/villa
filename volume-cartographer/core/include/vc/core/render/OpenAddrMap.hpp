@@ -1,18 +1,18 @@
 #pragma once
 
 // A small open-addressing hash map (linear probing, power-of-two capacity,
-// backward-shift deletion -> no tombstones) tailored for the chunk cache's
-// entries_ table. std::unordered_map is node-based: every find chases a pointer
-// to a separately heap-allocated node, which cache-misses. This map stores the
-// key+value inline in one contiguous array, so a lookup is a contiguous probe --
-// far friendlier to the cache. It implements only the operations ChunkCache uses
-// (find / emplace / erase / iterate / size / clear) with a std::unordered_map-
-// compatible surface (it->first, it->second, structured-binding range-for,
-// emplace returning {iterator,bool}).
+// backward-shift deletion -> no tombstones) tailored for the chunk cache.
 //
-// Value must be movable (entries are relocated on grow / on backward-shift
-// delete). Key must be trivially comparable and have a reserved "empty" value
-// that never appears as a real key (provided by KeyTraits::empty()).
+// Storage is SPLIT: a dense array of keys (probed) parallel to an array of
+// values. The find loop scans only the key array, so more keys fit per cache
+// line and the probe touches far fewer cache lines than a node-based
+// std::unordered_map (pointer-per-node) or an inline {key,value} slot array
+// (value bloats the stride). Values can be move-only (e.g. hold a unique_ptr);
+// they are relocated by move on grow / backward-shift delete.
+//
+// API surface mirrors the std::unordered_map operations the cache uses:
+// find / emplace / erase / iterate (structured bindings) / size / clear /
+// reserve, with it->first, it->second.
 
 #include <cstddef>
 #include <cstdint>
@@ -23,162 +23,111 @@ namespace vc::render {
 
 template <typename Key, typename Value, typename Hash, typename KeyTraits>
 class OpenAddrMap {
-    struct Slot {
-        Key key;
-        Value value;
-    };
-
 public:
-    OpenAddrMap()
-    {
-        slots_.resize(kInitialCapacity);
-        for (auto& s : slots_)
-            s.key = KeyTraits::empty();
-        mask_ = kInitialCapacity - 1;
-    }
+    OpenAddrMap() { allocate(kInitialCapacity); }
 
-    // Forward iterator over occupied slots. Dereferences to a reference-pair-like
-    // proxy so `it->first` / `it->second` and structured bindings work.
     template <bool Const>
     class Iter {
-        using SlotPtr = std::conditional_t<Const, const Slot*, Slot*>;
-        SlotPtr cur_ = nullptr;
-        SlotPtr end_ = nullptr;
+        using Map = std::conditional_t<Const, const OpenAddrMap, OpenAddrMap>;
+        Map* m_ = nullptr;
+        std::size_t i_ = 0;
 
         void skipEmpty()
         {
-            while (cur_ != end_ && cur_->key == KeyTraits::empty())
-                ++cur_;
+            while (i_ < m_->cap_ && m_->keys_[i_] == KeyTraits::empty())
+                ++i_;
         }
 
     public:
-        // A view onto the current slot: .first (const key), .second (value).
-        struct Ref {
-            SlotPtr s;
-            const Key& first() const { return s->key; }
-            auto& second() const { return s->value; }
-        };
-        struct Arrow {
-            SlotPtr s;
-            const Key* firstPtr() const { return &s->key; }
-        };
-
         Iter() = default;
-        Iter(SlotPtr cur, SlotPtr end) : cur_(cur), end_(end) { skipEmpty(); }
+        Iter(Map* m, std::size_t i) : m_(m), i_(i) { skipEmpty(); }
 
-        // Proxy with .first/.second members for `it->first`, `it->second`.
         struct Proxy {
-            SlotPtr s;
             const Key& first;
             std::conditional_t<Const, const Value&, Value&> second;
-            Proxy(SlotPtr p) : s(p), first(p->key), second(p->value) {}
             const Proxy* operator->() const { return this; }
         };
-        Proxy operator->() const { return Proxy(cur_); }
-        // For range-for structured bindings `auto& [k, v]`.
+        Proxy operator->() const { return Proxy{m_->keys_[i_], m_->values_[i_]}; }
         std::pair<const Key&, std::conditional_t<Const, const Value&, Value&>>
-        operator*() const { return {cur_->key, cur_->value}; }
+        operator*() const { return {m_->keys_[i_], m_->values_[i_]}; }
 
-        Iter& operator++() { ++cur_; skipEmpty(); return *this; }
-        bool operator==(const Iter& o) const { return cur_ == o.cur_; }
-        bool operator!=(const Iter& o) const { return cur_ != o.cur_; }
+        Iter& operator++() { ++i_; skipEmpty(); return *this; }
+        bool operator==(const Iter& o) const { return i_ == o.i_; }
+        bool operator!=(const Iter& o) const { return i_ != o.i_; }
 
-        SlotPtr slot() const { return cur_; }
+        std::size_t index() const { return i_; }
         friend class OpenAddrMap;
     };
 
     using iterator = Iter<false>;
     using const_iterator = Iter<true>;
 
-    iterator begin() { return iterator(slots_.data(), slots_.data() + slots_.size()); }
-    iterator end() { return iterator(slots_.data() + slots_.size(), slots_.data() + slots_.size()); }
-    const_iterator begin() const { return const_iterator(slots_.data(), slots_.data() + slots_.size()); }
-    const_iterator end() const { return const_iterator(slots_.data() + slots_.size(), slots_.data() + slots_.size()); }
+    iterator begin() { return iterator(this, 0); }
+    iterator end() { return iterator(this, cap_); }
+    const_iterator begin() const { return const_iterator(this, 0); }
+    const_iterator end() const { return const_iterator(this, cap_); }
 
     std::size_t size() const { return size_; }
     bool empty() const { return size_ == 0; }
 
     iterator find(const Key& key)
     {
-        std::size_t i = Hash{}(key) & mask_;
-        for (;;) {
-            Slot& s = slots_[i];
-            if (s.key == key)
-                return iterator(&s, slots_.data() + slots_.size());
-            if (s.key == KeyTraits::empty())
-                return end();
-            i = (i + 1) & mask_;
-        }
+        const std::size_t idx = probe(key);
+        return keys_[idx] == key ? iterator(this, idx) : end();
     }
     const_iterator find(const Key& key) const
     {
-        std::size_t i = Hash{}(key) & mask_;
-        for (;;) {
-            const Slot& s = slots_[i];
-            if (s.key == key)
-                return const_iterator(&s, slots_.data() + slots_.size());
-            if (s.key == KeyTraits::empty())
-                return end();
-            i = (i + 1) & mask_;
-        }
+        const std::size_t idx = probe(key);
+        return keys_[idx] == key ? const_iterator(this, idx) : end();
     }
 
-    // emplace(key, value...) -> {iterator, inserted}. If the key already exists,
-    // returns the existing slot and inserted=false (value args are not used).
     template <typename... Args>
     std::pair<iterator, bool> emplace(const Key& key, Args&&... args)
     {
-        if ((size_ + 1) * 4 >= slots_.size() * 3)   // load factor > 0.75 -> grow
+        if ((size_ + 1) * 4 >= cap_ * 3)   // load factor > 0.75 -> grow
             grow();
         std::size_t i = Hash{}(key) & mask_;
         for (;;) {
-            Slot& s = slots_[i];
-            if (s.key == KeyTraits::empty()) {
-                s.key = key;
-                s.value = Value(std::forward<Args>(args)...);
+            if (keys_[i] == KeyTraits::empty()) {
+                keys_[i] = key;
+                values_[i] = Value(std::forward<Args>(args)...);
                 ++size_;
-                return {iterator(&s, slots_.data() + slots_.size()), true};
+                return {iterator(this, i), true};
             }
-            if (s.key == key)
-                return {iterator(&s, slots_.data() + slots_.size()), false};
+            if (keys_[i] == key)
+                return {iterator(this, i), false};
             i = (i + 1) & mask_;
         }
     }
 
-    // Erase by iterator using backward-shift deletion (keeps the probe sequence
-    // contiguous without tombstones). Returns an iterator to the next element.
     iterator erase(iterator it)
     {
-        Slot* base = slots_.data();
-        std::size_t hole = static_cast<std::size_t>(it.slot() - base);
+        std::size_t hole = it.index();
         std::size_t next = (hole + 1) & mask_;
-        // Backward-shift: pull in following entries that probed past `hole`.
-        while (slots_[next].key != KeyTraits::empty()) {
-            const std::size_t ideal = Hash{}(slots_[next].key) & mask_;
-            // Is `next` allowed to move back into `hole`? It can if `hole` lies in
-            // the cyclic range [ideal, next].
+        while (!(keys_[next] == KeyTraits::empty())) {
+            const std::size_t ideal = Hash{}(keys_[next]) & mask_;
             const bool movable =
                 (hole <= next) ? (ideal <= hole || ideal > next)
                                : (ideal <= hole && ideal > next);
             if (movable) {
-                slots_[hole] = std::move(slots_[next]);
+                keys_[hole] = keys_[next];
+                values_[hole] = std::move(values_[next]);
                 hole = next;
             }
             next = (next + 1) & mask_;
         }
-        slots_[hole].key = KeyTraits::empty();
-        slots_[hole].value = Value{};
+        keys_[hole] = KeyTraits::empty();
+        values_[hole] = Value{};
         --size_;
-        // Next occupied slot at/after the original hole position.
-        return iterator(base + hole, base + slots_.size());
+        return iterator(this, hole);
     }
 
     void clear()
     {
-        for (auto& s : slots_) {
-            if (!(s.key == KeyTraits::empty())) {
-                s.key = KeyTraits::empty();
-                s.value = Value{};
+        for (std::size_t i = 0; i < cap_; ++i) {
+            if (!(keys_[i] == KeyTraits::empty())) {
+                keys_[i] = KeyTraits::empty();
+                values_[i] = Value{};
             }
         }
         size_ = 0;
@@ -189,37 +138,57 @@ public:
         std::size_t want = kInitialCapacity;
         while (want * 3 < (n + 1) * 4)
             want <<= 1;
-        if (want > slots_.size())
+        if (want > cap_)
             rehash(want);
     }
 
 private:
     static constexpr std::size_t kInitialCapacity = 64;
 
-    void grow() { rehash(slots_.size() << 1); }
+    void allocate(std::size_t cap)
+    {
+        cap_ = cap;
+        mask_ = cap - 1;
+        size_ = 0;
+        keys_.assign(cap, KeyTraits::empty());
+        values_.clear();
+        values_.resize(cap);
+    }
+
+    // Probe to the slot holding `key`, or the first empty slot in its chain.
+    std::size_t probe(const Key& key) const
+    {
+        std::size_t i = Hash{}(key) & mask_;
+        for (;;) {
+            if (keys_[i] == key || keys_[i] == KeyTraits::empty())
+                return i;
+            i = (i + 1) & mask_;
+        }
+    }
+
+    void grow() { rehash(cap_ << 1); }
 
     void rehash(std::size_t newCap)
     {
-        std::vector<Slot> old = std::move(slots_);
-        slots_.clear();
-        slots_.resize(newCap);
-        for (auto& s : slots_)
-            s.key = KeyTraits::empty();
-        mask_ = newCap - 1;
-        size_ = 0;
-        for (auto& s : old) {
-            if (!(s.key == KeyTraits::empty())) {
-                std::size_t i = Hash{}(s.key) & mask_;
-                while (!(slots_[i].key == KeyTraits::empty()))
+        std::vector<Key> oldKeys = std::move(keys_);
+        std::vector<Value> oldValues = std::move(values_);
+        const std::size_t oldCap = cap_;
+        allocate(newCap);
+        for (std::size_t j = 0; j < oldCap; ++j) {
+            if (!(oldKeys[j] == KeyTraits::empty())) {
+                std::size_t i = Hash{}(oldKeys[j]) & mask_;
+                while (!(keys_[i] == KeyTraits::empty()))
                     i = (i + 1) & mask_;
-                slots_[i].key = s.key;
-                slots_[i].value = std::move(s.value);
+                keys_[i] = oldKeys[j];
+                values_[i] = std::move(oldValues[j]);
                 ++size_;
             }
         }
     }
 
-    std::vector<Slot> slots_;
+    std::vector<Key> keys_;       // dense, probed -- the hot array
+    std::vector<Value> values_;   // parallel to keys_
+    std::size_t cap_ = 0;
     std::size_t mask_ = 0;
     std::size_t size_ = 0;
 };

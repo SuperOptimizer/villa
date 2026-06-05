@@ -17,47 +17,41 @@
 namespace vc::render {
 namespace {
 
-struct LocalChunkCache {
-    explicit LocalChunkCache(IChunkedArray& a, std::size_t expectedChunks = 0)
+// Lightweight per-tile chunk view used by the non-composite samplers. It holds
+// only a single last-chunk view (status + raw bytes pointer from readResidentRaw)
+// -- no node-based memo map, no shared_ptr. Trilinear reads 8 corners and
+// adjacent pixels share a chunk, so the lastKey fast path serves almost every
+// lookup; the rare cross-chunk step just re-probes the (now cache-friendly) flat
+// resident map directly. Misses are deduped into requestedKeys for the tick.
+struct ChunkProbe {
+    explicit ChunkProbe(IChunkedArray& a, std::size_t expectedChunks = 0)
         : array(a)
     {
-        if (expectedChunks > 0) {
-            chunks.reserve(expectedChunks);
+        if (expectedChunks > 0)
             requestedKeys.reserve(expectedChunks);
-            errorKeys.reserve(expectedChunks);
-        }
     }
 
-    const ChunkResult& get(const ChunkKey& key, int& requested, int& errors)
+    struct View {
+        ChunkStatus status = ChunkStatus::MissQueued;
+        const std::vector<std::byte>* bytes = nullptr;
+    };
+
+    const View& get(const ChunkKey& key, int& requested, int& errors)
     {
-        // Trilinear sampling reads 8 voxels per pixel and adjacent pixels share
-        // chunks, so consecutive lookups overwhelmingly hit the same key. Skip
-        // the hash-map probe in that case.
-        if (lastResult && lastKey == key)
-            return *lastResult;
-
-        auto it = chunks.find(key);
-        if (it == chunks.end()) {
-            // tick/settle: readResident is the pure, lock-free render read -- it
-            // never queues I/O. A miss is recorded in requestedKeys; the viewer
-            // hands those to ChunkCache::requestChunks() so the next tick fetches
-            // them. (Old path called tryGetChunk, which queued a fetch per miss
-            // from inside the render worker.)
-            ChunkResult result = array.readResident(key.level, key.iz, key.iy, key.ix);
-            if (result.status == ChunkStatus::MissQueued && requestedKeys.insert(key).second)
-                ++requested;
-            if (result.status == ChunkStatus::Error && errorKeys.insert(key).second)
-                ++errors;
-            it = chunks.emplace(key, std::move(result)).first;
-        }
-
+        if (haveLast && lastKey == key)
+            return last;
+        const auto rv = array.readResidentRaw(key.level, key.iz, key.iy, key.ix);
+        last.status = rv.status;
+        last.bytes = rv.bytes;
+        if (rv.status == ChunkStatus::MissQueued && requestedKeys.insert(key).second)
+            ++requested;
+        else if (rv.status == ChunkStatus::Error)
+            ++errors;
         lastKey = key;
-        lastResult = &it->second;
-        return it->second;
+        haveLast = true;
+        return last;
     }
 
-    // Move the accumulated missed keys into a Stats so they propagate out to the
-    // viewer (which calls ChunkCache::requestChunks at the tick).
     void flushMissedKeys(std::vector<ChunkKey>& out)
     {
         out.insert(out.end(),
@@ -67,11 +61,10 @@ struct LocalChunkCache {
     }
 
     IChunkedArray& array;
-    std::unordered_map<ChunkKey, ChunkResult, ChunkKeyHash> chunks;
     std::unordered_set<ChunkKey, ChunkKeyHash> requestedKeys;
-    std::unordered_set<ChunkKey, ChunkKeyHash> errorKeys;
     ChunkKey lastKey{};
-    const ChunkResult* lastResult = nullptr;
+    View last;
+    bool haveLast = false;
 };
 
 constexpr int kParallelMinPixels = 128 * 128;
@@ -205,7 +198,7 @@ bool inLevelBounds(const std::array<int, 3>& shape, float z, float y, float x)
 }
 
 bool readVoxel(IChunkedArray& array,
-               LocalChunkCache& cache,
+               ChunkProbe& cache,
                const LevelAccess& access,
                int level,
                int iz,
@@ -230,7 +223,7 @@ bool readVoxel(IChunkedArray& array,
     const int cz = iz / chunkShape[0];
     const int cy = iy / chunkShape[1];
     const int cx = ix / chunkShape[2];
-    const ChunkResult& result = cache.get({level, cz, cy, cx}, requested, errors);
+    const auto& result = cache.get({level, cz, cy, cx}, requested, errors);
     if (result.status == ChunkStatus::MissQueued ||
         result.status == ChunkStatus::Missing ||
         result.status == ChunkStatus::Error)
@@ -258,7 +251,7 @@ bool readVoxel(IChunkedArray& array,
 }
 
 bool sampleNearest(IChunkedArray& array,
-                   LocalChunkCache& cache,
+                   ChunkProbe& cache,
                    const LevelAccess& access,
                    int level,
                    const cv::Vec3f& p,
@@ -283,7 +276,7 @@ bool sampleNearest(IChunkedArray& array,
 }
 
 bool sampleTrilinear(IChunkedArray& array,
-                     LocalChunkCache& cache,
+                     ChunkProbe& cache,
                      const LevelAccess& access,
                      int level,
                      const cv::Vec3f& p,
@@ -315,7 +308,7 @@ bool sampleTrilinear(IChunkedArray& array,
         const int ly = iy - cy * chunkShape[1];
         const int lx = ix - cx * chunkShape[2];
         if (lx + 1 < chunkShape[2] && ly + 1 < chunkShape[1] && lz + 1 < chunkShape[0]) {
-            const ChunkResult& result = cache.get({level, cz, cy, cx}, requested, errors);
+            const auto& result = cache.get({level, cz, cy, cx}, requested, errors);
             if (result.status == ChunkStatus::MissQueued ||
                 result.status == ChunkStatus::Missing ||
                 result.status == ChunkStatus::Error)
@@ -385,7 +378,7 @@ bool sampleTrilinear(IChunkedArray& array,
 }
 
 bool samplePoint(IChunkedArray& array,
-                 LocalChunkCache& cache,
+                 ChunkProbe& cache,
                  const LevelAccess& access,
                  int level,
                  const cv::Vec3f& p0,
@@ -416,7 +409,7 @@ bool samplePoint(IChunkedArray& array,
 }
 
 bool sampleLevelPoint(IChunkedArray& array,
-                      LocalChunkCache& cache,
+                      ChunkProbe& cache,
                       const LevelAccess& access,
                       int level,
                       const cv::Vec3f& p,
@@ -481,7 +474,7 @@ ChunkedPlaneSampler::Stats samplePlaneLevelImpl(
 
     auto processTileRange = [&](std::size_t begin, std::size_t end) {
         ChunkedPlaneSampler::Stats localStats;
-        LocalChunkCache chunkCache(array, std::max<std::size_t>(16, (end - begin) * 4));
+        ChunkProbe chunkCache(array, std::max<std::size_t>(16, (end - begin) * 4));
         for (std::size_t i = begin; i < end; ++i) {
             const SampleTile& sampleTile = tiles[i];
             for (int y = sampleTile.ty; y < sampleTile.yEnd; ++y) {
@@ -566,7 +559,7 @@ ChunkedPlaneSampler::Stats sampleCoordsLevelImpl(
 
     auto processTileRange = [&](std::size_t begin, std::size_t end) {
         ChunkedPlaneSampler::Stats localStats;
-        LocalChunkCache chunkCache(array, std::max<std::size_t>(16, (end - begin) * 4));
+        ChunkProbe chunkCache(array, std::max<std::size_t>(16, (end - begin) * 4));
         for (std::size_t i = begin; i < end; ++i) {
             const SampleTile& sampleTile = tiles[i];
             for (int y = sampleTile.ty; y < sampleTile.yEnd; ++y) {
@@ -697,7 +690,7 @@ ChunkedPlaneSampler::Stats maxCompositeTileRange(
                             tf.offsetFromLevel0[1] == 0.0 && tf.offsetFromLevel0[2] == 0.0;
 
     ChunkedPlaneSampler::Stats localStats;
-    // tick/settle: no LocalChunkCache here. readResident is already a lock-free
+    // tick/settle: no ChunkProbe here. readResident is already a lock-free
     // O(1) probe into the cache's own map, so the second local hashmap was pure
     // overhead (it existed to shield the old mutex'd tryGetChunk). We keep only a
     // missed-key dedup set so a missing chunk isn't requested once per pixel.
@@ -769,7 +762,7 @@ ChunkedPlaneSampler::Stats maxCompositeTileRange(
                                                  |  std::uint64_t(unsigned(cx));
                     if (chunkKey != lastChunk) {
                         lastChunk = chunkKey;
-                        // Raw lock-free resident read -- no LocalChunkCache layer,
+                        // Raw lock-free resident read -- no ChunkProbe layer,
                         // no shared_ptr copy (the tick won't evict mid-frame).
                         const auto rv = array.readResidentRaw(level, cz, cy, cx);
                         if (rv.status == ChunkStatus::AllFill) {

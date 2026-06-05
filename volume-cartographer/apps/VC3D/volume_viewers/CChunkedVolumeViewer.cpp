@@ -524,7 +524,7 @@ CChunkedVolumeViewer::CChunkedVolumeViewer(CState* state, ViewerManager* manager
 
     _renderTimer = new QTimer(this);
     _renderTimer->setSingleShot(true);
-    _renderTimer->setInterval(16);
+    _renderTimer->setInterval(33);  // ~30fps render/tick cadence
     connect(_renderTimer, &QTimer::timeout, this, [this]() {
         if (!_renderPending)
             return;
