@@ -18,9 +18,6 @@ struct CompositeParams {
     float alphaOpacity = 1.0f;
     float alphaCutoff = 1.0f;
 
-    // Pre-processing
-    uint8_t isoCutoff = 0;           // Highpass filter: values below this are set to 0
-
     // Per-ray layer preprocess (applied to the N sampled composite layers
     // for each pixel before the composite method runs). Cancels z-axis
     // brightness drift so the composite averages evenly across a ray that
@@ -67,7 +64,7 @@ struct CompositeRenderSettings {
     int planeLayersFront = 4;
     int planeLayersBehind = 4;
 
-    CompositeParams params;  // method, alpha, isoCutoff
+    CompositeParams params;  // method, alpha
 
     // Postprocessing (applied after composite render)
     bool postStretchValues = false;

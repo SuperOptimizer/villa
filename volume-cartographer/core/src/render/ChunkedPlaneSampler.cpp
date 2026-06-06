@@ -103,14 +103,14 @@ namespace {
 // Shared driver for BOTH composite and non-composite rendering: build the tile
 // list, pick the compile-time chunk-log specialization + devirtualized array, run
 // renderTileRange (parallel across tiles), reduce stats. Composite passes
-// numLayers/layerStart/layerStep/isoCutoff + normals; non-composite passes a single
+// numLayers/layerStart/layerStep + normals; non-composite passes a single
 // layer (numLayers ignored when Composite=false) and may pass empty normals.
 template <bool Composite, bool Trilinear>
 ChunkedPlaneSampler::Stats runRenderDriver(
     IChunkedArray& array, const LevelAccess& access, int level,
     const cv::Mat_<cv::Vec3f>& coords, const cv::Mat_<cv::Vec3f>& normals,
     cv::Mat_<uint8_t>& out, cv::Mat_<uint8_t>& coverage,
-    int layerStart, int numLayers, float layerStep, float isoCutoff, int tileSize)
+    int layerStart, int numLayers, float layerStep, int tileSize)
 {
     ChunkedPlaneSampler::Stats stats;
     const int tile = std::max(1, tileSize);
@@ -132,13 +132,13 @@ ChunkedPlaneSampler::Stats runRenderDriver(
         auto dispatch = [&](auto& arr) -> ChunkedPlaneSampler::Stats {
             switch (chunkLog) {
                 case 5:  return renderTileRange<Composite, Trilinear, 5>(arr, access, level, coords, normals,
-                             out, coverage, tiles, begin, end, layerStart, numLayers, layerStep, isoCutoff);
+                             out, coverage, tiles, begin, end, layerStart, numLayers, layerStep);
                 case 4:  return renderTileRange<Composite, Trilinear, 4>(arr, access, level, coords, normals,
-                             out, coverage, tiles, begin, end, layerStart, numLayers, layerStep, isoCutoff);
+                             out, coverage, tiles, begin, end, layerStart, numLayers, layerStep);
                 case 6:  return renderTileRange<Composite, Trilinear, 6>(arr, access, level, coords, normals,
-                             out, coverage, tiles, begin, end, layerStart, numLayers, layerStep, isoCutoff);
+                             out, coverage, tiles, begin, end, layerStart, numLayers, layerStep);
                 default: return renderTileRange<Composite, Trilinear, -1>(arr, access, level, coords, normals,
-                             out, coverage, tiles, begin, end, layerStart, numLayers, layerStep, isoCutoff);
+                             out, coverage, tiles, begin, end, layerStart, numLayers, layerStep);
             }
         };
         return cc ? dispatch(*cc) : dispatch(array);
@@ -180,9 +180,9 @@ ChunkedPlaneSampler::Stats runNonComposite(
         return {};
     if (options.sampling == vc::Sampling::Trilinear)
         return runRenderDriver<false, true>(array, access, level, coords, normals,
-                                            out, coverage, 0, 1, 0.0f, 0.0f, options.tileSize);
+                                            out, coverage, 0, 1, 0.0f, options.tileSize);
     return runRenderDriver<false, false>(array, access, level, coords, normals,
-                                         out, coverage, 0, 1, 0.0f, 0.0f, options.tileSize);
+                                         out, coverage, 0, 1, 0.0f, options.tileSize);
 }
 
 }  // namespace
@@ -255,8 +255,7 @@ ChunkedPlaneSampler::Stats renderTileRange(
     std::size_t end,
     int layerStart,
     int numLayers,
-    float layerStep,
-    float isoCutoff)
+    float layerStep)
 {
     constexpr bool kStatic = (CHUNK_LOG2 >= 0);
     // For the static path everything is a compile-time constant; for the generic
@@ -539,8 +538,6 @@ ChunkedPlaneSampler::Stats renderTileRange(
 
                     const float fv = float(value);
                     if constexpr (Composite) {
-                        if (fv < isoCutoff)
-                            continue;
                         if (!any || fv > best) { best = fv; any = true; }
                     } else {
                         // Single plane sample: take this value and stop.
@@ -578,7 +575,6 @@ ChunkedPlaneSampler::Stats ChunkedPlaneSampler::sampleCoordsMaxComposite(
     int layerStart,
     int numLayers,
     float layerStep,
-    float isoCutoff,
     cv::Mat_<uint8_t>& out,
     cv::Mat_<uint8_t>& coverage,
     const Options& options)
@@ -593,7 +589,7 @@ ChunkedPlaneSampler::Stats ChunkedPlaneSampler::sampleCoordsMaxComposite(
     // driver + kernel as the plain plane/quad path (Composite=false there).
     return runRenderDriver<true, false>(array, access, level, coords, normals,
                                         out, coverage, layerStart, numLayers,
-                                        layerStep, isoCutoff, options.tileSize);
+                                        layerStep, options.tileSize);
 }
 
 

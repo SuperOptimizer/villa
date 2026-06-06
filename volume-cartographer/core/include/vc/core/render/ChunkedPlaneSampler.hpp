@@ -57,12 +57,12 @@ public:
 
     // Fused max-composite: for each pixel, samples numLayers depths along the
     // surface normal (coord + normal*(layerStart+i)*layerStep, Nearest) and
-    // writes the MAX over the covered samples whose value >= isoCutoff. Folds
-    // the per-layer offset, sampling and reduction into ONE pass so the chunk
-    // lookup + index math is shared across the depths of a pixel (they almost
-    // always fall in the same chunk) instead of repeated per layer. Output is
-    // identical to sampling each layer separately and taking composite_max.
-    // A pixel with no qualifying sample is left uncovered.
+    // writes the MAX over the covered samples. Folds the per-layer offset,
+    // sampling and reduction into ONE pass so the chunk lookup + index math is
+    // shared across the depths of a pixel (they almost always fall in the same
+    // chunk) instead of repeated per layer. Output is identical to sampling each
+    // layer separately and taking composite_max. A pixel with no qualifying
+    // sample is left uncovered.
     static Stats sampleCoordsMaxComposite(IChunkedArray& array,
                                           int level,
                                           const cv::Mat_<cv::Vec3f>& coords,
@@ -70,7 +70,6 @@ public:
                                           int layerStart,
                                           int numLayers,
                                           float layerStep,
-                                          float isoCutoff,
                                           cv::Mat_<uint8_t>& out,
                                           cv::Mat_<uint8_t>& coverage,
                                           const Options& options = Options());

@@ -1098,49 +1098,6 @@
        <number>2</number>
       </property>
      <item>
-      <layout class="QHBoxLayout" name="isoCutoffLayout">
-       <item>
-        <widget class="QLabel" name="lblIsoCutoff">
-         <property name="text">
-          <string>ISO Cutoff</string>
-         </property>
-        </widget>
-       </item>
-       <item>
-        <widget class="QSlider" name="sliderIsoCutoff">
-         <property name="minimum">
-          <number>0</number>
-         </property>
-         <property name="maximum">
-          <number>255</number>
-         </property>
-         <property name="value">
-          <number>0</number>
-         </property>
-         <property name="orientation">
-          <enum>Qt::Horizontal</enum>
-         </property>
-        </widget>
-       </item>
-       <item>
-        <widget class="QLabel" name="lblIsoCutoffValue">
-         <property name="text">
-          <string>0</string>
-         </property>
-         <property name="minimumSize">
-          <size>
-           <width>25</width>
-           <height>0</height>
-          </size>
-         </property>
-         <property name="alignment">
-          <set>Qt::AlignRight|Qt::AlignVCenter</set>
-         </property>
-        </widget>
-       </item>
-      </layout>
-     </item>
-     <item>
       <spacer name="verticalSpacerPreprocessing">
        <property name="orientation">
         <enum>Qt::Vertical</enum>

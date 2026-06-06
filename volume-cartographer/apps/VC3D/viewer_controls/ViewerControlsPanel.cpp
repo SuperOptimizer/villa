@@ -150,8 +150,6 @@ void ViewerControlsPanel::addViewerGroups()
     ViewerPreprocessingPanel::UiRefs preprocessingUi{
         .scrollArea = _uiRefs.preprocessingScrollArea,
         .contents = _uiRefs.preprocessingContents,
-        .isoCutoff = _uiRefs.isoCutoff,
-        .isoCutoffValue = _uiRefs.isoCutoffValue,
     };
     _preprocessingPanel = new ViewerPreprocessingPanel(preprocessingUi, _viewerManager, _uiRefs.contents);
     addViewerGroup(tr("Preprocessing"),

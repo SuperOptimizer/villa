@@ -9,12 +9,7 @@ namespace vc {
 
 void applyPostProcess(cv::Mat_<uint8_t>& img, const PostProcessParams& params)
 {
-    // 1. ISO cutoff
-    if (params.isoCutoff > 0) {
-        cv::threshold(img, img, params.isoCutoff - 1, 0, cv::THRESH_TOZERO);
-    }
-
-    // 2. Composite post-stretch
+    // 1. Composite post-stretch
     if (params.postStretchValues) {
         double minVal, maxVal;
         cv::minMaxLoc(img, &minVal, &maxVal);
@@ -25,7 +20,7 @@ void applyPostProcess(cv::Mat_<uint8_t>& img, const PostProcessParams& params)
         }
     }
 
-    // 3. Composite small component removal
+    // 2. Composite small component removal
     if (params.removeSmallComponents && params.minComponentSize > 1) {
         cv::Mat_<uint8_t> binary;
         cv::threshold(img, binary, 0, 255, cv::THRESH_BINARY);
@@ -47,7 +42,7 @@ void applyPostProcess(cv::Mat_<uint8_t>& img, const PostProcessParams& params)
         img = filtered;
     }
 
-    // 4. Window/level or stretch — use LUT to avoid per-pixel float math
+    // 3. Window/level or stretch — use LUT to avoid per-pixel float math
     if (params.stretchValues) {
         double minVal, maxVal;
         cv::minMaxLoc(img, &minVal, &maxVal);

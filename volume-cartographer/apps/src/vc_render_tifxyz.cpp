@@ -1076,7 +1076,6 @@ int main(int argc, char *argv[])
         ("bl-extinction", po::value<float>()->default_value(1.5f), "Beer-Lambert extinction")
         ("bl-emission", po::value<float>()->default_value(1.5f), "Beer-Lambert emission")
         ("bl-ambient", po::value<float>()->default_value(0.1f), "Beer-Lambert ambient")
-        ("iso-cutoff", po::value<int>()->default_value(0), "Highpass (0-255)")
         ("composite-start", po::value<int>(), "Composite start offset")
         ("composite-end", po::value<int>(), "Composite end offset")
         ("num-parts", po::value<int>()->default_value(1), "Parts for multi-VM")
@@ -1196,7 +1195,6 @@ int main(int argc, char *argv[])
         const float blExtinction = parsed["bl-extinction"].as<float>();
         const float blEmission = parsed["bl-emission"].as<float>();
         const float blAmbient = parsed["bl-ambient"].as<float>();
-        compositeParams.isoCutoff = uint8_t(std::clamp(parsed["iso-cutoff"].as<int>(), 0, 255));
         if (parsed.count("composite-start")) compositeStart = parsed["composite-start"].as<int>();
         if (parsed.count("composite-end"))   compositeEnd = parsed["composite-end"].as<int>();
         if (compositeEnd < compositeStart) { logPrintf(stderr, "Error: --composite-end < --composite-start\n"); return EXIT_FAILURE; }
@@ -1209,7 +1207,6 @@ int main(int argc, char *argv[])
         else
             logPrintf(stdout, "  BL: ext=%.1f em=%.1f amb=%.1f\n",
                       blExtinction, blEmission, blAmbient);
-        if (compositeParams.isoCutoff > 0) logPrintf(stdout, "  iso cutoff: %d\n", int(compositeParams.isoCutoff));
     }
 
     std::vector<float> accumOffsets;

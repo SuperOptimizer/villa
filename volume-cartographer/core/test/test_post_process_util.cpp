@@ -36,17 +36,6 @@ TEST_CASE("applyPostProcess: identity with default params and stretchValues=fals
             CHECK(int(m(r, c)) == int(orig(r, c)));
 }
 
-TEST_CASE("applyPostProcess: ISO cutoff zeros pixels below threshold")
-{
-    auto m = ramp();
-    vc::PostProcessParams p;
-    p.isoCutoff = 16;
-    vc::applyPostProcess(m, p);
-    // All pixels with original value < 15 should now be 0.
-    CHECK(int(m(0, 0)) == 0);
-    CHECK(int(m(0, 1)) == 0);
-}
-
 TEST_CASE("applyPostProcess: stretchValues stretches min/max to [0,255]")
 {
     cv::Mat_<uint8_t> m(2, 2);

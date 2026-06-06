@@ -15,8 +15,6 @@ public:
     struct UiRefs {
         QScrollArea* scrollArea{nullptr};
         QWidget* contents{nullptr};
-        QSlider* isoCutoff{nullptr};
-        QLabel* isoCutoffValue{nullptr};
     };
 
     explicit ViewerPreprocessingPanel(const UiRefs& uiRefs,

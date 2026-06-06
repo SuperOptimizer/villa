@@ -2405,8 +2405,6 @@ void CWindow::CreateWidgets(void)
         .normalMaxArrowsValueLabel = ui.labelNormalMaxArrowsValue,
         .preprocessingScrollArea = ui.scrollAreaPreprocessing,
         .preprocessingContents = ui.dockWidgetPreprocessingContents,
-        .isoCutoff = ui.sliderIsoCutoff,
-        .isoCutoffValue = ui.lblIsoCutoffValue,
         .postprocessingScrollArea = ui.scrollAreaPostprocessing,
         .postprocessingContents = ui.dockWidgetPostprocessingContents,
         .baseColormap = ui.baseColormapSelect,

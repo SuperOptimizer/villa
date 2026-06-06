@@ -1245,8 +1245,6 @@ CChunkedVolumeViewer::RenderResult CChunkedVolumeViewer::renderFrame(RenderConte
                     if (!layerCoverage[i](y, x))
                         continue;
                     const float value = static_cast<float>(layerValues[i](y, x));
-                    if (value < static_cast<float>(ctx.compositeSettings.params.isoCutoff))
-                        continue;
                     stack.values[stack.validCount++] = value;
                 }
                 if (stack.validCount > 0) {
@@ -1293,7 +1291,6 @@ CChunkedVolumeViewer::RenderResult CChunkedVolumeViewer::renderFrame(RenderConte
             collectMissed(vc::render::ChunkedPlaneSampler::sampleCoordsMaxComposite(
                 array, ctx.startLevel, coords, normals,
                 zStart, numLayers, zStep,
-                static_cast<float>(ctx.compositeSettings.params.isoCutoff),
                 dst, cov, compositeOptions));
             return;
         }
@@ -1337,8 +1334,6 @@ CChunkedVolumeViewer::RenderResult CChunkedVolumeViewer::renderFrame(RenderConte
                     if (!layerCoverage[i](y, x))
                         continue;
                     const float value = static_cast<float>(layerValues[i](y, x));
-                    if (value < static_cast<float>(ctx.compositeSettings.params.isoCutoff))
-                        continue;
                     stack.values[stack.validCount++] = value;
                 }
                 if (stack.validCount > 0) {

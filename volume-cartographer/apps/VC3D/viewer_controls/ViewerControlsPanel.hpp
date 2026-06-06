@@ -86,8 +86,6 @@ public:
 
         QScrollArea* preprocessingScrollArea{nullptr};
         QWidget* preprocessingContents{nullptr};
-        QSlider* isoCutoff{nullptr};
-        QLabel* isoCutoffValue{nullptr};
 
         QScrollArea* postprocessingScrollArea{nullptr};
         QWidget* postprocessingContents{nullptr};
