@@ -286,12 +286,23 @@ struct CoarseLevel {
 // the hot per-layer loop frees the registers the depth walk was spilling. The
 // hot loop only calls this on an actual miss. The lookup callable forwards to the
 // kernel's pin (concrete or virtual), so this stays dispatch-agnostic.
-template <typename LookupFn>
+// Templated on the PIN type (concrete ChunkCache::ResidentPin vs the virtual
+// pin), NOT on a per-kernel lambda -- so all CHUNK_LOG2 variants of a given array
+// type share ONE instantiation (was 4 near-identical copies: {5,-1} x {concrete,
+// virtual}; now 2). Smaller .text / less icache pressure. The lookup dispatch is
+// the same is_same_v branch the kernel's doLookup used.
+template <typename PinT>
 __attribute__((noinline, cold))
-int coarseFallbackImpl(LookupFn&& doLookup, int level, uint8_t fillVal,
+int coarseFallbackImpl(PinT& pin, int level, uint8_t fillVal,
                        const std::vector<CoarseLevel>& coarse,
                        int iz, int iy, int ix)
 {
+    auto doLookup = [&](int lv, int z, int y, int x) {
+        if constexpr (std::is_same_v<PinT, ChunkCache::ResidentPin>)
+            return pin.lookupChecked(lv, z, y, x);
+        else
+            return pin->lookup(lv, z, y, x);
+    };
     for (const auto& cl : coarse) {
         const int vz = iz >> cl.shift, vy = iy >> cl.shift, vx = ix >> cl.shift;
         if (unsigned(vz) >= unsigned(cl.sz) || unsigned(vy) >= unsigned(cl.sy) ||
@@ -668,7 +679,7 @@ __attribute__((noinline)) ChunkedPlaneSampler::Stats renderTileRange(
                     } else {
                         // Cold miss path: try a coarser resident level (blurry but
                         // present). noinline/cold helper kept out of this loop's frame.
-                        const int fb = coarseFallbackImpl(doLookup, level, fillVal,
+                        const int fb = coarseFallbackImpl(pin, level, fillVal,
                                                           coarse, iz, iy, ix);
                         if (fb < 0)
                             continue;
