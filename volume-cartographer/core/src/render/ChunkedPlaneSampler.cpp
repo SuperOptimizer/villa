@@ -141,16 +141,17 @@ ChunkedPlaneSampler::Stats runRenderDriver(
 
     auto runRange = [&](std::size_t begin, std::size_t end) {
         auto dispatch = [&](auto& arr) -> ChunkedPlaneSampler::Stats {
-            switch (chunkLog) {
-                case 5:  return renderTileRange<Composite, Trilinear, 5>(arr, access, level, coords, normals,
-                             out, coverage, tiles, begin, end, layerStart, numLayers, layerStep);
-                case 4:  return renderTileRange<Composite, Trilinear, 4>(arr, access, level, coords, normals,
-                             out, coverage, tiles, begin, end, layerStart, numLayers, layerStep);
-                case 6:  return renderTileRange<Composite, Trilinear, 6>(arr, access, level, coords, normals,
-                             out, coverage, tiles, begin, end, layerStart, numLayers, layerStep);
-                default: return renderTileRange<Composite, Trilinear, -1>(arr, access, level, coords, normals,
-                             out, coverage, tiles, begin, end, layerStart, numLayers, layerStep);
-            }
+            // Only the production 32^3 chunk size gets a dedicated static (shift/mask)
+            // kernel. Every other chunk size -- rare; no real volume uses one -- falls
+            // to the generic dynamic-dims path (a few divides instead of shifts),
+            // which is correct for any size. This keeps the template fan-out small:
+            // CHUNK_LOG2 was {4,5,6,-1} (4 variants per Composite x Trilinear x Array);
+            // {4,6} were speculative and never instantiated by a real run. Now {5,-1}.
+            if (chunkLog == 5)
+                return renderTileRange<Composite, Trilinear, 5>(arr, access, level, coords, normals,
+                    out, coverage, tiles, begin, end, layerStart, numLayers, layerStep);
+            return renderTileRange<Composite, Trilinear, -1>(arr, access, level, coords, normals,
+                out, coverage, tiles, begin, end, layerStart, numLayers, layerStep);
         };
         return cc ? dispatch(*cc) : dispatch(array);
     };
