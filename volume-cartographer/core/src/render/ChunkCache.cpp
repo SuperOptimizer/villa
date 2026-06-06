@@ -193,23 +193,39 @@ bool tickDbg()
 }
 }  // namespace
 
+// Tick/settle invariant guard: the resident map may be mutated ONLY when no
+// viewer is reading it (activeReaders_ == 0 -- the single update phase). If any
+// code path mutates while a render reads, this aborts loudly so the offending
+// caller can be found, rather than silently corrupting a frame (the black-holes
+// class of bug). Called from every resident-map mutation.
+void ChunkCache::assertMutable(const State& state, const char* where)
+{
+    const int readers = state.activeReaders_.load(std::memory_order_acquire);
+    if (readers != 0) {
+        fprintf(stderr,
+                "[ts] FATAL: resident map mutated with %d active reader(s) at %s "
+                "-- a render is reading while the cache mutates (tick/settle "
+                "invariant violated).\n", readers, where);
+        std::abort();
+    }
+}
+
 void ChunkCache::freeze()
 {
-    state_->frozen_.store(true, std::memory_order_release);
-    if (tickDbg())
-        fprintf(stderr, "[ts] freeze   (cache=%p)\n", (void*)this);
+    // A viewer enters its render (SETTLE) phase: it will read the resident map.
+    // Count active readers so the tick knows when NONE are reading -- that is the
+    // single update phase where the cache may mutate in place.
+    state_->activeReaders_.fetch_add(1, std::memory_order_acq_rel);
 }
 
 void ChunkCache::thaw()
 {
-    state_->frozen_.store(false, std::memory_order_release);
-    if (tickDbg())
-        fprintf(stderr, "[ts] thaw     (cache=%p)\n", (void*)this);
+    state_->activeReaders_.fetch_sub(1, std::memory_order_acq_rel);
 }
 
 bool ChunkCache::frozen() const
 {
-    return state_->frozen_.load(std::memory_order_acquire);
+    return state_->activeReaders_.load(std::memory_order_acquire) > 0;
 }
 
 ChunkResult ChunkCache::readResident(int level, int iz, int iy, int ix) const
@@ -232,7 +248,7 @@ ChunkResult ChunkCache::readResident(int level, int iz, int iy, int ix) const
     // Read the immutable resident map. bytes are wrapped in a NON-owning shared_ptr
     // (aliasing ctor, no deleter) only to satisfy the ChunkResult API -- ownership
     // stays with the resident map. The hot loop uses readResidentRaw (no wrap).
-    const ResidentMap& rm = *state.resident_;
+    const ResidentMap& rm = state.resident_;
     auto it = rm.find(key);
     if (it == rm.end())
         return ChunkResult{ChunkStatus::MissQueued, state.dtype_,
@@ -261,12 +277,12 @@ IChunkedArray::ResidentView ChunkCache::readResidentRaw(int level, int iz, int i
     if (!isValidKey(state, key))
         return ResidentView{ChunkStatus::AllFill, nullptr};
 
-    // Pin the resident map for this call (atomic load of the shared_ptr): the tick
-    // may swap in a new map concurrently from another viewer's thread, but the one
-    // we loaded stays alive (and its bytes valid) until we return.
-    std::shared_ptr<const ResidentMap> rm = std::atomic_load(&state.resident_);
-    auto it = rm->find(key);
-    if (it == rm->end())
+    // Read the resident map directly. No pin / shared_ptr: the tick mutates it
+    // only when activeReaders_ == 0, so a reader and the tick never overlap -- the
+    // map is stable for the whole SETTLE phase.
+    const ResidentMap& rm = state.resident_;
+    auto it = rm.find(key);
+    if (it == rm.end())
         return ResidentView{ChunkStatus::MissQueued, nullptr};
     const ResidentEntry& e = it->second;
     if (e.status == ChunkStatus::Data)
@@ -277,7 +293,7 @@ IChunkedArray::ResidentView ChunkCache::readResidentRaw(int level, int iz, int i
 std::unique_ptr<IChunkedArray::IResidentPin> ChunkCache::makeResidentPin() const
 {
     auto pin = std::make_unique<ResidentPin>();
-    pin->map_ = std::atomic_load(&state_->resident_);
+    pin->map_ = &state_->resident_;
     pin->cache_ = this;
     return pin;
 }
@@ -285,7 +301,7 @@ std::unique_ptr<IChunkedArray::IResidentPin> ChunkCache::makeResidentPin() const
 ChunkCache::ResidentPin ChunkCache::pinConcrete() const
 {
     ResidentPin pin;
-    pin.map_ = std::atomic_load(&state_->resident_);
+    pin.map_ = &state_->resident_;
     pin.cache_ = this;
     return pin;
 }
@@ -299,8 +315,9 @@ IChunkedArray::ResidentView ChunkCache::ResidentPin::lookup(int level, int iz, i
         return ResidentView{ChunkStatus::Missing, nullptr};
     if (!isValidKey(state, key))
         return ResidentView{ChunkStatus::AllFill, nullptr};
-    auto it = map_->find(key);
-    if (it == map_->end())
+    const ResidentMap& rm = state.resident_;
+    auto it = rm.find(key);
+    if (it == rm.end())
         return ResidentView{ChunkStatus::MissQueued, nullptr};
     const ResidentEntry& e = it->second;
     if (e.status == ChunkStatus::Data)
@@ -321,10 +338,14 @@ void ChunkCache::tick()
 {
     auto state = state_;
 
-    // The tick is the ONLY place we mutate entries_ in the tick/settle model.
-    // It must run between frames -- not while a render is reading. We do not
-    // assert !frozen_ here because freeze() is owned by the render lifecycle;
-    // the viewer calls thaw()/tick()/freeze() in sequence on the same thread.
+    // The tick mutates the cache in place, so it may run ONLY when no viewer is
+    // reading (activeReaders_ == 0). The shared cache has N viewers; this viewer
+    // already thawed, but others may still be mid-render. If any reader is active,
+    // DEFER: the staged fetches + requested keys stay pending and the last viewer
+    // to finish (readers hits 0) will run the tick. This is the single update
+    // phase -- between frames, cache-wide, no observers.
+    if (state->activeReaders_.load(std::memory_order_acquire) != 0)
+        return;
 
     // 1) Fold staged fetch results (completed while frozen) into entries_.
     std::vector<StagedFetch> staged;
@@ -379,53 +400,18 @@ void ChunkCache::tick()
         fprintf(stderr, "[ts] TICK staged=%zu folded=%d skip=%d | requested=%zu issued=%d "
                 "| entries=%zu dataResident=%d frozen=%d\n",
                 staged.size(), folded, foldSkipped, requested.size(), issued,
-                state->entries_.size(), dataResident, int(state->frozen_.load()));
+                state->entries_.size(), dataResident, state->activeReaders_.load());
     }
 
-    // 3) Evict the working store to budget (NRU), THEN project the resolved
-    //    entries into a brand-new immutable resident map and swap it in -- the
-    //    single coalesced update the render sees this cycle.
+    // 3) Evict the working store to budget (NRU). Eviction removes from the
+    //    resident map IN PLACE (see nruEvictLocked). Newly-resolved chunks were
+    //    already inserted into resident_ in place by storeFetchResultLocked during
+    //    the fold. No full rebuild, no map alloc, no swap -- just the O(delta)
+    //    inserts/erases. Safe because the tick runs only when activeReaders_ == 0.
     {
         std::lock_guard lock(state->mutex_);
         nruEvictLocked(state);
-        rebuildResidentLocked(state);
     }
-}
-
-void ChunkCache::rebuildResidentLocked(const std::shared_ptr<State>& state)
-{
-    // Build a fresh resident map from the resolved (Data/AllFill) working entries.
-    // Survivor byte buffers are MOVED out of the OLD resident map into the new one
-    // (single owner, no copy, no refcount); chunks newly resolved this cycle are
-    // moved out of the working Entry. The old resident map is then dropped, freeing
-    // any buffers not carried over. Caller holds mutex_.
-    auto next = std::make_shared<ResidentMap>();
-    next->reserve(state->entries_.size());
-
-    // The working entries_ hold the bytes as shared_ptr; the resident map SHARES
-    // them (copy the shared_ptr -- one refcount bump, no buffer copy). The old map
-    // stays fully intact (another viewer may still be reading it via its pin); it
-    // and its buffers free when the last reader's pin drops.
-    for (auto kv : state->entries_) {
-        const ChunkKey& key = kv.first;
-        Entry& e = kv.second;
-        if (e.status == EntryStatus::AllFill) {
-            ResidentEntry re;
-            re.status = ChunkStatus::AllFill;
-            next->emplace(key, std::move(re));
-        } else if (e.status == EntryStatus::Data && e.bytes) {
-            ResidentEntry re;
-            re.status = ChunkStatus::Data;
-            re.bytes = e.bytes;                  // share the buffer (refcount bump)
-            next->emplace(key, std::move(re));
-        }
-        // InFlight / Missing / Error -> not resident.
-    }
-
-    // Atomically publish. Readers that loaded the previous pointer keep their map
-    // alive until they drop it; this store is lock-free.
-    std::atomic_store(&state->resident_,
-                      std::shared_ptr<const ResidentMap>(std::move(next)));
 }
 
 ChunkResult ChunkCache::getChunkBlocking(int level, int iz, int iy, int ix)
@@ -720,24 +706,20 @@ void ChunkCache::fetchAndStore(const std::shared_ptr<State>& state,
         if (it == state->entries_.end() || it->second.fetchSerial != fetchSerial)
             return;
 
-        // tick/settle: if frozen (a frame is rendering), park in staging so we do
-        // not mutate entries_ while readResident reads it lock-free. If not frozen
-        // (between frames / non-tick callers), fold immediately under the mutex.
+        // tick/settle: a completed fetch ALWAYS stages -- it never mutates the
+        // cache directly. The tick is the single mutation phase: it drains staging
+        // and batch-applies it while no viewer is reading. (No conditional fold;
+        // staging is unconditional.)
         const int fs = static_cast<int>(fetch.status);
-        if (state->frozen_.load(std::memory_order_acquire)) {
+        {
             std::lock_guard staging(state->stagingMutex_);
             state->stagedFetches_.push_back(
                 StagedFetch{key, std::move(fetch), generation, fetchSerial,
                             loadedFromPersistentCache});
-            if (tickDbg())
-                fprintf(stderr, "[ts] fetch->STAGING %d/%d/%d/%d status=%d\n",
-                        key.level, key.iz, key.iy, key.ix, fs);
-        } else {
-            storeFetchResultLocked(state, key, std::move(fetch), loadedFromPersistentCache);
-            if (tickDbg())
-                fprintf(stderr, "[ts] fetch->FOLD %d/%d/%d/%d status=%d\n",
-                        key.level, key.iz, key.iy, key.ix, fs);
         }
+        if (tickDbg())
+            fprintf(stderr, "[ts] fetch->STAGING %d/%d/%d/%d status=%d\n",
+                    key.level, key.iz, key.iy, key.ix, fs);
     }
     state->cv_.notify_all();
     notifyListeners(state);
@@ -802,6 +784,25 @@ void ChunkCache::storeFetchResultLocked(const std::shared_ptr<State>& state,
         entry.status = EntryStatus::Error;
         entry.error = fetchErrorMessage(fetch);
         break;
+    }
+
+    // Reflect the resolved entry into the render-visible resident map IN PLACE.
+    // This runs during the tick fold (no reader active) or a non-tick caller
+    // between frames; assertMutable catches any path that does it mid-render.
+    assertMutable(*state, "storeFetchResultLocked");
+    if (entry.status == EntryStatus::Data && entry.bytes) {
+        auto [it, ins] = state->resident_.emplace(key, ResidentEntry{});
+        it->second.status = ChunkStatus::Data;
+        it->second.bytes = entry.bytes;    // share buffer (refcount bump, no copy)
+    } else if (entry.status == EntryStatus::AllFill) {
+        auto [it, ins] = state->resident_.emplace(key, ResidentEntry{});
+        it->second.status = ChunkStatus::AllFill;
+        it->second.bytes.reset();
+    } else {
+        // Missing / Error -> not resident; remove any stale resident entry.
+        auto it = state->resident_.find(key);
+        if (it != state->resident_.end())
+            state->resident_.erase(it);
     }
 
     touchLocked(*state, key, entry);
@@ -1012,6 +1013,11 @@ void ChunkCache::enforceCapacityLocked(const std::shared_ptr<State>& state)
             state->decodedBytes_ -= entry.decodedBytes;
         }
         state->entries_.erase(it);
+        auto rit = state->resident_.find(victim);   // keep resident map in sync
+        if (rit != state->resident_.end()) {
+            assertMutable(*state, "enforceCapacity");
+            state->resident_.erase(rit);
+        }
     }
 }
 
@@ -1053,10 +1059,14 @@ void ChunkCache::nruEvictLocked(const std::shared_ptr<State>& state)
         }
         victims.push_back(kv.first);
     }
+    if (!victims.empty()) assertMutable(*state, "nruEvict");
     for (const auto& k : victims) {
         auto it = state->entries_.find(k);
         if (it != state->entries_.end())
             state->entries_.erase(it);
+        auto rit = state->resident_.find(k);     // keep resident map in sync
+        if (rit != state->resident_.end())
+            state->resident_.erase(rit);
     }
 
     // Still over the metadata cap? Drop resolved non-Data entries.
@@ -1079,6 +1089,9 @@ void ChunkCache::nruEvictLocked(const std::shared_ptr<State>& state)
             auto it = state->entries_.find(k);
             if (it != state->entries_.end())
                 state->entries_.erase(it);
+            auto rit = state->resident_.find(k);
+            if (rit != state->resident_.end())
+                state->resident_.erase(rit);
         }
     }
 }

@@ -146,6 +146,8 @@ public:
         // chunk coords (the composite/sample kernels do). Skips isValidKey + the
         // fetcher-presence check -- just probes the resident map. A key not present
         // (or InFlight) returns {MissQueued,nullptr}; the caller records the miss.
+        // map_ is a raw pointer to the cache's resident map; it stays valid for the
+        // whole SETTLE phase because the tick only mutates when no reader is active.
         ResidentView lookupChecked(int level, int iz, int iy, int ix) const
         {
             const ChunkKey key{level, iz, iy, ix};
@@ -159,7 +161,7 @@ public:
         }
     private:
         friend class ChunkCache;
-        std::shared_ptr<const ResidentMap> map_;
+        const ResidentMap* map_ = nullptr;
         const ChunkCache* cache_ = nullptr;
     };
     std::unique_ptr<IResidentPin> makeResidentPin() const override;
@@ -230,12 +232,12 @@ private:
         mutable std::mutex mutex_;
         std::condition_variable cv_;
 
-        // The IMMUTABLE render-visible resident map, published via shared_ptr so a
-        // render worker on ANY viewer can pin the map it reads for the whole frame
-        // while the tick (on another viewer's thread) builds + atomically swaps in
-        // the next one. Read with std::atomic_load, swapped with std::atomic_store
-        // (lock-free). The old map stays alive until the last reader drops it.
-        std::shared_ptr<const ResidentMap> resident_ = std::make_shared<const ResidentMap>();
+        // The render-visible resident map. The render reads it lock-free during
+        // SETTLE; the tick mutates it IN PLACE during the single update phase
+        // (when activeReaders_ == 0, i.e. no viewer rendering). Reads and the tick
+        // never overlap in time, so no observer can observe a mutation -- that is
+        // the tick/settle invariant. No shared_ptr / swap / per-frame rebuild.
+        ResidentMap resident_;
 
         // entries_ is the tick-only WORKING store: it tracks InFlight fetches,
         // fetchSerial, eviction metadata, etc. The render never touches it. The
@@ -254,11 +256,10 @@ private:
         std::size_t cachedPersistentCacheBytes_ = 0;
 
         // --- tick/settle phase ------------------------------------------
-        // frozen_: true during SETTLE (render). While true, entries_ must not be
-        // mutated; fetch completions park in stagedFetches_ instead. assertMutable
-        // (in the .cpp) checks this on every mutation path so a discipline
-        // violation fails loudly in debug instead of racing.
-        std::atomic<bool> frozen_{false};
+        // activeReaders_: number of viewers currently in their render (SETTLE)
+        // phase reading the resident map. freeze() ++, thaw() --. The tick mutates
+        // the cache ONLY when this is 0 (the single update phase, no readers).
+        std::atomic<int> activeReaders_{0};
         std::mutex stagingMutex_;                  // guards stagedFetches_ only
         std::vector<StagedFetch> stagedFetches_;   // fetch results awaiting a tick
         std::mutex requestMutex_;                  // guards requestedThisCycle_
@@ -298,9 +299,9 @@ private:
     // chance). Replaces per-access LRU touches. Mutates entries_/decodedBytes_,
     // so it must run inside tick() (cache not frozen).
     static void nruEvictLocked(const std::shared_ptr<State>& state);
-    // Build a fresh immutable resident map from the resolved working entries and
-    // swap it in -- the single coalesced render-visible update per tick.
-    static void rebuildResidentLocked(const std::shared_ptr<State>& state);
+    // Tick/settle guard: abort if the resident map is mutated while a render reads
+    // it (activeReaders_ != 0). Called from every resident mutation.
+    static void assertMutable(const State& state, const char* where);
     static bool isValidKey(const State& state, const ChunkKey& key);
     static bool isAllFill(const State& state, const std::vector<std::byte>& bytes);
     static std::size_t dtypeSize(ChunkDtype dtype);

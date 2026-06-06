@@ -203,6 +203,22 @@ void RenderBenchReplay::run(CWindow& window)
         }
     }
 
+    // Force composite=max with 32 layers front + behind so the replay profiles the
+    // composite render path (the hot kernel), not the plain sampler. The recorded
+    // timeline only captures camera state, so we set the render mode here.
+    if (viewer) {
+        CompositeRenderSettings comp = viewer->compositeRenderSettings();
+        comp.enabled = true;
+        comp.planeEnabled = true;
+        comp.params.method = "max";
+        comp.layersFront = 32;
+        comp.layersBehind = 32;
+        comp.planeLayersFront = 32;
+        comp.planeLayersBehind = 32;
+        viewer->setCompositeRenderSettings(comp);
+        Logger()->info("[vc3d-replay] forced composite=max layers front/behind=32/32");
+    }
+
     // Remote (S3) data streams chunks in over the network and can stall on a
     // flaky connection; give it a much longer settle ceiling than local data.
     const int maxFrameMs = _header.volpkgIsRemote ? kMaxFrameMsRemote : kMaxFrameMsLocal;
@@ -225,7 +241,23 @@ void RenderBenchReplay::run(CWindow& window)
         QElapsedTimer frameTimer;
         frameTimer.start();
         viewer->applyCameraState(cs, /*forceRender=*/true);
-        const bool settled = settleFrame(viewer, maxFrameMs, kQuietWindowMs);
+        // VCA_REPLAY_FAST: don't wait for full quiescence -- give each keyframe a
+        // short fixed budget (like interactive 30fps navigation) and advance. The
+        // profile then reflects real per-frame render work instead of long settle
+        // waits. Default keeps the quiescence-settled behavior for benchmarking.
+        static const char* fastEnv = ::getenv("VCA_REPLAY_FAST");
+        static const int fastBudgetMs = fastEnv ? std::max(1, atoi(fastEnv)) : 0;
+        bool settled;
+        if (fastBudgetMs > 0) {
+            QElapsedTimer b; b.start();
+            while (b.elapsed() < fastBudgetMs) {
+                QCoreApplication::processEvents(QEventLoop::AllEvents, kPumpSliceMs);
+                QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+            }
+            settled = false;
+        } else {
+            settled = settleFrame(viewer, maxFrameMs, kQuietWindowMs);
+        }
         if (timed) {
             const QSize fb = viewer->graphicsView()
                 ? viewer->graphicsView()->viewport()->size() : QSize(0, 0);
