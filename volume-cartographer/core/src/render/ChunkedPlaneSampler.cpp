@@ -1033,11 +1033,47 @@ ChunkedPlaneSampler::Stats ChunkedPlaneSampler::sampleCoordsMaxComposite(
     const LevelAccess access = makeLevelAccess(array, level);
     if (!hasSampleableLevel(access))
         return {};
+
+    // DEPTH-DECIMATION at coarse render levels (do less, keep the same result).
+    // The kernel walks numLayers along the unit normal, each step scaled into
+    // level-L space by scaleFromLevel0 = 1/2^level. So the per-layer advance is
+    // (layerStep / 2^level) level-L VOXELS. At a coarse level that is << 1, so many
+    // consecutive layers round (nearestIdx) to the SAME level-L voxel -- e.g. at
+    // level 5 with step 1, ~32 layers collapse onto one voxel: 32x redundant loads
+    // + max-reduces reading the identical byte. For a MAX reduction over nearest
+    // samples, dropping those duplicates is LOSSLESS (the max over the distinct
+    // voxels is unchanged). Re-express the SAME depth span at ~1-voxel resolution:
+    // step' = layerStep * 2^level (>= 1 voxel), count' = ceil(numLayers / 2^level).
+    // Level 0 (scale 1) is unaffected. The start is rescaled to keep the same span.
+    const double s = access.transform.scaleFromLevel0[0];   // = 1/2^level (isotropic)
+    int effLayerStart = layerStart;
+    int effNumLayers = numLayers;
+    float effLayerStep = layerStep;
+    if (s > 0.0 && s < 1.0 && numLayers > 1) {
+        const double perLayerVox = std::abs(double(layerStep)) * s;   // voxels/layer
+        const double spanVox = double(numLayers - 1) * double(layerStep) * s;  // signed
+        // One sample per level-L voxel across the span (+1 to cover both ends).
+        const int n = std::max(1, int(std::ceil(std::abs(spanVox))) + 1);
+        // Decimate ONLY when it's a strict win: per-layer advance < 1 voxel (so
+        // consecutive layers collapse) AND the voxel-resolution count is smaller.
+        // Never increase the layer count -- this is a "do less" optimization.
+        if (perLayerVox > 0.0 && perLayerVox < 1.0 && n < numLayers) {
+            const double startVox = double(layerStart) * double(layerStep) * s;
+            const float stepV = (n > 1) ? float(spanVox / double(n - 1)) : 0.0f;
+            // Kernel multiplies layerStart/Step by nrmL (which already carries `s`),
+            // so express start/step back in the kernel's (unit-normal * s) units by
+            // dividing the voxel quantities by s.
+            effLayerStep  = (stepV != 0.0f) ? float(double(stepV) / s) : float(layerStep);
+            effLayerStart = (effLayerStep != 0.0f) ? int(std::lround(startVox / s / double(effLayerStep))) : 0;
+            effNumLayers  = n;
+        }
+    }
+
     // Composite = max reduction over numLayers, nearest sampling. Same unified
     // driver + kernel as the plain plane/quad path (Composite=false there).
     return runRenderDriver<true, false>(array, access, level, coords, normals,
-                                        out, coverage, layerStart, numLayers,
-                                        layerStep, options.tileSize);
+                                        out, coverage, effLayerStart, effNumLayers,
+                                        effLayerStep, options.tileSize);
 }
 
 
