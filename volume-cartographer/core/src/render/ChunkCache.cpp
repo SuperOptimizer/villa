@@ -412,6 +412,11 @@ void ChunkCache::tick()
         std::lock_guard lock(state->mutex_);
         nruEvictLocked(state);
     }
+    // The fold above resolved staged fetches that blocking callers
+    // (getChunkBlocking / prefetchChunks-wait) may be waiting on -- they defer
+    // their own drain while a render reads, so the tick is what resolves their key.
+    // Notify so they re-check instead of sleeping until the next fetch completion.
+    state->cv_.notify_all();
 }
 
 ChunkResult ChunkCache::getChunkBlocking(int level, int iz, int iy, int ix)
@@ -1192,11 +1197,14 @@ void ChunkCache::waitForResolvedLocked(const std::shared_ptr<State>& state,
                                        std::unique_lock<std::mutex>& lock,
                                        const ChunkKey& key)
 {
-    // Blocking callers run between frames (frozen_ == false), so their fetch
-    // results fold immediately in fetchAndStore. Drain any staged results too in
-    // case a frame froze concurrently, then wait for this key to resolve.
+    // Blocking callers (CLI / prefetch wait) may run WHILE another viewer renders
+    // on the shared cache. Draining staged fetches mutates the resident map, which
+    // a render reads -- so only drain when no reader is active (activeReaders_ == 0).
+    // While a render holds the cache, just wait; the staged result still resolves
+    // (the render's tick drains it, or we drain once readers clear).
     state->cv_.wait(lock, [&] {
-        drainStagingLocked(state);
+        if (state->activeReaders_.load(std::memory_order_acquire) == 0)
+            drainStagingLocked(state);
         auto it = state->entries_.find(key);
         return it == state->entries_.end() || it->second.status != EntryStatus::InFlight;
     });
