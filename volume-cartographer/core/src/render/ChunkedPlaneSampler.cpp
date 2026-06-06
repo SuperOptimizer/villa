@@ -861,7 +861,7 @@ __attribute__((noinline)) ChunkedPlaneSampler::Stats renderTileRangeBinned(
     std::vector<int>     order;        // sample indices, grouped by chunk
     std::vector<int>     bestI;        // per-tile-pixel running max (-1 = uncovered)
     // Small open-addressed map chunkKey -> index in `chunks` for the scatter group.
-    std::vector<int>     hmap;
+    std::vector<std::uint64_t> hmap;   // {gen:32, chunkIdx:32} open-addressed slots
 
     for (std::size_t ti = begin; ti < end; ++ti) {
         const SampleTile& st = tiles[ti];
@@ -873,19 +873,25 @@ __attribute__((noinline)) ChunkedPlaneSampler::Stats renderTileRangeBinned(
 
         // --- PASS 1: scatter samples into per-chunk groups ------------------
         // Open-addressed hash (power-of-2, linear probe) chunkKey -> chunks[] idx.
-        int hbits = 1; while ((1 << hbits) < npix * 2) ++hbits;   // generous
-        const int hsize = 1 << hbits, hmask = hsize - 1;
-        hmap.assign(hsize, -1);
+        // A tile touches only a few dozen distinct chunks, so a fixed small table
+        // suffices -- and we clear it via a per-tile GENERATION stamp instead of
+        // zeroing it (no O(hsize) memset per tile). hmap stores {gen, idx} packed:
+        // an entry is live iff its high 32 bits == the current tile generation.
+        constexpr int hbits = 9;                  // 512 slots; >> distinct chunks/tile
+        constexpr int hsize = 1 << hbits, hmask = hsize - 1;
+        if (int(hmap.size()) < hsize) hmap.assign(hsize, 0);
+        const std::uint32_t gen = std::uint32_t(ti) + 1;   // unique per tile in range
         auto chunkIndexFor = [&](std::uint64_t key, int cz, int cy, int cx) -> int {
             int h = int((key * 0x9E3779B97F4A7C15ull) >> (64 - hbits)) & hmask;
             while (true) {
-                int ci = hmap[h];
-                if (ci < 0) {
-                    ci = int(chunks.size());
+                const std::uint64_t slot = hmap[h];
+                if (std::uint32_t(slot >> 32) != gen) {     // empty (stale generation)
+                    const int ci = int(chunks.size());
                     chunks.push_back(BChunk{key, cz, cy, cx, 0, 0});
-                    hmap[h] = ci;
+                    hmap[h] = (std::uint64_t(gen) << 32) | std::uint32_t(ci);
                     return ci;
                 }
+                const int ci = int(std::uint32_t(slot));
                 if (chunks[ci].key == key) return ci;
                 h = (h + 1) & hmask;
             }
