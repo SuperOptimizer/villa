@@ -622,10 +622,15 @@ __attribute__((noinline)) ChunkedPlaneSampler::Stats renderTileRange(
                         }
                     }
 
+                    // Resolve the sample value. The two HOT branches (resident data
+                    // hit, all-fill chunk) are call-free, so the composite max-reduce
+                    // happens inside them with `bestI` staying in a register. The cold
+                    // miss path -- which calls coarseFallbackImpl -- is split out below
+                    // so `bestI` does NOT have to be spilled across that call every
+                    // layer (it was a per-iteration load+store to the stack, ~4.6% of
+                    // the kernel: the accumulator survived a call it almost never makes).
                     uint8_t value;
-                    if (curFill) {
-                        value = fillVal;
-                    } else if (curData) {
+                    if (curData) [[likely]] {
                         std::size_t o;
                         if constexpr (kStatic) {
                             o = ((std::size_t(lz) << CHUNK_LOG2) + std::size_t(ly)
@@ -638,15 +643,21 @@ __attribute__((noinline)) ChunkedPlaneSampler::Stats renderTileRange(
                         if (o >= curSize)
                             continue;
                         value = std::to_integer<uint8_t>(curData[o]);
+                    } else if (curFill) {
+                        value = fillVal;
                     } else {
-                        // Miss at this level -> try a coarser resident level (blurry
-                        // but present). -1 means no coarser level has it either.
-                        // noinline/cold helper -- kept out of this loop's frame.
+                        // Cold miss path: try a coarser resident level (blurry but
+                        // present). noinline/cold helper kept out of this loop's frame.
                         const int fb = coarseFallbackImpl(doLookup, level, fillVal,
                                                           coarse, iz, iy, ix);
                         if (fb < 0)
                             continue;
-                        value = uint8_t(fb);
+                        if constexpr (Composite) {
+                            if (fb > bestI) bestI = fb;
+                            continue;
+                        }
+                        best = float(fb);
+                        break;
                     }
 
                     if constexpr (Composite) {
