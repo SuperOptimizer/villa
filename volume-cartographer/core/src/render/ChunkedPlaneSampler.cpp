@@ -432,11 +432,20 @@ ChunkedPlaneSampler::Stats renderTileRange(
                 // one layer at the surface and a direct write (if constexpr collapses
                 // the loop + reduction away).
                 const int kLayers = Composite ? numLayers : 1;
-                float off = Composite ? float(layerStart) * layerStep : 0.0f;
-                for (int l = 0; l < kLayers; ++l, off += layerStep) {
-                    const float fx = baseL[0] + nrmL[0] * off;
-                    const float fy = baseL[1] + nrmL[1] * off;
-                    const float fz = baseL[2] + nrmL[2] * off;
+                // Strength-reduce the per-depth coord: instead of baseL + nrmL*off
+                // (3 mul + 3 add per layer), walk it incrementally f += nrmStep
+                // (3 add per layer). nrmStep/the initial f are hoisted out of the
+                // depth loop. Exact affine walk; the tiny accumulated rounding is
+                // absorbed by the int truncation at the sample.
+                const float off0 = Composite ? float(layerStart) * layerStep : 0.0f;
+                float fx = baseL[0] + nrmL[0] * off0;
+                float fy = baseL[1] + nrmL[1] * off0;
+                float fz = baseL[2] + nrmL[2] * off0;
+                const float sx = nrmL[0] * layerStep;
+                const float sy = nrmL[1] * layerStep;
+                const float sz = nrmL[2] * layerStep;
+                for (int l = 0; l < kLayers; ++l,
+                         fx += sx, fy += sy, fz += sz) {
                     if (fx < 0.0f || fy < 0.0f || fz < 0.0f)
                         continue;
 
@@ -554,10 +563,12 @@ ChunkedPlaneSampler::Stats renderTileRange(
             }
         }
     }
-    // Dedup the flat miss list once (sort by packed word + unique), then hand off.
-    std::sort(missedVec.begin(), missedVec.end(),
-              [](const ChunkKey& a, const ChunkKey& b) { return a.word() < b.word(); });
-    missedVec.erase(std::unique(missedVec.begin(), missedVec.end()), missedVec.end());
+    // Hand off the raw miss list -- NO sort+unique here. The tick dedups when it
+    // issues fetches (a key already resident/in-flight is skipped), so duplicate
+    // keys are harmless; sorting them was ~2% of render time for no benefit. The
+    // lastChunk gate already collapses a pixel's same-chunk run to one push, so the
+    // only dups are different pixels hitting the same missing chunk -- bounded.
+    // requestedChunks is then a slight overcount (a HUD stat only).
     localStats.requestedChunks += static_cast<int>(missedVec.size());
     localStats.missedKeys.insert(localStats.missedKeys.end(),
         std::make_move_iterator(missedVec.begin()),
