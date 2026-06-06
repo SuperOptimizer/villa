@@ -516,16 +516,19 @@ __attribute__((noinline)) ChunkedPlaneSampler::Stats renderTileRange(
                 const float sz = nrmL[2] * layerStep;
                 for (int l = 0; l < kLayers; ++l,
                          fx += sx, fy += sy, fz += sz) {
-                    // Cull samples that step off the low edge. Folded into ONE
-                    // compare+branch via min(fx,fy,fz) < 0 instead of three
-                    // separate `f < 0` tests -- in the composite depth loop those
-                    // were 3 of the hottest instructions (3x vucomiss + 3x jb per
-                    // layer, ~7% of kernel time). min is two vminss + one branch,
-                    // a shorter dep chain with fewer mispredict-prone branches.
-                    if (std::fmin(fx, std::fmin(fy, fz)) < 0.0f)
-                        continue;
-
                     if constexpr (Trilinear) {
+                        // Cull samples that stepped off the low edge. ONLY the
+                        // trilinear path needs this: it uses int() truncation +
+                        // reads iz/iz+1 with a fractional weight, so a negative
+                        // coord would extrapolate (dx<0). The nearest/composite path
+                        // below instead relies on its unsigned(i) >= shp bounds check
+                        // -- a negative coord rounds to a negative int that the
+                        // unsigned compare already rejects -- so it does NOT pay this
+                        // min/branch per layer (it was ~2 vminss + 1 branch in the
+                        // hot composite loop, redundant with the bounds check there).
+                        // min(fx,fy,fz)<0 folds the 3 sign tests into one compare.
+                        if (std::fmin(fx, std::fmin(fy, fz)) < 0.0f)
+                            continue;
                         // 8-corner trilinear interp. Corners can cross chunks, so
                         // each is read individually; any missing corner -> skip
                         // (the run-cache below is nearest-only). Composite never
