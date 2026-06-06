@@ -4,6 +4,8 @@
 #include <QString>
 #include <QFutureWatcher>
 
+class QTimer;
+
 #include <atomic>
 #include <functional>
 #include <memory>
@@ -135,7 +137,17 @@ signals:
     void overlayVolumeAvailabilityChanged(bool hasOverlay);
     void samplingStrideChanged(int stride);
 
+public:
+    // The ONE global render clock for the whole application. Each tick it: ticks
+    // every distinct shared ChunkCache ONCE (batch-apply chunks staged during the
+    // previous render, then freeze), then drives every dirty viewer to render in
+    // parallel against the frozen cache, then flips their staged framebuffers to
+    // screen. Replaces the per-viewer _renderTimer clocks -- one clock means tick
+    // and render are strictly sequential phases, so the resident map needs no lock.
+    void requestGlobalRender();   // mark "something changed, render next tick"
+
 private slots:
+    void onGlobalTick();
     void handleSurfacePatchIndexPrimeFinished();
     void handleSurfacePatchIndexTaskFinished();
     void handleSurfaceChanged(std::string name, std::shared_ptr<Surface> surf, bool isEditUpdate = false);
@@ -183,6 +195,8 @@ private:
     bool _segmentationEditActive{false};
     SegmentationModule* _segmentationModule{nullptr};
     std::vector<VolumeViewerBase*> _baseViewers;
+    QTimer* _globalClock{nullptr};   // the one render clock (33ms); see onGlobalTick
+    bool _globalRenderPending{false};
     std::unordered_map<VolumeViewerBase*, bool> _resetDefaults;
     float _intersectionOpacity{1.0f};
     float _intersectionThickness{0.0f};

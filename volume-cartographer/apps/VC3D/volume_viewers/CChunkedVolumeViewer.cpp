@@ -1014,13 +1014,14 @@ void CChunkedVolumeViewer::scheduleRender(const char* reason, std::source_locati
             _surfName, _renderPending, _scale, _zOff));
     }
     syncCameraTransform();
+    // Global-clock model: mark this viewer dirty and ask the one coordinator clock
+    // to render on its next tick. No per-viewer timer -- the ViewerManager drives
+    // all viewers in lockstep after a single shared-cache tick.
     _renderPending = true;
-    if (_renderTimer && !_renderTimer->isActive()) {
-        _renderTimer->start();
-        profile.setDetails("action=render_timer_start");
-    } else {
-        profile.setDetails("action=already_scheduled");
-    }
+    _dirty = true;
+    if (_viewerManager)
+        _viewerManager->requestGlobalRender();
+    profile.setDetails("action=marked_dirty_global");
 }
 
 void CChunkedVolumeViewer::requestRender(const char* reason, std::source_location caller)
@@ -1725,24 +1726,20 @@ void CChunkedVolumeViewer::submitRender(const char* reason, std::source_location
         auto overlayChunkArray = ctx.overlayChunkArray;
         auto result = std::make_shared<RenderResult>(renderFrame(std::move(ctx)));
 
-        // tick OFF the main thread: the render (SETTLE) just finished on THIS
-        // worker, so no render is reading the cache -- safe to mutate. thaw, hand
-        // it this frame's misses, fold completed fetches + evict + rebuild the
-        // resident map. Keeping this off the UI thread is the point: only GUI work
-        // is posted back to main. _renderWorkerBusy stays set until the main-thread
-        // callback clears it, so the next submitRender (which freezes) can't start
-        // mid-tick.
+        // Global-clock model: this viewer's render (SETTLE) is done. Thaw the cache
+        // (drop our reader count) and hand this frame's misses to the cache so the
+        // NEXT global tick fetches + folds them. We do NOT tick here -- the one
+        // coordinator clock owns the single tick phase. Just stage the result and
+        // post the flip to the main thread.
         if (chunkArray) {
             chunkArray->thaw();
             if (!result->missedKeys.empty())
                 chunkArray->requestChunks(result->missedKeys);
-            chunkArray->tick();
         }
         if (overlayChunkArray) {
             overlayChunkArray->thaw();
             if (!result->overlayMissedKeys.empty())
                 overlayChunkArray->requestChunks(result->overlayMissedKeys);
-            overlayChunkArray->tick();
         }
 
         QMetaObject::invokeMethod(qApp, [guard, result = std::move(result)]() mutable {
@@ -1750,6 +1747,19 @@ void CChunkedVolumeViewer::submitRender(const char* reason, std::source_location
                 guard->finishRenderOnMainThread(std::move(result));
         }, Qt::QueuedConnection);
     });
+}
+
+void CChunkedVolumeViewer::renderForGlobalTick()
+{
+    // Called by ViewerManager's one clock after it ticked the shared cache(s).
+    // Render only if this viewer is dirty (camera moved / surface changed / chunks
+    // arrived). Re-render once more after a clean frame that had misses, so the
+    // chunks the tick just fetched get folded in -- that "had misses" signal is
+    // carried by scheduleRender() from finishRenderOnMainThread.
+    if (_closing || !_dirty)
+        return;
+    _dirty = false;
+    submitRender("global tick");
 }
 
 void CChunkedVolumeViewer::finishRenderOnMainThread(std::shared_ptr<RenderResult> result)

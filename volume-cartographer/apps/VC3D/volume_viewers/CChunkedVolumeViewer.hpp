@@ -242,6 +242,17 @@ signals:
     void overlaysUpdated();
     void sendSegmentationRadiusWheel(int steps, QPointF scenePoint, cv::Vec3f worldPos);
 
+public:
+    // --- global-clock render API (called by ViewerManager's one render clock) ---
+    // Raw pointers to the shared caches so the coordinator can tick each distinct
+    // cache exactly once per global tick.
+    vc::render::ChunkCache* chunkArrayPtr() const { return _chunkArray.get(); }
+    vc::render::ChunkCache* overlayChunkArrayPtr() const { return _overlayChunkArray.get(); }
+    // Render this viewer for the current global tick (the cache was already ticked
+    // by the coordinator). Launches the worker; the worker stages its framebuffer
+    // and the main thread flips it. No-op if nothing's dirty for this viewer.
+    void renderForGlobalTick();
+
 private:
     void scheduleRender(
         const char* reason = "internal caller",
@@ -293,6 +304,7 @@ private:
     QTimer* _statusTimer = nullptr;
     bool _closing = false;
     bool _renderPending = false;
+    bool _dirty = false;   // global-clock: this viewer needs a render next tick
     bool _segmentationEditActive = false;
     bool _deferSegmentationIntersections = false;
     bool _deferredSegmentationIntersectionsDirty = false;

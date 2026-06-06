@@ -1,5 +1,9 @@
 #include "ViewerManager.hpp"
 
+#include <QTimer>
+#include <algorithm>
+#include "vc/core/render/ChunkCache.hpp"
+
 #include "VCSettings.hpp"
 #include "volume_viewers/VolumeViewerBase.hpp"
 #include "volume_viewers/CChunkedVolumeViewer.hpp"
@@ -85,6 +89,55 @@ ViewerManager::ViewerManager(CState* state,
                 &CState::surfaceWillBeDeleted,
                 this,
                 &ViewerManager::handleSurfaceWillBeDeleted);
+    }
+
+    // The ONE global render clock. Fires at ~30fps; each tick ticks the shared
+    // cache(s) once and renders all dirty viewers. See onGlobalTick.
+    _globalClock = new QTimer(this);
+    _globalClock->setInterval(33);   // ~30fps
+    connect(_globalClock, &QTimer::timeout, this, &ViewerManager::onGlobalTick);
+    _globalClock->start();
+}
+
+void ViewerManager::requestGlobalRender()
+{
+    // A viewer changed (camera moved, surface changed, resized, chunk arrived):
+    // mark the application dirty so the next global tick renders. Cheap + idempotent
+    // -- coalesces any number of change events into one render per clock tick.
+    _globalRenderPending = true;
+}
+
+void ViewerManager::onGlobalTick()
+{
+    if (!_globalRenderPending)
+        return;
+    _globalRenderPending = false;
+
+    // Phase 1 (TICK): apply each distinct shared ChunkCache's staged chunks ONCE,
+    // then it is frozen for the render. Collect distinct caches across all viewers
+    // (base + overlay) so a cache shared by N viewers ticks exactly once.
+    std::vector<vc::render::ChunkCache*> caches;
+    auto addCache = [&caches](vc::render::ChunkCache* c) {
+        if (c && std::find(caches.begin(), caches.end(), c) == caches.end())
+            caches.push_back(c);
+    };
+    for (auto* base : _baseViewers) {
+        auto* v = dynamic_cast<CChunkedVolumeViewer*>(base);
+        if (!v) continue;
+        addCache(v->chunkArrayPtr());
+        addCache(v->overlayChunkArrayPtr());
+    }
+    for (auto* c : caches)
+        c->tick();
+
+    // Phase 2 (RENDER) + Phase 3 (FLIP): drive every chunked viewer to render
+    // against the now-current cache. submitRender launches its worker; the worker
+    // stages its framebuffer and the main thread flips it. (The per-viewer tick was
+    // removed -- the global tick above is the single update phase.)
+    for (auto* base : _baseViewers) {
+        auto* v = dynamic_cast<CChunkedVolumeViewer*>(base);
+        if (v)
+            v->renderForGlobalTick();
     }
 }
 
