@@ -268,6 +268,42 @@ void recordMiss(std::vector<ChunkKey>& missedVec,
         missedVec.push_back(key);
 }
 
+// One coarser LOD level for the miss-fallback (precomputed per render call).
+struct CoarseLevel { int shift; int csh, cshY, cshX; int sz, sy, sx; };
+
+// LOD miss-fallback: a fine chunk missed at `level`, so sample the same point
+// from the nearest COARSER level that IS resident (blurry but present, no hole,
+// while fine chunks stream in). noinline + cold: this is the RARE path (most
+// chunks are resident), and pulling its loop + the coarse-level divides OUT of
+// the hot per-layer loop frees the registers the depth walk was spilling. The
+// hot loop only calls this on an actual miss. The lookup callable forwards to the
+// kernel's pin (concrete or virtual), so this stays dispatch-agnostic.
+template <typename LookupFn>
+__attribute__((noinline, cold))
+int coarseFallbackImpl(LookupFn&& doLookup, int level, uint8_t fillVal,
+                       const std::vector<CoarseLevel>& coarse,
+                       int iz, int iy, int ix)
+{
+    for (const auto& cl : coarse) {
+        const int vz = iz >> cl.shift, vy = iy >> cl.shift, vx = ix >> cl.shift;
+        if (unsigned(vz) >= unsigned(cl.sz) || unsigned(vy) >= unsigned(cl.sy) ||
+            unsigned(vx) >= unsigned(cl.sx))
+            continue;
+        const int cz = vz / cl.csh, cy = vy / cl.cshY, cx = vx / cl.cshX;
+        const auto rv = doLookup(level + cl.shift, cz, cy, cx);
+        if (rv.status == ChunkStatus::AllFill)
+            return fillVal;
+        if (rv.status == ChunkStatus::Data && rv.bytes) {
+            const int lz = vz - cz * cl.csh, ly = vy - cy * cl.cshY, lx = vx - cx * cl.cshX;
+            const std::size_t o = (std::size_t(lz) * std::size_t(cl.cshY)
+                                  + std::size_t(ly)) * std::size_t(cl.cshX) + std::size_t(lx);
+            if (o < rv.bytes->size())
+                return std::to_integer<uint8_t>((*rv.bytes)[o]);
+        }
+    }
+    return -1;
+}
+
 // here; the Trilinear template path handles 8-corner interpolation.
 //
 // noinline: each <Composite,Trilinear,CHUNK_LOG2,ArrayT> instantiation must be its
@@ -388,7 +424,9 @@ __attribute__((noinline)) ChunkedPlaneSampler::Stats renderTileRange(
     // dims, grid shape, and the bit shift from level-L voxels to that level's voxels
     // (pyramid is 2x per level, so coord >>= (L2-L)). Sample value at the coarse
     // chunk's nearest voxel. Cheap: only walked on a miss.
-    struct CoarseLevel { int shift; int csh, cshY, cshX; int sz, sy, sx; };
+    // Precompute the coarser-level table once (cold miss-fallback uses it). See
+    // coarseFallbackImpl -- that function is noinline/cold and kept OUT of this
+    // frame so the hot depth loop doesn't pay its register footprint.
     std::vector<CoarseLevel> coarse;
     {
         const int n = array.numLevels();
@@ -400,28 +438,6 @@ __attribute__((noinline)) ChunkedPlaneSampler::Stats renderTileRange(
                                          ls[0], ls[1], ls[2]});
         }
     }
-    // Resolve a missed (iz,iy,ix) at `level` from a coarser resident level. Returns
-    // the sampled value, or -1 if no coarser level has it resident.
-    auto coarseFallback = [&](int iz, int iy, int ix) -> int {
-        for (const auto& cl : coarse) {
-            const int vz = iz >> cl.shift, vy = iy >> cl.shift, vx = ix >> cl.shift;
-            if (unsigned(vz) >= unsigned(cl.sz) || unsigned(vy) >= unsigned(cl.sy) ||
-                unsigned(vx) >= unsigned(cl.sx))
-                continue;
-            const int cz = vz / cl.csh, cy = vy / cl.cshY, cx = vx / cl.cshX;
-            const auto rv = doLookup(level + cl.shift, cz, cy, cx);
-            if (rv.status == ChunkStatus::AllFill)
-                return fillVal;
-            if (rv.status == ChunkStatus::Data && rv.bytes) {
-                const int lz = vz - cz * cl.csh, ly = vy - cy * cl.cshY, lx = vx - cx * cl.cshX;
-                const std::size_t o = (std::size_t(lz) * std::size_t(cl.cshY)
-                                      + std::size_t(ly)) * std::size_t(cl.cshX) + std::size_t(lx);
-                if (o < rv.bytes->size())
-                    return std::to_integer<uint8_t>((*rv.bytes)[o]);
-            }
-        }
-        return -1;
-    };
 
     for (std::size_t i = begin; i < end; ++i) {
         const SampleTile& st = tiles[i];
@@ -605,7 +621,9 @@ __attribute__((noinline)) ChunkedPlaneSampler::Stats renderTileRange(
                     } else {
                         // Miss at this level -> try a coarser resident level (blurry
                         // but present). -1 means no coarser level has it either.
-                        const int fb = coarseFallback(iz, iy, ix);
+                        // noinline/cold helper -- kept out of this loop's frame.
+                        const int fb = coarseFallbackImpl(doLookup, level, fillVal,
+                                                          coarse, iz, iy, ix);
                         if (fb < 0)
                             continue;
                         value = uint8_t(fb);
