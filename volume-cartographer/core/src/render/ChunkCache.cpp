@@ -213,11 +213,11 @@ void ChunkCache::assertMutable(const State& state, const char* where)
 void ChunkCache::freeze()
 {
     // A viewer enters its render (SETTLE) phase: it will read the resident map.
-    // Take mutex_ to bump the reader count so this can't interleave with a tick
-    // (which holds mutex_ for its whole fold/evict). Otherwise a tick could observe
-    // activeReaders_==0, then this freeze bumps it to 1 and starts a render, and the
-    // tick mutates the resident map while we read -> the assertMutable race.
-    std::lock_guard lock(state_->mutex_);
+    // freeze() and tick() now both run on the main thread (the one global clock:
+    // ViewerManager::onGlobalTick ticks then renderForGlobalTick->submitRender->
+    // freeze, all on the GUI thread). The Qt event loop serializes them, so freeze
+    // can't interleave with a tick's fold -- no lock needed here. activeReaders_ is
+    // still atomic only because render WORKERS thaw() (decrement) off-thread.
     state_->activeReaders_.fetch_add(1, std::memory_order_acq_rel);
 }
 
@@ -341,7 +341,18 @@ void ChunkCache::tick()
 {
     auto state = state_;
 
-    // Snapshot the staged fetches + requested keys (their own small mutexes).
+    // The tick mutates the resident map in place, so it runs ONLY when no render
+    // worker is still reading (activeReaders_ == 0). freeze()/tick() are both on the
+    // main thread (one global clock) so they can't interleave; the only thing that
+    // can still hold a reader here is a render worker from the PREVIOUS tick that
+    // hasn't finished. If so, DEFER -- leave staged/requested in place, the next
+    // tick (once workers finish) does the work. This check is a plain atomic read;
+    // no lock needed for it.
+    if (state->activeReaders_.load(std::memory_order_acquire) != 0)
+        return;
+
+    // Snapshot the staged fetches + requested keys (their own small mutexes -- the
+    // fetch workers push staging concurrently).
     std::vector<StagedFetch> staged;
     {
         std::lock_guard s(state->stagingMutex_);
@@ -353,30 +364,10 @@ void ChunkCache::tick()
         requested.swap(state->requestedThisCycle_);
     }
 
-    // Hold mutex_ for the ENTIRE tick (reader-check + fold + issue + evict). The
-    // tick mutates the resident map in place, so it may run ONLY when no viewer is
-    // reading (activeReaders_ == 0). Checking that UNDER mutex_, and keeping the
-    // lock across all the mutation, makes it mutually exclusive with freeze()
-    // (which bumps activeReaders_ under the same mutex). Without holding the lock
-    // across the whole tick a freeze() could slip in after the check and start a
-    // render while we mutate -> the assertMutable race. If a reader is active we
-    // DEFER: re-stash the snapshots and let the last viewer to finish tick.
+    // mutex_ guards entries_/resident_/decodedBytes_ against the FETCH WORKERS (they
+    // take it in fetchAndStore). It is NOT for the render path -- readers never take
+    // it. Held across fold+issue+evict.
     std::unique_lock<std::mutex> lock(state->mutex_);
-    if (state->activeReaders_.load(std::memory_order_acquire) != 0) {
-        lock.unlock();
-        if (!staged.empty()) {
-            std::lock_guard s(state->stagingMutex_);
-            state->stagedFetches_.insert(state->stagedFetches_.begin(),
-                std::make_move_iterator(staged.begin()),
-                std::make_move_iterator(staged.end()));
-        }
-        if (!requested.empty()) {
-            std::lock_guard r(state->requestMutex_);
-            state->requestedThisCycle_.insert(state->requestedThisCycle_.begin(),
-                requested.begin(), requested.end());
-        }
-        return;
-    }
 
     // 1) Fold staged fetch results into entries_ + resident_ (in place).
     int folded = 0, foldSkipped = 0, issued = 0, dataResident = 0;
