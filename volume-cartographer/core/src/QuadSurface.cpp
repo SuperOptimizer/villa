@@ -862,6 +862,51 @@ static cv::Mat_<uint8_t> buildValidMask(const cv::Mat_<cv::Vec3f>& pts,
     return mask;
 }
 
+// Fast-path border invalidation for an ALL-VALID source grid. A destination
+// pixel samples source (sx_i, sy_i) = round(o + d*s); it's out of grid iff
+// sx_i<0||>=cols or sy_i<0||>=rows. Because the map is monotonic affine, the
+// in-grid destination region is a single rectangle -- compute it and NaN only
+// the bands OUTSIDE it (top/bottom full rows + left/right within valid rows).
+// Replaces a full-frame validity warp + full-frame per-pixel scan with O(border)
+// writes when the surface fills the view (the common zoomed-in case: empty bands).
+static void nanOutOfGridBorder(cv::Mat_<cv::Vec3f>& dst, int sCols, int sRows,
+                               double ox, double oy, double sx, double sy)
+{
+    const cv::Vec3f qnan(std::numeric_limits<float>::quiet_NaN(),
+                         std::numeric_limits<float>::quiet_NaN(),
+                         std::numeric_limits<float>::quiet_NaN());
+    const int dw = dst.cols, dh = dst.rows;
+    // round(o + d*s) in [0, n-1]  <=>  o + d*s in [-0.5, n-0.5).
+    // Solve for the integer d-range [lo, hi) that stays in grid (s != 0).
+    auto inRange = [](double o, double s, int n, int dn, int& lo, int& hi) {
+        if (s == 0.0) {                 // constant column/row
+            const long v = lround(o);
+            if (v < 0 || v >= n) { lo = 0; hi = 0; }   // whole axis out
+            else { lo = 0; hi = dn; }                  // whole axis in
+            return;
+        }
+        double a = (-0.5 - o) / s, b = (double(n) - 0.5 - o) / s;
+        if (a > b) std::swap(a, b);
+        lo = std::max(0, int(std::ceil(a)));
+        hi = std::min(dn, int(std::ceil(b)));
+        if (hi < lo) hi = lo;
+    };
+    int cx0, cx1, ry0, ry1;
+    inRange(ox, sx, sCols, dw, cx0, cx1);   // valid columns [cx0, cx1)
+    inRange(oy, sy, sRows, dh, ry0, ry1);   // valid rows    [ry0, ry1)
+    if (cx0 == 0 && cx1 == dw && ry0 == 0 && ry1 == dh)
+        return;                              // whole frame in grid -> nothing to NaN
+    // Top and bottom out-of-grid row bands (full width).
+    for (int y = 0; y < ry0; ++y) { cv::Vec3f* r = dst[y]; for (int x = 0; x < dw; ++x) r[x] = qnan; }
+    for (int y = ry1; y < dh; ++y) { cv::Vec3f* r = dst[y]; for (int x = 0; x < dw; ++x) r[x] = qnan; }
+    // Left/right out-of-grid column bands within the valid rows.
+    for (int y = ry0; y < ry1; ++y) {
+        cv::Vec3f* r = dst[y];
+        for (int x = 0; x < cx0; ++x) r[x] = qnan;
+        for (int x = cx1; x < dw; ++x) r[x] = qnan;
+    }
+}
+
 void QuadSurface::gen(cv::Mat_<cv::Vec3f>* coords,
                       cv::Mat_<cv::Vec3f>* normals,
                       cv::Size size,
@@ -1004,15 +1049,23 @@ void QuadSurface::genGridImpl(const cv::Mat_<cv::Vec3f>& pts, const cv::Vec2f& g
             }
         }
     } else {
-        // Single component: replicate coords, constant-0 validity.
-        // Always warp validity even when all source points are valid —
-        // the 4px halo around the crop region needs 0s so the
-        // invalidation pass below sets them to NaN (black edges).
+        // Single component: replicate coords.
         coords_big.create(h + 8, w + 8);
         warpBilinearReplicateVec3f(pts, coords_big, ox, oy, sx, sy);
-        valid_big.create(h + 8, w + 8);
-        warpNearestConstU8(valid_src, valid_big, ox, oy, sx, sy, 0);
-        skipValidity = false;  // force invalidation pass below
+        if (skipValidity) {
+            // All source points valid: a pixel is invalid ONLY where it maps
+            // outside the source grid. That region is computable analytically
+            // from the affine map (src = o + d*s), so instead of a full-frame
+            // validity warp + a full-frame invalidation scan (both ~no-ops when
+            // the surface fills the view -- the common zoomed-in case), NaN just
+            // the out-of-grid border bands of coords_big directly and KEEP
+            // skipValidity=true so the per-pixel scan below is skipped entirely.
+            nanOutOfGridBorder(coords_big, pts.cols, pts.rows, ox, oy, sx, sy);
+        } else {
+            // Holes present: warp the real validity mask; invalidation scan runs.
+            valid_big.create(h + 8, w + 8);
+            warpNearestConstU8(valid_src, valid_big, ox, oy, sx, sy, 0);
+        }
     }
 
     // --- normals: warp cached source-grid normals -------------------
