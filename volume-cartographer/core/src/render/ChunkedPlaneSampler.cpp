@@ -693,8 +693,15 @@ namespace {
 // chunkShape values -- which also frees the registers those values occupied,
 // cutting the spilling in this hot loop. CHUNK_LOG2 == -1 selects a generic
 // runtime path (non-power-of-two or non-cubic chunk shapes; not hit in practice).
-template <int CHUNK_LOG2, typename ArrayT>
-ChunkedPlaneSampler::Stats maxCompositeTileRange(
+// Unified render kernel. Composite=true walks numLayers along the normal and
+// max-reduces (the composite=max path). Composite=false samples a single point on
+// the surface and writes it (the plain plane/coords path) -- if constexpr collapses
+// the depth loop to one iteration and the reduction to a direct write, so the
+// non-composite case is the same optimized body (inlined lookup, 8-byte key, flat
+// miss list, LOD fallback) with zero composite overhead. Both use nearest sampling
+// here; trilinear is a separate path (kept in sampleTrilinear for now).
+template <bool Composite, int CHUNK_LOG2, typename ArrayT>
+ChunkedPlaneSampler::Stats renderTileRange(
     ArrayT& array,
     const LevelAccess& access,
     int level,
@@ -803,7 +810,8 @@ ChunkedPlaneSampler::Stats maxCompositeTileRange(
         const SampleTile& st = tiles[i];
         for (int y = st.ty; y < st.yEnd; ++y) {
             const cv::Vec3f* coordRow = coords.ptr<cv::Vec3f>(y);
-            const cv::Vec3f* normalRow = normals.ptr<cv::Vec3f>(y);
+            // Normals are only needed to step along the depth in the composite case.
+            const cv::Vec3f* normalRow = Composite ? normals.ptr<cv::Vec3f>(y) : nullptr;
             uint8_t* outRow = out.ptr<uint8_t>(y);
             uint8_t* coverageRow = coverage.ptr<uint8_t>(y);
             for (int x = st.tx; x < st.xEnd; ++x) {
@@ -818,12 +826,15 @@ ChunkedPlaneSampler::Stats maxCompositeTileRange(
                 // Bit test (not base[0]!=base[0]) so -ffast-math can't elide it.
                 if (isNanBits(base[0]))
                     continue;
-                const cv::Vec3f nrm = normalRow[x];
                 // base/normal -> level space using the hoisted float scalars.
                 const cv::Vec3f baseL = zeroOffset
                     ? cv::Vec3f(base[0]*tsx, base[1]*tsy, base[2]*tsz)
                     : cv::Vec3f(base[0]*tsx+tox, base[1]*tsy+toy, base[2]*tsz+toz);
-                const cv::Vec3f nrmL(nrm[0]*tsx, nrm[1]*tsy, nrm[2]*tsz);
+                cv::Vec3f nrmL(0.0f, 0.0f, 0.0f);
+                if constexpr (Composite) {
+                    const cv::Vec3f nrm = normalRow[x];
+                    nrmL = cv::Vec3f(nrm[0]*tsx, nrm[1]*tsy, nrm[2]*tsz);
+                }
 
                 // Track the current chunk as ONE packed 64-bit key instead of
                 // three lastCz/Cy/Cx ints -- a single compare per depth, and one
@@ -837,8 +848,13 @@ ChunkedPlaneSampler::Stats maxCompositeTileRange(
                 const std::vector<std::byte>* curBytes = nullptr;
                 float best = 0.0f;
                 bool any = false;
-                float off = float(layerStart) * layerStep;
-                for (int l = 0; l < numLayers; ++l, off += layerStep) {
+                // Composite walks numLayers along the normal + max-reduces; the
+                // non-composite (single plane) case is the SAME body with exactly
+                // one layer at the surface and a direct write (if constexpr collapses
+                // the loop + reduction away).
+                const int kLayers = Composite ? numLayers : 1;
+                float off = Composite ? float(layerStart) * layerStep : 0.0f;
+                for (int l = 0; l < kLayers; ++l, off += layerStep) {
                     const float fx = baseL[0] + nrmL[0] * off;
                     const float fy = baseL[1] + nrmL[1] * off;
                     const float fz = baseL[2] + nrmL[2] * off;
@@ -910,9 +926,15 @@ ChunkedPlaneSampler::Stats maxCompositeTileRange(
                     }
 
                     const float fv = float(value);
-                    if (fv < isoCutoff)
-                        continue;
-                    if (!any || fv > best) { best = fv; any = true; }
+                    if constexpr (Composite) {
+                        if (fv < isoCutoff)
+                            continue;
+                        if (!any || fv > best) { best = fv; any = true; }
+                    } else {
+                        // Single plane sample: take this value and stop.
+                        best = fv; any = true;
+                        break;
+                    }
                 }
                 if (any) {
                     outRow[x] = static_cast<uint8_t>(std::clamp(best, 0.0f, 255.0f));
@@ -985,13 +1007,13 @@ ChunkedPlaneSampler::Stats ChunkedPlaneSampler::sampleCoordsMaxComposite(
     auto runRange = [&](std::size_t begin, std::size_t end) {
         auto dispatch = [&](auto& arr) -> ChunkedPlaneSampler::Stats {
             switch (chunkLog) {
-                case 5:  return maxCompositeTileRange<5>(arr, access, level, coords, normals,
+                case 5:  return renderTileRange<true, 5>(arr, access, level, coords, normals,
                              out, coverage, tiles, begin, end, layerStart, numLayers, layerStep, isoCutoff);
-                case 4:  return maxCompositeTileRange<4>(arr, access, level, coords, normals,
+                case 4:  return renderTileRange<true, 4>(arr, access, level, coords, normals,
                              out, coverage, tiles, begin, end, layerStart, numLayers, layerStep, isoCutoff);
-                case 6:  return maxCompositeTileRange<6>(arr, access, level, coords, normals,
+                case 6:  return renderTileRange<true, 6>(arr, access, level, coords, normals,
                              out, coverage, tiles, begin, end, layerStart, numLayers, layerStep, isoCutoff);
-                default: return maxCompositeTileRange<-1>(arr, access, level, coords, normals,
+                default: return renderTileRange<true, -1>(arr, access, level, coords, normals,
                              out, coverage, tiles, begin, end, layerStart, numLayers, layerStep, isoCutoff);
             }
         };
