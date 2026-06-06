@@ -213,8 +213,11 @@ void ChunkCache::assertMutable(const State& state, const char* where)
 void ChunkCache::freeze()
 {
     // A viewer enters its render (SETTLE) phase: it will read the resident map.
-    // Count active readers so the tick knows when NONE are reading -- that is the
-    // single update phase where the cache may mutate in place.
+    // Take mutex_ to bump the reader count so this can't interleave with a tick
+    // (which holds mutex_ for its whole fold/evict). Otherwise a tick could observe
+    // activeReaders_==0, then this freeze bumps it to 1 and starts a render, and the
+    // tick mutates the resident map while we read -> the assertMutable race.
+    std::lock_guard lock(state_->mutex_);
     state_->activeReaders_.fetch_add(1, std::memory_order_acq_rel);
 }
 
@@ -338,84 +341,84 @@ void ChunkCache::tick()
 {
     auto state = state_;
 
-    // The tick mutates the cache in place, so it may run ONLY when no viewer is
-    // reading (activeReaders_ == 0). The shared cache has N viewers; this viewer
-    // already thawed, but others may still be mid-render. If any reader is active,
-    // DEFER: the staged fetches + requested keys stay pending and the last viewer
-    // to finish (readers hits 0) will run the tick. This is the single update
-    // phase -- between frames, cache-wide, no observers.
-    if (state->activeReaders_.load(std::memory_order_acquire) != 0)
-        return;
-
-    // 1) Fold staged fetch results (completed while frozen) into entries_.
+    // Snapshot the staged fetches + requested keys (their own small mutexes).
     std::vector<StagedFetch> staged;
     {
         std::lock_guard s(state->stagingMutex_);
         staged.swap(state->stagedFetches_);
     }
-    int folded = 0, foldSkipped = 0;
-    if (!staged.empty()) {
-        std::lock_guard lock(state->mutex_);
-        for (auto& sf : staged) {
-            if (sf.generation != state->generation_) { ++foldSkipped; continue; }
-            auto it = state->entries_.find(sf.key);
-            if (it == state->entries_.end() || it->second.fetchSerial != sf.fetchSerial) {
-                ++foldSkipped;
-                continue;
-            }
-            storeFetchResultLocked(state, sf.key, std::move(sf.fetch),
-                                   sf.loadedFromPersistentCache);
-            ++folded;
-        }
-        // Also drain anything that arrived in the staging queue meanwhile.
-        drainStagingLocked(state);
-    }
-
-    // 2) Issue fetches for chunks the last frame missed (recorded via
-    //    requestChunks). A miss creates an InFlight entry + queues background I/O;
-    //    the result will arrive in staging and fold at a future tick.
     std::vector<ChunkKey> requested;
     {
         std::lock_guard r(state->requestMutex_);
         requested.swap(state->requestedThisCycle_);
     }
-    int issued = 0, dataResident = 0;
-    if (!requested.empty()) {
-        std::lock_guard lock(state->mutex_);
-        for (const auto& key : requested) {
-            if (!isValidKey(*state, key))
-                continue;
-            auto it = state->entries_.find(key);
-            if (it != state->entries_.end())
-                continue;  // already resident or in-flight
-            state->entries_.emplace(key, Entry{});
-            queueFetchLocked(state, key, state->generation_, 0);
-            ++issued;
+
+    // Hold mutex_ for the ENTIRE tick (reader-check + fold + issue + evict). The
+    // tick mutates the resident map in place, so it may run ONLY when no viewer is
+    // reading (activeReaders_ == 0). Checking that UNDER mutex_, and keeping the
+    // lock across all the mutation, makes it mutually exclusive with freeze()
+    // (which bumps activeReaders_ under the same mutex). Without holding the lock
+    // across the whole tick a freeze() could slip in after the check and start a
+    // render while we mutate -> the assertMutable race. If a reader is active we
+    // DEFER: re-stash the snapshots and let the last viewer to finish tick.
+    std::unique_lock<std::mutex> lock(state->mutex_);
+    if (state->activeReaders_.load(std::memory_order_acquire) != 0) {
+        lock.unlock();
+        if (!staged.empty()) {
+            std::lock_guard s(state->stagingMutex_);
+            state->stagedFetches_.insert(state->stagedFetches_.begin(),
+                std::make_move_iterator(staged.begin()),
+                std::make_move_iterator(staged.end()));
         }
+        if (!requested.empty()) {
+            std::lock_guard r(state->requestMutex_);
+            state->requestedThisCycle_.insert(state->requestedThisCycle_.begin(),
+                requested.begin(), requested.end());
+        }
+        return;
     }
+
+    // 1) Fold staged fetch results into entries_ + resident_ (in place).
+    int folded = 0, foldSkipped = 0, issued = 0, dataResident = 0;
+    for (auto& sf : staged) {
+        if (sf.generation != state->generation_) { ++foldSkipped; continue; }
+        auto it = state->entries_.find(sf.key);
+        if (it == state->entries_.end() || it->second.fetchSerial != sf.fetchSerial) {
+            ++foldSkipped;
+            continue;
+        }
+        storeFetchResultLocked(state, sf.key, std::move(sf.fetch),
+                               sf.loadedFromPersistentCache);
+        ++folded;
+    }
+    drainStagingLocked(state);
+
+    // 2) Issue fetches for chunks the last frame missed.
+    for (const auto& key : requested) {
+        if (!isValidKey(*state, key))
+            continue;
+        if (state->entries_.find(key) != state->entries_.end())
+            continue;  // already resident or in-flight
+        state->entries_.emplace(key, Entry{});
+        queueFetchLocked(state, key, state->generation_, 0);
+        ++issued;
+    }
+
+    // 3) Evict the working store to budget (NRU) -- removes from resident_ in place.
+    nruEvictLocked(state);
+
     if (tickDbg()) {
-        std::lock_guard lock(state->mutex_);
         for (auto e : state->entries_)
             if (e.second.status == EntryStatus::Data) ++dataResident;
         fprintf(stderr, "[ts] TICK staged=%zu folded=%d skip=%d | requested=%zu issued=%d "
-                "| entries=%zu dataResident=%d frozen=%d\n",
+                "| entries=%zu dataResident=%d readers=%d\n",
                 staged.size(), folded, foldSkipped, requested.size(), issued,
                 state->entries_.size(), dataResident, state->activeReaders_.load());
     }
 
-    // 3) Evict the working store to budget (NRU). Eviction removes from the
-    //    resident map IN PLACE (see nruEvictLocked). Newly-resolved chunks were
-    //    already inserted into resident_ in place by storeFetchResultLocked during
-    //    the fold. No full rebuild, no map alloc, no swap -- just the O(delta)
-    //    inserts/erases. Safe because the tick runs only when activeReaders_ == 0.
-    {
-        std::lock_guard lock(state->mutex_);
-        nruEvictLocked(state);
-    }
-    // The fold above resolved staged fetches that blocking callers
-    // (getChunkBlocking / prefetchChunks-wait) may be waiting on -- they defer
-    // their own drain while a render reads, so the tick is what resolves their key.
-    // Notify so they re-check instead of sleeping until the next fetch completion.
+    lock.unlock();
+    // Wake blocking callers (getChunkBlocking / prefetchChunks-wait) that deferred
+    // their own drain while a render read -- the fold above resolved their key.
     state->cv_.notify_all();
 }
 
