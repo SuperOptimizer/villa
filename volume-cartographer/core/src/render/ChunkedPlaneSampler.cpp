@@ -736,6 +736,47 @@ ChunkedPlaneSampler::Stats maxCompositeTileRange(
     std::vector<ChunkKey> missedVec;   // flat, deduped at flush (no node alloc)
     missedVec.reserve(std::max<std::size_t>(16, (end - begin) * 4));
 
+    // LOD fallback: when a chunk misses at `level`, sample the same point from the
+    // nearest COARSER level that IS resident -- blurry but present, instead of a
+    // hole, while the fine chunks stream in. Precompute per coarser level its chunk
+    // dims, grid shape, and the bit shift from level-L voxels to that level's voxels
+    // (pyramid is 2x per level, so coord >>= (L2-L)). Sample value at the coarse
+    // chunk's nearest voxel. Cheap: only walked on a miss.
+    struct CoarseLevel { int shift; int csh, cshY, cshX; int sz, sy, sx; };
+    std::vector<CoarseLevel> coarse;
+    {
+        const int n = array.numLevels();
+        for (int L2 = level + 1; L2 < n; ++L2) {
+            const auto cs = array.chunkShape(L2);
+            const auto ls = array.shape(L2);
+            if (cs[0] <= 0) break;
+            coarse.push_back(CoarseLevel{L2 - level, cs[0], cs[1], cs[2],
+                                         ls[0], ls[1], ls[2]});
+        }
+    }
+    // Resolve a missed (iz,iy,ix) at `level` from a coarser resident level. Returns
+    // the sampled value, or -1 if no coarser level has it resident.
+    auto coarseFallback = [&](int iz, int iy, int ix) -> int {
+        for (const auto& cl : coarse) {
+            const int vz = iz >> cl.shift, vy = iy >> cl.shift, vx = ix >> cl.shift;
+            if (unsigned(vz) >= unsigned(cl.sz) || unsigned(vy) >= unsigned(cl.sy) ||
+                unsigned(vx) >= unsigned(cl.sx))
+                continue;
+            const int cz = vz / cl.csh, cy = vy / cl.cshY, cx = vx / cl.cshX;
+            const auto rv = doLookup(level + cl.shift, cz, cy, cx);
+            if (rv.status == ChunkStatus::AllFill)
+                return fillVal;
+            if (rv.status == ChunkStatus::Data && rv.bytes) {
+                const int lz = vz - cz * cl.csh, ly = vy - cy * cl.cshY, lx = vx - cx * cl.cshX;
+                const std::size_t o = (std::size_t(lz) * std::size_t(cl.cshY)
+                                      + std::size_t(ly)) * std::size_t(cl.cshX) + std::size_t(lx);
+                if (o < rv.bytes->size())
+                    return std::to_integer<uint8_t>((*rv.bytes)[o]);
+            }
+        }
+        return -1;
+    };
+
     for (std::size_t i = begin; i < end; ++i) {
         const SampleTile& st = tiles[i];
         for (int y = st.ty; y < st.yEnd; ++y) {
@@ -838,7 +879,12 @@ ChunkedPlaneSampler::Stats maxCompositeTileRange(
                             continue;
                         value = std::to_integer<uint8_t>((*curBytes)[o]);
                     } else {
-                        continue;
+                        // Miss at this level -> try a coarser resident level (blurry
+                        // but present). -1 means no coarser level has it either.
+                        const int fb = coarseFallback(iz, iy, ix);
+                        if (fb < 0)
+                            continue;
+                        value = uint8_t(fb);
                     }
 
                     const float fv = float(value);
