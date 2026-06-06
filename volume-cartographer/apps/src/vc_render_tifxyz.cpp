@@ -1193,9 +1193,9 @@ int main(int argc, char *argv[])
         compositeParams.alphaMax = parsed["alpha-max"].as<float>() / 255.0f;
         compositeParams.alphaOpacity = parsed["alpha-opacity"].as<float>() / 255.0f;
         compositeParams.alphaCutoff = parsed["alpha-cutoff"].as<float>() / 10000.0f;
-        compositeParams.blExtinction = parsed["bl-extinction"].as<float>();
-        compositeParams.blEmission = parsed["bl-emission"].as<float>();
-        compositeParams.blAmbient = parsed["bl-ambient"].as<float>();
+        const float blExtinction = parsed["bl-extinction"].as<float>();
+        const float blEmission = parsed["bl-emission"].as<float>();
+        const float blAmbient = parsed["bl-ambient"].as<float>();
         compositeParams.isoCutoff = uint8_t(std::clamp(parsed["iso-cutoff"].as<int>(), 0, 255));
         if (parsed.count("composite-start")) compositeStart = parsed["composite-start"].as<int>();
         if (parsed.count("composite-end"))   compositeEnd = parsed["composite-end"].as<int>();
@@ -1208,7 +1208,7 @@ int main(int argc, char *argv[])
                       compositeParams.alphaOpacity*255, compositeParams.alphaCutoff*10000);
         else
             logPrintf(stdout, "  BL: ext=%.1f em=%.1f amb=%.1f\n",
-                      compositeParams.blExtinction, compositeParams.blEmission, compositeParams.blAmbient);
+                      blExtinction, blEmission, blAmbient);
         if (compositeParams.isoCutoff > 0) logPrintf(stdout, "  iso cutoff: %d\n", int(compositeParams.isoCutoff));
     }
 

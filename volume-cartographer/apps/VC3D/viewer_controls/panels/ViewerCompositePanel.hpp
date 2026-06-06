@@ -45,36 +45,6 @@ public:
         QSlider* methodParam{nullptr};
         QLabel* methodParamValue{nullptr};
 
-        QLabel* blExtinctionLabel{nullptr};
-        QDoubleSpinBox* blExtinction{nullptr};
-        QLabel* blEmissionLabel{nullptr};
-        QDoubleSpinBox* blEmission{nullptr};
-        QLabel* blAmbientLabel{nullptr};
-        QDoubleSpinBox* blAmbient{nullptr};
-
-        QCheckBox* lightingEnabled{nullptr};
-        QLabel* lightAzimuthLabel{nullptr};
-        QSpinBox* lightAzimuth{nullptr};
-        QLabel* lightElevationLabel{nullptr};
-        QSpinBox* lightElevation{nullptr};
-        QLabel* lightDiffuseLabel{nullptr};
-        QDoubleSpinBox* lightDiffuse{nullptr};
-        QLabel* lightAmbientLabel{nullptr};
-        QDoubleSpinBox* lightAmbient{nullptr};
-        QCheckBox* useVolumeGradients{nullptr};
-        QLabel* shadowStepsLabel{nullptr};
-        QSpinBox* shadowSteps{nullptr};
-
-        QCheckBox* rakingEnabled{nullptr};
-        QLabel* rakingAzimuthLabel{nullptr};
-        QDoubleSpinBox* rakingAzimuth{nullptr};
-        QLabel* rakingElevationLabel{nullptr};
-        QDoubleSpinBox* rakingElevation{nullptr};
-        QLabel* rakingStrengthLabel{nullptr};
-        QDoubleSpinBox* rakingStrength{nullptr};
-        QLabel* rakingDepthLabel{nullptr};
-        QDoubleSpinBox* rakingDepthScale{nullptr};
-
         QCheckBox* preNormalizeLayers{nullptr};
         QCheckBox* preHistEqLayers{nullptr};
         QCheckBox* preTfEnabled{nullptr};
@@ -89,12 +59,6 @@ public:
         QLabel* postTfKnot2Label{nullptr};
         QSpinBox* postTfX2{nullptr};
         QSpinBox* postTfY2{nullptr};
-        QLabel* dvrAmbientLabel{nullptr};
-        QDoubleSpinBox* dvrAmbient{nullptr};
-        QLabel* pbrRoughnessLabel{nullptr};
-        QDoubleSpinBox* pbrRoughness{nullptr};
-        QLabel* pbrMetallicLabel{nullptr};
-        QDoubleSpinBox* pbrMetallic{nullptr};
 
         QCheckBox* planeCompositeXY{nullptr};
         QCheckBox* planeCompositeXZ{nullptr};
@@ -115,7 +79,6 @@ private:
     void initializeExistingViewers();
     void applyInitialSettingsToViewer(VolumeViewerBase* viewer);
     void updateCompositeParamsVisibility();
-    void updateRakingControlsEnabled(bool enabled);
     void applyToSegmentationViewer(const std::function<void(VolumeViewerBase*)>& apply);
     void applyToAllViewers(const std::function<void(VolumeViewerBase*)>& apply);
     void applyToPlaneViewers(const std::function<void(VolumeViewerBase*)>& apply);

@@ -27,17 +27,6 @@ std::string compositeMethodForModeIndex(int index)
         case 1:  return "mean";
         case 2:  return "min";
         case 3:  return "alpha";
-        case 4:  return "beerLambert";
-        case 5:  return "volumetric";
-        case 6:  return "dvr";
-        case 7:  return "firstHitIso";
-        case 8:  return "devFromMean";
-        case 9:  return "emissionDvr";
-        case 10: return "maxAboveIso";
-        case 11: return "gammaWeighted";
-        case 12: return "gradientMag";
-        case 13: return "pbrIso";
-        case 14: return "shadedDvr";
         default: return "mean";
     }
 }
@@ -48,17 +37,6 @@ int compositeModeIndexForMethod(const std::string& method)
     if (method == "mean") return 1;
     if (method == "min") return 2;
     if (method == "alpha") return 3;
-    if (method == "beerLambert") return 4;
-    if (method == "volumetric") return 5;
-    if (method == "dvr") return 6;
-    if (method == "firstHitIso") return 7;
-    if (method == "devFromMean") return 8;
-    if (method == "emissionDvr") return 9;
-    if (method == "maxAboveIso") return 10;
-    if (method == "gammaWeighted") return 11;
-    if (method == "gradientMag") return 12;
-    if (method == "pbrIso") return 13;
-    if (method == "shadedDvr") return 14;
     return 1;
 }
 
@@ -103,13 +81,6 @@ void setWidgetVisible(QWidget* widget, bool visible)
 {
     if (widget) {
         widget->setVisible(visible);
-    }
-}
-
-void setWidgetEnabled(QWidget* widget, bool enabled)
-{
-    if (widget) {
-        widget->setEnabled(enabled);
     }
 }
 
@@ -250,101 +221,6 @@ void ViewerCompositePanel::setupControls()
         });
     }
 
-    if (_uiRefs.blExtinction) {
-        connect(_uiRefs.blExtinction, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double value) {
-            applyToSegmentationViewer([value](VolumeViewerBase* viewer) {
-                auto s = viewer->compositeRenderSettings();
-                s.params.blExtinction = static_cast<float>(value);
-                viewer->setCompositeRenderSettings(s);
-            });
-        });
-    }
-    if (_uiRefs.blEmission) {
-        connect(_uiRefs.blEmission, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double value) {
-            applyToSegmentationViewer([value](VolumeViewerBase* viewer) {
-                auto s = viewer->compositeRenderSettings();
-                s.params.blEmission = static_cast<float>(value);
-                viewer->setCompositeRenderSettings(s);
-            });
-        });
-    }
-    if (_uiRefs.blAmbient) {
-        connect(_uiRefs.blAmbient, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double value) {
-            applyToSegmentationViewer([value](VolumeViewerBase* viewer) {
-                auto s = viewer->compositeRenderSettings();
-                s.params.blAmbient = static_cast<float>(value);
-                viewer->setCompositeRenderSettings(s);
-            });
-        });
-    }
-    if (_uiRefs.lightingEnabled) {
-        connect(_uiRefs.lightingEnabled, &QCheckBox::toggled, this, [this](bool checked) {
-            applyToSegmentationViewer([checked](VolumeViewerBase* viewer) {
-                auto s = viewer->compositeRenderSettings();
-                s.params.lightingEnabled = checked;
-                viewer->setCompositeRenderSettings(s);
-            });
-            updateCompositeParamsVisibility();
-        });
-    }
-    if (_uiRefs.lightAzimuth) {
-        connect(_uiRefs.lightAzimuth, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int value) {
-            applyToSegmentationViewer([value](VolumeViewerBase* viewer) {
-                auto s = viewer->compositeRenderSettings();
-                s.params.lightAzimuth = static_cast<float>(value);
-                s.params.updateLightDir();
-                viewer->setCompositeRenderSettings(s);
-            });
-        });
-    }
-    if (_uiRefs.lightElevation) {
-        connect(_uiRefs.lightElevation, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int value) {
-            applyToSegmentationViewer([value](VolumeViewerBase* viewer) {
-                auto s = viewer->compositeRenderSettings();
-                s.params.lightElevation = static_cast<float>(value);
-                s.params.updateLightDir();
-                viewer->setCompositeRenderSettings(s);
-            });
-        });
-    }
-    if (_uiRefs.lightDiffuse) {
-        connect(_uiRefs.lightDiffuse, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double value) {
-            applyToSegmentationViewer([value](VolumeViewerBase* viewer) {
-                auto s = viewer->compositeRenderSettings();
-                s.params.lightDiffuse = static_cast<float>(value);
-                viewer->setCompositeRenderSettings(s);
-            });
-        });
-    }
-    if (_uiRefs.lightAmbient) {
-        connect(_uiRefs.lightAmbient, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double value) {
-            applyToSegmentationViewer([value](VolumeViewerBase* viewer) {
-                auto s = viewer->compositeRenderSettings();
-                s.params.lightAmbient = static_cast<float>(value);
-                viewer->setCompositeRenderSettings(s);
-            });
-        });
-    }
-    if (_uiRefs.useVolumeGradients) {
-        connect(_uiRefs.useVolumeGradients, &QCheckBox::toggled, this, [this](bool checked) {
-            applyToSegmentationViewer([checked](VolumeViewerBase* viewer) {
-                auto s = viewer->compositeRenderSettings();
-                s.useVolumeGradients = checked;
-                s.params.lightNormalSource = checked ? 1 : 0;
-                viewer->setCompositeRenderSettings(s);
-            });
-        });
-    }
-    if (_uiRefs.shadowSteps) {
-        connect(_uiRefs.shadowSteps, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int value) {
-            applyToSegmentationViewer([value](VolumeViewerBase* viewer) {
-                auto s = viewer->compositeRenderSettings();
-                s.params.shadowSteps = std::clamp(value, 1, 64);
-                viewer->setCompositeRenderSettings(s);
-            });
-        });
-    }
-
     if (_uiRefs.preNormalizeLayers) {
         connect(_uiRefs.preNormalizeLayers, &QCheckBox::toggled, this, [this](bool checked) {
             applyToSegmentationViewer([checked](VolumeViewerBase* viewer) {
@@ -415,19 +291,6 @@ void ViewerCompositePanel::setupControls()
         connect(_uiRefs.postTfY2, QOverload<int>::of(&QSpinBox::valueChanged), this,
                 [applyParam](int v) { applyParam([v](CompositeParams& p) { p.postTfY2 = uint8_t(v); }); });
     }
-    if (_uiRefs.dvrAmbient) {
-        connect(_uiRefs.dvrAmbient, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this,
-                [applyParam](double v) { applyParam([v](CompositeParams& p) { p.dvrAmbient = float(v); }); });
-    }
-    if (_uiRefs.pbrRoughness) {
-        connect(_uiRefs.pbrRoughness, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this,
-                [applyParam](double v) { applyParam([v](CompositeParams& p) { p.pbrRoughness = float(v); }); });
-    }
-    if (_uiRefs.pbrMetallic) {
-        connect(_uiRefs.pbrMetallic, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this,
-                [applyParam](double v) { applyParam([v](CompositeParams& p) { p.pbrMetallic = float(v); }); });
-    }
-
     if (_uiRefs.methodScale) {
         connect(_uiRefs.methodScale, &QSlider::valueChanged, this, [this](int value) {
             if (_uiRefs.methodScaleValue) {
@@ -495,54 +358,6 @@ void ViewerCompositePanel::setupControls()
         });
     }
 
-    updateRakingControlsEnabled(_uiRefs.rakingEnabled && _uiRefs.rakingEnabled->isChecked());
-    if (_uiRefs.rakingEnabled) {
-        connect(_uiRefs.rakingEnabled, &QCheckBox::toggled, this, [this](bool checked) {
-            updateRakingControlsEnabled(checked);
-            applyToAllViewers([checked](VolumeViewerBase* viewer) {
-                auto s = viewer->compositeRenderSettings();
-                s.postRakingEnabled = checked;
-                viewer->setCompositeRenderSettings(s);
-            });
-        });
-    }
-    if (_uiRefs.rakingAzimuth) {
-        connect(_uiRefs.rakingAzimuth, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double v) {
-            applyToAllViewers([v](VolumeViewerBase* viewer) {
-                auto s = viewer->compositeRenderSettings();
-                s.postRakingAzimuth = float(v);
-                viewer->setCompositeRenderSettings(s);
-            });
-        });
-    }
-    if (_uiRefs.rakingElevation) {
-        connect(_uiRefs.rakingElevation, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double v) {
-            applyToAllViewers([v](VolumeViewerBase* viewer) {
-                auto s = viewer->compositeRenderSettings();
-                s.postRakingElevation = float(v);
-                viewer->setCompositeRenderSettings(s);
-            });
-        });
-    }
-    if (_uiRefs.rakingStrength) {
-        connect(_uiRefs.rakingStrength, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double v) {
-            applyToAllViewers([v](VolumeViewerBase* viewer) {
-                auto s = viewer->compositeRenderSettings();
-                s.postRakingStrength = std::clamp(float(v), 0.0f, 1.0f);
-                viewer->setCompositeRenderSettings(s);
-            });
-        });
-    }
-    if (_uiRefs.rakingDepthScale) {
-        connect(_uiRefs.rakingDepthScale, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double v) {
-            applyToAllViewers([v](VolumeViewerBase* viewer) {
-                auto s = viewer->compositeRenderSettings();
-                s.postRakingDepthScale = std::max(0.01f, float(v));
-                viewer->setCompositeRenderSettings(s);
-            });
-        });
-    }
-
     updateCompositeParamsVisibility();
 }
 
@@ -572,16 +387,10 @@ void ViewerCompositePanel::applyInitialSettingsToViewer(VolumeViewerBase* viewer
 void ViewerCompositePanel::updateCompositeParamsVisibility()
 {
     const int methodIndex = _uiRefs.compositeMode ? _uiRefs.compositeMode->currentIndex() : 0;
-    const bool lightingOn = _uiRefs.lightingEnabled && _uiRefs.lightingEnabled->isChecked();
     const bool preTfOn = _uiRefs.preTfEnabled && _uiRefs.preTfEnabled->isChecked();
     const bool postTfOn = _uiRefs.postTfEnabled && _uiRefs.postTfEnabled->isChecked();
 
     const bool isAlpha = methodIndex == 3;
-    const bool isBL = methodIndex == 4;
-    const bool isVolum = methodIndex == 5;
-    const bool isDvr = methodIndex == 6;
-    const bool isPbr = methodIndex == 13;
-    const bool isShadedDvr = methodIndex == 14;
 
     setWidgetVisible(_uiRefs.alphaMinLabel, isAlpha);
     setWidgetVisible(_uiRefs.alphaMin, isAlpha);
@@ -591,36 +400,6 @@ void ViewerCompositePanel::updateCompositeParamsVisibility()
     setWidgetVisible(_uiRefs.alphaThreshold, isAlpha);
     setWidgetVisible(_uiRefs.materialLabel, isAlpha);
     setWidgetVisible(_uiRefs.material, isAlpha);
-
-    const bool showBL = isBL || isVolum;
-    setWidgetVisible(_uiRefs.blExtinctionLabel, showBL);
-    setWidgetVisible(_uiRefs.blExtinction, showBL);
-    setWidgetVisible(_uiRefs.blEmissionLabel, showBL);
-    setWidgetVisible(_uiRefs.blEmission, showBL);
-    setWidgetVisible(_uiRefs.blAmbientLabel, showBL);
-    setWidgetVisible(_uiRefs.blAmbient, showBL);
-
-    setWidgetVisible(_uiRefs.shadowStepsLabel, isVolum);
-    setWidgetVisible(_uiRefs.shadowSteps, isVolum);
-
-    const bool showDvrAmbient = isDvr || isShadedDvr;
-    setWidgetVisible(_uiRefs.dvrAmbientLabel, showDvrAmbient);
-    setWidgetVisible(_uiRefs.dvrAmbient, showDvrAmbient);
-    setWidgetVisible(_uiRefs.pbrRoughnessLabel, isPbr);
-    setWidgetVisible(_uiRefs.pbrRoughness, isPbr);
-    setWidgetVisible(_uiRefs.pbrMetallicLabel, isPbr);
-    setWidgetVisible(_uiRefs.pbrMetallic, isPbr);
-
-    setWidgetVisible(_uiRefs.lightingEnabled, true);
-    setWidgetVisible(_uiRefs.lightAzimuthLabel, lightingOn);
-    setWidgetVisible(_uiRefs.lightAzimuth, lightingOn);
-    setWidgetVisible(_uiRefs.lightElevationLabel, lightingOn);
-    setWidgetVisible(_uiRefs.lightElevation, lightingOn);
-    setWidgetVisible(_uiRefs.lightDiffuseLabel, lightingOn);
-    setWidgetVisible(_uiRefs.lightDiffuse, lightingOn);
-    setWidgetVisible(_uiRefs.lightAmbientLabel, lightingOn);
-    setWidgetVisible(_uiRefs.lightAmbient, lightingOn);
-    setWidgetVisible(_uiRefs.useVolumeGradients, lightingOn);
 
     setWidgetVisible(_uiRefs.preTfX1, preTfOn);
     setWidgetVisible(_uiRefs.preTfY1, preTfOn);
@@ -639,18 +418,6 @@ void ViewerCompositePanel::updateCompositeParamsVisibility()
     setWidgetVisible(_uiRefs.methodParamLabel, false);
     setWidgetVisible(_uiRefs.methodParam, false);
     setWidgetVisible(_uiRefs.methodParamValue, false);
-}
-
-void ViewerCompositePanel::updateRakingControlsEnabled(bool enabled)
-{
-    setWidgetEnabled(_uiRefs.rakingAzimuth, enabled);
-    setWidgetEnabled(_uiRefs.rakingElevation, enabled);
-    setWidgetEnabled(_uiRefs.rakingStrength, enabled);
-    setWidgetEnabled(_uiRefs.rakingDepthScale, enabled);
-    setWidgetEnabled(_uiRefs.rakingAzimuthLabel, enabled);
-    setWidgetEnabled(_uiRefs.rakingElevationLabel, enabled);
-    setWidgetEnabled(_uiRefs.rakingStrengthLabel, enabled);
-    setWidgetEnabled(_uiRefs.rakingDepthLabel, enabled);
 }
 
 void ViewerCompositePanel::applyToSegmentationViewer(const std::function<void(VolumeViewerBase*)>& apply)

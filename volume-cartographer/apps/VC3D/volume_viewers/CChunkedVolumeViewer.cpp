@@ -99,11 +99,6 @@ struct IntersectionStyleHash {
     }
 };
 
-bool isSupportedStreamingCompositeMethod(const std::string& method)
-{
-    return method == "mean" || method == "max" || method == "min" || method == "alpha";
-}
-
 int dominantAxis(const cv::Vec3f& v, float axisEps = 1e-4f)
 {
     int axis = 0;
@@ -1102,17 +1097,6 @@ int CChunkedVolumeViewer::renderStartLevel(bool preferSurfaceResolution) const
     return out;
 }
 
-bool CChunkedVolumeViewer::streamingCompositeUnsupported() const
-{
-    return !isSupportedStreamingCompositeMethod(_compositeSettings.params.method) ||
-           _compositeSettings.params.lightingEnabled ||
-           _compositeSettings.params.method == "beerLambert" ||
-           _compositeSettings.postClaheEnabled ||
-           _compositeSettings.postRakingEnabled ||
-           _compositeSettings.postRemoveSmallComponents ||
-           _compositeSettings.useVolumeGradients;
-}
-
 struct CChunkedVolumeViewer::RenderContext {
     std::uint64_t serial = 0;
     int fbW = 0;
@@ -1217,15 +1201,6 @@ CChunkedVolumeViewer::RenderResult CChunkedVolumeViewer::renderFrame(RenderConte
             std::make_move_iterator(st.missedKeys.end()));
     };
 
-    auto streamingCompositeUnsupported = [&]() {
-        return !isSupportedStreamingCompositeMethod(ctx.compositeSettings.params.method) ||
-               ctx.compositeSettings.params.lightingEnabled ||
-               ctx.compositeSettings.params.method == "beerLambert" ||
-               ctx.compositeSettings.postClaheEnabled ||
-               ctx.compositeSettings.postRakingEnabled ||
-               ctx.compositeSettings.postRemoveSmallComponents ||
-               ctx.compositeSettings.useVolumeGradients;
-    };
 
     auto samplePlane = [&](const cv::Vec3f& origin,
                            const cv::Vec3f& vxStep,
@@ -1234,7 +1209,7 @@ CChunkedVolumeViewer::RenderResult CChunkedVolumeViewer::renderFrame(RenderConte
                            cv::Mat_<uint8_t>& dst,
                            cv::Mat_<uint8_t>& cov,
                            vc::render::ChunkCache& array) {
-        const bool wantComposite = ctx.compositeSettings.planeEnabled && !streamingCompositeUnsupported();
+        const bool wantComposite = ctx.compositeSettings.planeEnabled;
         if (!wantComposite) {
             collectMissed(vc::render::ChunkedPlaneSampler::samplePlaneLevel(
                 array, ctx.startLevel, origin, vxStep, vyStep, dst, cov, options));
@@ -1299,7 +1274,6 @@ CChunkedVolumeViewer::RenderResult CChunkedVolumeViewer::renderFrame(RenderConte
         const int behind = std::max(0, planeViewForComposite
             ? ctx.compositeSettings.planeLayersBehind : ctx.compositeSettings.layersBehind);
         const bool wantComposite = compositeOn &&
-                                   !streamingCompositeUnsupported() &&
                                    !normals.empty();
         if (!wantComposite) {
             collectMissed(vc::render::ChunkedPlaneSampler::sampleCoordsLevel(
@@ -1389,8 +1363,8 @@ CChunkedVolumeViewer::RenderResult CChunkedVolumeViewer::renderFrame(RenderConte
                                0.0f);
         const bool needSurfaceNormals =
             ctx.zOff != 0.0f ||
-            (ctx.compositeSettings.enabled && !streamingCompositeUnsupported()) ||
-            (planeView && ctx.compositeSettings.planeEnabled && !streamingCompositeUnsupported());
+            (ctx.compositeSettings.enabled) ||
+            (planeView && ctx.compositeSettings.planeEnabled);
 
         if (profilePhases) phaseTimer.restart();
         ctx.surf->gen(&coords, needSurfaceNormals ? &normals : nullptr,
@@ -1699,7 +1673,7 @@ void CChunkedVolumeViewer::submitRender(const char* reason, std::source_location
         predictAndPrefetch(ctx.surf.get(), *_chunkArray, ctx.startLevel,
                            ctx.fbW, ctx.fbH, ctx.scale, ctx.surfacePtrX, ctx.surfacePtrY,
                            ctx.zOff, ctx.compositeSettings,
-                           ctx.compositeSettings.enabled && !streamingCompositeUnsupported());
+                           ctx.compositeSettings.enabled);
 
     // tick/settle: freeze the cache for the SETTLE phase. While frozen the render
     // reads resident-only (lock-free) and completed fetches park in staging
@@ -3840,9 +3814,7 @@ void CChunkedVolumeViewer::updateStatusLabel()
     items << QString("scale %1").arg(_scale, 0, 'f', 2);
     items << QString("%1x%2").arg(_framebuffer.width()).arg(_framebuffer.height());
 
-    if ((_compositeSettings.enabled || _compositeSettings.planeEnabled) && streamingCompositeUnsupported()) {
-        items << QString("composite unsupported: %1").arg(QString::fromStdString(_compositeSettings.params.method));
-    } else if (_compositeSettings.enabled || _compositeSettings.planeEnabled) {
+    if (_compositeSettings.enabled || _compositeSettings.planeEnabled) {
         items << QString("composite %1").arg(QString::fromStdString(_compositeSettings.params.method));
     }
 

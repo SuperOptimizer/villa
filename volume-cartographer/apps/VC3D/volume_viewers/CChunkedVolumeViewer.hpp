@@ -100,8 +100,8 @@ public:
 
     void setCompositeRenderSettings(const CompositeRenderSettings& s) override { if (_closing) return; _compositeSettings = s; scheduleRender("setCompositeRenderSettings"); }
     const CompositeRenderSettings& compositeRenderSettings() const override { return _compositeSettings; }
-    bool isCompositeEnabled() const override { return _compositeSettings.enabled && !streamingCompositeUnsupported(); }
-    bool isPlaneCompositeEnabled() const override { return _compositeSettings.planeEnabled && !streamingCompositeUnsupported(); }
+    bool isCompositeEnabled() const override { return _compositeSettings.enabled; }
+    bool isPlaneCompositeEnabled() const override { return _compositeSettings.planeEnabled; }
 
     void setVolumeWindow(float low, float high) override;
     void setBaseColormap(const std::string& id) override { if (_closing) return; _baseColormapId = id; scheduleRender("setBaseColormap"); }
@@ -278,7 +278,6 @@ private:
     static RenderResult renderFrame(RenderContext ctx);
     void finishRenderOnMainThread(std::shared_ptr<RenderResult> result);
     int renderStartLevel(bool preferSurfaceResolution = false) const;
-    bool streamingCompositeUnsupported() const;
     std::optional<cv::Vec3f> cursorVolumePosition(const QPointF& scenePos) const;
     void updateCursorCrosshair(const QPointF& scenePos);
     void updateLineAnnotationPlacementMarker(const QPointF& scenePos);

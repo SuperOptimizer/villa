@@ -22,14 +22,6 @@ public:
 
         QComboBox* baseColormap{nullptr};
         QCheckBox* stretchValues{nullptr};
-        QCheckBox* removeSmallComponents{nullptr};
-        QLabel* minComponentSizeLabel{nullptr};
-        QSpinBox* minComponentSize{nullptr};
-        QCheckBox* claheEnabled{nullptr};
-        QLabel* claheClipLimitLabel{nullptr};
-        QDoubleSpinBox* claheClipLimit{nullptr};
-        QLabel* claheTileSizeLabel{nullptr};
-        QSpinBox* claheTileSize{nullptr};
     };
 
     explicit ViewerPostprocessingPanel(const UiRefs& uiRefs,
@@ -39,8 +31,6 @@ public:
 private:
     void setupControls();
     void setupColormapSelector();
-    void setSmallComponentControlsEnabled(bool enabled);
-    void setClaheControlsEnabled(bool enabled);
     VolumeViewerBase* segmentationBaseViewer() const;
 
     UiRefs _uiRefs;
