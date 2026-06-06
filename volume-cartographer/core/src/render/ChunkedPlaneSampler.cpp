@@ -112,9 +112,35 @@ struct SampleTile {
     int yEnd = 0;
 };
 
+// Bit-level finiteness: |x| bits < 0x7f800000 means finite (excludes Inf and NaN).
+// Like the NaN test below, this survives -ffast-math where std::isfinite folds to
+// a constant true.
+__attribute__((always_inline)) inline bool isFiniteBits(float x)
+{
+    std::uint32_t u;
+    __builtin_memcpy(&u, &x, sizeof(u));
+    return (u & 0x7fffffffu) < 0x7f800000u;
+}
 __attribute__((always_inline)) inline bool finiteCoord(const cv::Vec3f& p)
 {
-    return std::isfinite(p[0]) && std::isfinite(p[1]) && std::isfinite(p[2]);
+    return isFiniteBits(p[0]) && isFiniteBits(p[1]) && isFiniteBits(p[2]);
+}
+
+// Bit-level NaN test. Under -ffast-math (-ffinite-math-only, the Unsafe build) the
+// compiler assumes no NaN/Inf and PROVES the usual `x != x` self-inequality is
+// always false -- so it DELETES the guard, and NaN coords from bad source data
+// would no longer be skipped (garbage/black pixels). Reading the bits and testing
+// the IEEE-754 NaN pattern (exponent all-ones, mantissa nonzero -> abs > 0x7f800000)
+// cannot be elided: it's integer arithmetic the optimizer must keep.
+__attribute__((always_inline)) inline bool isNanBits(float x)
+{
+    std::uint32_t u;
+    __builtin_memcpy(&u, &x, sizeof(u));
+    return (u & 0x7fffffffu) > 0x7f800000u;   // NaN (also catches no value <= +Inf)
+}
+__attribute__((always_inline)) inline bool anyNanBits(float a, float b, float c)
+{
+    return isNanBits(a) || isNanBits(b) || isNanBits(c);
 }
 
 __attribute__((always_inline)) inline bool surfaceSentinel(const cv::Vec3f& p)
@@ -130,7 +156,7 @@ __attribute__((always_inline)) inline bool surfaceSentinel(const cv::Vec3f& p)
         return true;
     if (a == 0.0f && b == 0.0f && c == 0.0f)
         return true;
-    return a != a || b != b || c != c;   // NaN
+    return anyNanBits(a, b, c);   // NaN (bit test -- survives -ffast-math)
 }
 
 LevelAccess makeLevelAccess(IChunkedArray& array, int level)
@@ -726,7 +752,8 @@ ChunkedPlaneSampler::Stats maxCompositeTileRange(
                 // all three components, so checking base[0] alone suffices. This
                 // replaces the general surfaceSentinel (-1 / (0,0,0) / NaN) checks
                 // -- those markers only appear in raw _points, never in gen output.
-                if (base[0] != base[0])
+                // Bit test (not base[0]!=base[0]) so -ffast-math can't elide it.
+                if (isNanBits(base[0]))
                     continue;
                 const cv::Vec3f nrm = normalRow[x];
                 // base/normal -> level space using the hoisted float scalars.

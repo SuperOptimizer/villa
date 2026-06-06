@@ -45,7 +45,7 @@ option(VC_USE_CCACHE "Route the compiler through ccache" OFF)
 set(VC_CCACHE_PCH_SLOPPINESS "pch_defines,time_macros" CACHE STRING
     "ccache sloppiness required when VC_USE_PCH and VC_USE_CCACHE are both ON")
 
-set(_vc_build_types Debug Release RelWithDebInfo MinSizeRel QuickBuild)
+set(_vc_build_types Debug Release RelWithDebInfo MinSizeRel QuickBuild Unsafe)
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Choose the build type." FORCE)
 endif()
@@ -251,6 +251,24 @@ elseif(CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
     add_compile_options(-O2)
 elseif(CMAKE_BUILD_TYPE STREQUAL "MinSizeRel")
     add_compile_options(-Os)
+elseif(CMAKE_BUILD_TYPE STREQUAL "Unsafe")
+    # Unsafe: maximum-speed profiling build. -Ofast (= -O3 + -ffast-math, so
+    # reassociation/FMA/no-errno/finite-math) + aggressive unrolling.
+    #   -fno-semantic-interposition: let the inliner assume our shared-lib symbols
+    #     aren't interposed, so it inlines across TUs and skips GOT-indirect calls.
+    #   -fno-omit-frame-pointer + -g3: KEEP frame pointers and rich debug info so
+    #     perf back-traces are exact and annotate maps samples to source -- this is
+    #     a profiling/debugging build, speed must not cost observability.
+    # NOTE: -ffast-math implies -ffinite-math-only, so the compiler may assume no
+    # NaN/Inf and DROP the kernel's NaN-coord guards. Verify rendering correctness
+    # (replay: 0 gray frames, no garbage) before trusting an Unsafe profile.
+    add_compile_options(-Ofast -ffast-math -funroll-loops
+                        -fno-semantic-interposition -fno-omit-frame-pointer -g3)
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+        add_compile_options(-mllvm -inline-threshold=1000)
+    endif()
+    message(STATUS "Unsafe: -Ofast -ffast-math -funroll-loops -fno-semantic-interposition -g3 "
+                   "(fast-math is NOT IEEE-correct; frame pointers kept for perf)")
 endif()
 if(NOT _san AND NOT CMAKE_BUILD_TYPE STREQUAL "Debug" AND NOT CMAKE_BUILD_TYPE STREQUAL "QuickBuild")
     add_compile_options(${_lto})
