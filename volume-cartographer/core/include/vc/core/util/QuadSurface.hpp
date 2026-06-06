@@ -284,6 +284,21 @@ public:
     // Get normal directly from grid coordinates (avoids expensive pointTo lookup)
     cv::Vec3f gridNormal(int row, int col) const;
     void gen(cv::Mat_<cv::Vec3f> *coords, cv::Mat_<cv::Vec3f> *normals, cv::Size size, const cv::Vec3f &ptr, float scale, const cv::Vec3f &offset) const override;
+private:
+    // Shared core for gen()/genLod(). Walks an explicit control grid `pts` with
+    // its own `gridScale`/`gridCenter`; `components` is the multi-component column
+    // split for that grid (empty for decimated LODs). `validCache`/`normalCache`
+    // are the memoized derived data for THIS grid (native uses the member caches;
+    // each LOD uses its own _geomLod{Valid,Normals}[k]).
+    void genGridImpl(const cv::Mat_<cv::Vec3f>& pts, const cv::Vec2f& gridScale,
+                     const cv::Vec3f& gridCenter,
+                     const std::vector<std::pair<int,int>>& components,
+                     cv::Mat_<uint8_t>& validCache, std::atomic<bool>& validAllValid,
+                     cv::Mat_<cv::Vec3f>& normalCache,
+                     cv::Mat_<cv::Vec3f>* coords, cv::Mat_<cv::Vec3f>* normals,
+                     cv::Size size, const cv::Vec3f& ptr, float scale,
+                     const cv::Vec3f& offset) const;
+public:
     float pointTo(cv::Vec3f &ptr, const cv::Vec3f &tgt, float th, int max_iters = 1000,
                   class SurfacePatchIndex* surfaceIndex = nullptr, class PointIndex* pointIndex = nullptr) override;
     cv::Size size();
@@ -301,6 +316,10 @@ public:
 
     bool isLoaded() const { return !_needsLoad; }
 
+    // Drop the cached geometry LOD pyramid (rebuilt lazily on next request).
+    // Call whenever _points changes. Thread-safe.
+    void clearGeomLods();
+
     // Drop derived caches (validity mask, etc.) without unloading _points.
     // Called when this surface is no longer the active editing target so
     // RAM is reserved for the segment the user is currently working on.
@@ -316,6 +335,34 @@ public:
     virtual cv::Mat_<cv::Vec3f> rawPoints() { ensureLoaded(); return *_points; }
     virtual cv::Mat_<cv::Vec3f> *rawPointsPtr() { ensureLoaded(); return _points.get(); }
     virtual const cv::Mat_<cv::Vec3f> *rawPointsPtr() const { const_cast<QuadSurface*>(this)->ensureLoaded(); return _points.get(); }
+
+    // --- Geometry LOD pyramid -------------------------------------------------
+    // The control-point grid (_points) is single-resolution: every gen()/predict
+    // walk traverses the full grid regardless of zoom. When zoomed out (one
+    // pixel spans many control points) that is wasted work AND a huge prediction
+    // walk. A geometry LOD is a 2x-decimated copy of _points with a matching
+    // halved _scale; because _center = cols/2/_scale is invariant under uniform
+    // decimation, a decimated mesh maps to the SAME nominal coordinates -- it is
+    // the same surface, coarser. Levels are built lazily and cached.
+    struct GeometryLod {
+        const cv::Mat_<cv::Vec3f>* points;  // decimated control grid (owned by the pyramid)
+        cv::Vec2f scale;                    // _scale for this level (=_scale / 2^level)
+        int level;                          // 0 = native _points
+    };
+    // Number of decimations such that one OUTPUT pixel (a surface unit / `scale`
+    // of the render) covers about one control cell -- i.e. don't tessellate finer
+    // than the screen shows. `renderScale` is gen()'s `scale` arg (pixels per
+    // surface unit). Clamped to the available pyramid depth. Cheap, no build.
+    int geometryLodForScale(float renderScale) const;
+    // Fetch (building lazily) the decimated grid at `level` (0 = native). Levels
+    // above the cached max are built on demand and memoized. Thread-safe.
+    GeometryLod geometryLod(int level) const;
+
+    // gen() against a chosen geometry LOD. Identical contract to gen(), but walks
+    // the decimated grid -- coords land in the same nominal space. level<=0 or an
+    // out-of-range level falls back to native gen().
+    void genLod(int level, cv::Mat_<cv::Vec3f>* coords, cv::Mat_<cv::Vec3f>* normals,
+                cv::Size size, const cv::Vec3f& ptr, float scale, const cv::Vec3f& offset) const;
 
     // Grid iteration helpers
     ValidPointRange<cv::Vec3f> validPoints() { ensureLoaded(); return ValidPointRange<cv::Vec3f>(_points.get()); }
@@ -430,6 +477,18 @@ public:
 protected:
     std::unordered_map<std::string, cv::Mat> _channels;
     std::unique_ptr<cv::Mat_<cv::Vec3f>> _points;
+    // Geometry LOD pyramid: _geomLods[k] is _points decimated by 2^k (k>=1).
+    // Built lazily by geometryLod(); cleared whenever _points changes. mutable
+    // because gen()/predict are const but build on demand. Guarded by _geomLodMutex.
+    mutable std::vector<cv::Mat_<cv::Vec3f>> _geomLods;
+    mutable std::mutex _geomLodMutex;
+    // Per-LOD derived caches (validity mask + grid normals), parallel to _geomLods.
+    // Index k corresponds to _geomLods[k]. Built lazily inside genGridImpl.
+    mutable std::vector<cv::Mat_<uint8_t>> _geomLodValid;
+    mutable std::vector<cv::Mat_<cv::Vec3f>> _geomLodNormals;
+    // Per-LOD "no holes" flag (parallel to _geomLodValid), set by buildValidMask.
+    // unique_ptr so the vector stays movable/growable despite atomic being immovable.
+    mutable std::vector<std::unique_ptr<std::atomic<bool>>> _geomLodAllValid;
     cv::Rect _bounds;
     cv::Vec3f _center;
     Rect3D _bbox = {{-1,-1,-1},{-1,-1,-1}};

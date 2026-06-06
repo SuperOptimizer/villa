@@ -365,12 +365,90 @@ static cv::Vec3f nominal_loc(const cv::Vec3f &nominal, const cv::Vec3f &internal
     return nominal + cv::Vec3f(internal[0]/scale[0], internal[1]/scale[1], internal[2]);
 }
 
+namespace {
+// Valid-aware 2x decimation of a control grid. Output is ceil(cols/2) x ceil(rows/2).
+// Each output point averages the (up to 4) VALID source points in its 2x2 block;
+// an output point is a hole (-1) only if all 4 sources are holes. Averaging valid
+// neighbors keeps the decimated mesh on-surface even at component/hole borders.
+cv::Mat_<cv::Vec3f> decimateGrid2x(const cv::Mat_<cv::Vec3f>& src)
+{
+    const int orows = (src.rows + 1) / 2;
+    const int ocols = (src.cols + 1) / 2;
+    cv::Mat_<cv::Vec3f> dst(orows, ocols);
+    const cv::Vec3f hole(-1.f, -1.f, -1.f);
+    for (int r = 0; r < orows; ++r) {
+        cv::Vec3f* drow = dst[r];
+        for (int c = 0; c < ocols; ++c) {
+            cv::Vec3f acc(0.f, 0.f, 0.f);
+            int n = 0;
+            for (int dr = 0; dr < 2; ++dr) {
+                const int sr = 2 * r + dr;
+                if (sr >= src.rows) break;
+                const cv::Vec3f* srow = src[sr];
+                for (int dc = 0; dc < 2; ++dc) {
+                    const int sc = 2 * c + dc;
+                    if (sc >= src.cols) break;
+                    const cv::Vec3f& p = srow[sc];
+                    if (p[0] == -1.f) continue;   // hole sentinel
+                    acc += p; ++n;
+                }
+            }
+            drow[c] = n ? cv::Vec3f(acc[0] / n, acc[1] / n, acc[2] / n) : hole;
+        }
+    }
+    return dst;
+}
+} // namespace
+
 QuadSurface::QuadSurface(const cv::Mat_<cv::Vec3f> &points, const cv::Vec2f &scale)
 {
     _points = std::make_unique<cv::Mat_<cv::Vec3f>>(points.clone());
     _bounds = {0,0,_points->cols-1,_points->rows-1};
     _scale = scale;
     _center = {static_cast<float>(_points->cols/2.0/_scale[0]), static_cast<float>(_points->rows/2.0/_scale[1]), 0.f};
+}
+
+int QuadSurface::geometryLodForScale(float renderScale) const
+{
+    // gen()'s source step is sx = _scale/renderScale grid cells per output pixel.
+    // If sx >= 2 we're skipping >=2 control cells per pixel -> a 2x-decimated mesh
+    // still has >=1 cell/pixel and loses no visible detail. level = floor(log2(sx)).
+    const_cast<QuadSurface*>(this)->ensureLoaded();
+    if (renderScale <= 0.f || !_points || _points->empty()) return 0;
+    const float sx = std::max(_scale[0], _scale[1]) / renderScale;
+    int level = 0;
+    for (float s = sx; s >= 2.f && level < 16; s *= 0.5f) ++level;
+    return level;
+}
+
+QuadSurface::GeometryLod QuadSurface::geometryLod(int level) const
+{
+    const_cast<QuadSurface*>(this)->ensureLoaded();
+    if (level <= 0 || !_points || _points->empty())
+        return {_points.get(), _scale, 0};
+
+    std::lock_guard<std::mutex> lk(_geomLodMutex);
+    // Reserve to a fixed depth so push_back never reallocates: callers (genLod)
+    // hold a pointer into _geomLods across the lock-free render, and a concurrent
+    // geometryLod() growing the pyramid must not move existing Mat headers.
+    constexpr int kMaxLodDepth = 16;
+    if (_geomLods.capacity() < kMaxLodDepth) _geomLods.reserve(kMaxLodDepth);
+    // _geomLods[k] holds the 2^(k+1)-decimated grid; index k = level-1.
+    while (int(_geomLods.size()) < level) {
+        const cv::Mat_<cv::Vec3f>& prev =
+            _geomLods.empty() ? *_points : _geomLods.back();
+        // Stop decimating once the grid is tiny -- no point going below ~4 cells.
+        if (prev.rows <= 2 || prev.cols <= 2) {
+            // clamp: hand back the coarsest available level.
+            const int have = int(_geomLods.size());
+            const cv::Mat_<cv::Vec3f>& m = have ? _geomLods.back() : *_points;
+            const float f = float(1 << have);
+            return {&m, cv::Vec2f(_scale[0] / f, _scale[1] / f), have};
+        }
+        _geomLods.push_back(decimateGrid2x(prev));
+    }
+    const float f = float(1 << level);
+    return {&_geomLods[level - 1], cv::Vec2f(_scale[0] / f, _scale[1] / f), level};
 }
 
 QuadSurface::QuadSurface(cv::Mat_<cv::Vec3f> *points, const cv::Vec2f &scale)
@@ -457,6 +535,7 @@ void QuadSurface::ensureLoaded()
 
     // Transfer ownership of points and other data from loaded surface
     _points = std::move(loaded->_points);
+    clearGeomLods();  // stale pyramid from a prior load/unload cycle
 
     _bounds = loaded->_bounds;
     _scale = loaded->_scale;
@@ -623,6 +702,15 @@ int QuadSurface::countValidQuads() const
     return static_cast<int>(std::distance(range.begin(), range.end()));
 }
 
+void QuadSurface::clearGeomLods()
+{
+    std::lock_guard<std::mutex> lk(_geomLodMutex);
+    _geomLods.clear();
+    _geomLodValid.clear();
+    _geomLodNormals.clear();
+    _geomLodAllValid.clear();
+}
+
 void QuadSurface::unloadPoints()
 {
     if (path.empty()) return;  // No disk backing — can't reload.
@@ -638,6 +726,7 @@ void QuadSurface::unloadPoints()
     _validMaskCache = cv::Mat_<uint8_t>();
     _validMaskAllValid = false;
     _normalCache = cv::Mat_<cv::Vec3f>();
+    clearGeomLods();
     _needsLoad = true;
     if (DebugLoggingEnabled()) {
         std::fprintf(stderr, "[SURF] unload %s (%zu MB freed)\n", id.c_str(), mb);
@@ -649,6 +738,7 @@ void QuadSurface::unloadCaches()
     _validMaskCache = cv::Mat_<uint8_t>();
     _validMaskAllValid = false;
     _normalCache = cv::Mat_<cv::Vec3f>();
+    clearGeomLods();
     // Release loaded channel pixel data but keep the keys so channel(name)
     // still knows which channels exist on disk and can lazy-reload them.
     for (auto& [_, mat] : _channels) {
@@ -739,6 +829,37 @@ void QuadSurface::invalidateCache()
     _validMaskCache = cv::Mat_<uint8_t>();
     _validMaskAllValid = false;
     _normalCache = cv::Mat_<cv::Vec3f>();
+    clearGeomLods();
+}
+
+// Build a validity mask (255 valid / 0 hole/NaN) for an arbitrary control grid.
+// Sets allValid when the grid has no holes (gen()'s all-valid fast path). Mirrors
+// QuadSurface::validMask() but parameterized so geometry LODs get their own mask.
+static cv::Mat_<uint8_t> buildValidMask(const cv::Mat_<cv::Vec3f>& pts,
+                                        std::atomic<bool>& allValid)
+{
+    const int rows = pts.rows, cols = pts.cols;
+    cv::Mat_<uint8_t> mask(rows, cols);
+    std::vector<uint8_t> anyInvalidPerRow(rows, 0);
+#pragma omp parallel for schedule(dynamic, 16)
+    for (int j = 0; j < rows; ++j) {
+        const cv::Vec3f* __restrict__ row = pts[j];
+        uint8_t* __restrict__ dst = mask[j];
+        uint8_t rowAnyInvalid = 0;
+        for (int i = 0; i < cols; ++i) {
+            const float a = row[i][0], b = row[i][1], c = row[i][2];
+            const int nan = (a != a) | (b != b) | (c != c);
+            const int sent = (a == -1.f) & (b == -1.f) & (c == -1.f);
+            const uint8_t invalid = (nan | sent) ? uint8_t(1) : uint8_t(0);
+            dst[i] = invalid ? uint8_t(0) : uint8_t(255);
+            rowAnyInvalid |= invalid;
+        }
+        anyInvalidPerRow[j] = rowAnyInvalid;
+    }
+    uint8_t anyInvalid = 0;
+    for (uint8_t v : anyInvalidPerRow) anyInvalid |= v;
+    allValid = (anyInvalid == 0);
+    return mask;
 }
 
 void QuadSurface::gen(cv::Mat_<cv::Vec3f>* coords,
@@ -749,9 +870,67 @@ void QuadSurface::gen(cv::Mat_<cv::Vec3f>* coords,
                       const cv::Vec3f& offset) const
 {
     const_cast<QuadSurface*>(this)->ensureLoaded();
+    if (!_points) return;
+    genGridImpl(*_points, _scale, _center, _components,
+                _validMaskCache, _validMaskAllValid, _normalCache,
+                coords, normals, size, ptr, scale, offset);
+}
+
+void QuadSurface::genLod(int level, cv::Mat_<cv::Vec3f>* coords,
+                         cv::Mat_<cv::Vec3f>* normals, cv::Size size,
+                         const cv::Vec3f& ptr, float scale,
+                         const cv::Vec3f& offset) const
+{
+    const_cast<QuadSurface*>(this)->ensureLoaded();
+    if (!_points) return;
+    if (level <= 0) { gen(coords, normals, size, ptr, scale, offset); return; }
+
+    GeometryLod lod = geometryLod(level);
+    if (lod.level <= 0 || !lod.points) {
+        gen(coords, normals, size, ptr, scale, offset);
+        return;
+    }
+    const int k = lod.level - 1;
+    // center is invariant under uniform decimation: cols/2/scale == (cols/2^L)/2 / (scale/2^L)... up to rounding.
+    const cv::Vec3f gridCenter(
+        float(lod.points->cols / 2.0 / lod.scale[0]),
+        float(lod.points->rows / 2.0 / lod.scale[1]), 0.f);
+    // Reserve the per-LOD cache slots under the lock so the Mat headers + atomic
+    // have STABLE addresses, then run genGridImpl WITHOUT the lock (like native
+    // gen()): the derived-cache build is idempotent (last writer wins, identical
+    // data) so concurrent quad renders at the same LOD don't serialize. Slots are
+    // reserved to a fixed depth so the vectors never reallocate mid-render.
+    constexpr int kMaxLodDepth = 16;
+    cv::Mat_<uint8_t>* validSlot;
+    cv::Mat_<cv::Vec3f>* normalSlot;
+    std::atomic<bool>* allValidSlot;
+    {
+        std::lock_guard<std::mutex> lk(_geomLodMutex);
+        if (_geomLodValid.empty())    _geomLodValid.resize(kMaxLodDepth);
+        if (_geomLodNormals.empty())  _geomLodNormals.resize(kMaxLodDepth);
+        if (_geomLodAllValid.empty()) _geomLodAllValid.resize(kMaxLodDepth);
+        if (!_geomLodAllValid[k]) _geomLodAllValid[k] = std::make_unique<std::atomic<bool>>(false);
+        validSlot = &_geomLodValid[k];
+        normalSlot = &_geomLodNormals[k];
+        allValidSlot = _geomLodAllValid[k].get();
+    }
+    genGridImpl(*lod.points, lod.scale, gridCenter, /*components=*/{},
+                *validSlot, *allValidSlot, *normalSlot,
+                coords, normals, size, ptr, scale, offset);
+}
+
+void QuadSurface::genGridImpl(const cv::Mat_<cv::Vec3f>& pts, const cv::Vec2f& gridScale,
+                              const cv::Vec3f& gridCenter,
+                              const std::vector<std::pair<int,int>>& components,
+                              cv::Mat_<uint8_t>& validCache, std::atomic<bool>& validAllValid,
+                              cv::Mat_<cv::Vec3f>& normalCache,
+                              cv::Mat_<cv::Vec3f>* coords, cv::Mat_<cv::Vec3f>* normals,
+                              cv::Size size, const cv::Vec3f& ptr, float scale,
+                              const cv::Vec3f& offset) const
+{
     const bool need_normals = (normals != nullptr) || offset[2] || ptr[2];
 
-    const cv::Vec3f ul = internal_loc(offset/scale + _center, ptr, _scale);
+    const cv::Vec3f ul = internal_loc(offset/scale + gridCenter, ptr, gridScale);
     const int w = size.width, h = size.height;
 
     cv::Mat_<cv::Vec3f> coords_local, normals_local;
@@ -762,16 +941,17 @@ void QuadSurface::gen(cv::Mat_<cv::Vec3f>* coords,
 
     // --- build mapping  ---------------------------------
     // Axis-aligned scale+translate; see the bespoke warp helpers above.
-    const double sx = static_cast<double>(_scale[0]) / static_cast<double>(scale);
-    const double sy = static_cast<double>(_scale[1]) / static_cast<double>(scale);
+    const double sx = static_cast<double>(gridScale[0]) / static_cast<double>(scale);
+    const double sy = static_cast<double>(gridScale[1]) / static_cast<double>(scale);
     const double ox = static_cast<double>(ul[0]) - 4.0 * sx;
     const double oy = static_cast<double>(ul[1]) - 4.0 * sy;
 
     // --- build a source validity mask (255 if point is valid) -------------
-    // Trigger the cache build + set _validMaskAllValid before deciding
-    // whether we need the validity warp below.
-    cv::Mat_<uint8_t> valid_src = validMask();
-    bool skipValidity = _validMaskAllValid;
+    // Memoized per-grid in validCache; sets validAllValid for the fast path.
+    if (validCache.empty() || validCache.size() != pts.size())
+        validCache = buildValidMask(pts, validAllValid);
+    cv::Mat_<uint8_t> valid_src = validCache;
+    bool skipValidity = validAllValid.load();
 
     // --- warp coords and validity ----------------------------------------
     // Per-THREAD working buffers: gen() is called concurrently from the render
@@ -784,7 +964,7 @@ void QuadSurface::gen(cv::Mat_<cv::Vec3f>* coords,
     thread_local cv::Mat_<cv::Vec3f> coords_big;
     thread_local cv::Mat_<uint8_t> valid_big;
 
-    if (!_components.empty()) {
+    if (!components.empty()) {
         // Multi-component surface: warp each component separately with
         // constant NaN border so no interpolation across component boundaries.
         const cv::Vec3f nanV(std::numeric_limits<float>::quiet_NaN(),
@@ -795,14 +975,14 @@ void QuadSurface::gen(cv::Mat_<cv::Vec3f>* coords,
         valid_big.create(h + 8, w + 8);
         valid_big.setTo(0);
 
-        const int rows = _points->rows;
+        const int rows = pts.rows;
         cv::Mat_<cv::Vec3f> compCoords;
         cv::Mat_<uint8_t> compValidBig;
-        for (const auto& [c0, c1] : _components) {
+        for (const auto& [c0, c1] : components) {
             const int cw = c1 - c0;
-            if (cw <= 0 || c0 < 0 || c1 > _points->cols) continue;
+            if (cw <= 0 || c0 < 0 || c1 > pts.cols) continue;
 
-            cv::Mat_<cv::Vec3f> compPts = (*_points)(cv::Rect(c0, 0, cw, rows));
+            cv::Mat_<cv::Vec3f> compPts = pts(cv::Rect(c0, 0, cw, rows));
             compCoords.create(h + 8, w + 8);
             warpBilinearConstVec3f(compPts, compCoords, ox - c0, oy, sx, sy, nanV);
 
@@ -829,7 +1009,7 @@ void QuadSurface::gen(cv::Mat_<cv::Vec3f>* coords,
         // the 4px halo around the crop region needs 0s so the
         // invalidation pass below sets them to NaN (black edges).
         coords_big.create(h + 8, w + 8);
-        warpBilinearReplicateVec3f(*_points, coords_big, ox, oy, sx, sy);
+        warpBilinearReplicateVec3f(pts, coords_big, ox, oy, sx, sy);
         valid_big.create(h + 8, w + 8);
         warpNearestConstU8(valid_src, valid_big, ox, oy, sx, sy, 0);
         skipValidity = false;  // force invalidation pass below
@@ -841,30 +1021,30 @@ void QuadSurface::gen(cv::Mat_<cv::Vec3f>* coords,
         // Build source-grid normal cache once per surface. Subsequent gen()
         // calls (panning, zooming) reuse it. Cleared by unloadCaches() when
         // a different surface becomes active.
-        if (_normalCache.empty() || _normalCache.size() != _points->size()) {
-            _normalCache.create(_points->rows, _points->cols);
+        if (normalCache.empty() || normalCache.size() != pts.size()) {
+            normalCache.create(pts.rows, pts.cols);
             const cv::Vec3f qn(std::numeric_limits<float>::quiet_NaN(),
                                std::numeric_limits<float>::quiet_NaN(),
                                std::numeric_limits<float>::quiet_NaN());
-            const int rows = _points->rows;
-            const int cols = _points->cols;
+            const int rows = pts.rows;
+            const int cols = pts.cols;
             // Border rows/cols: no ±1 neighbors, fill with NaN sentinel.
             if (rows > 0) {
-                cv::Vec3f* top = _normalCache[0];
-                cv::Vec3f* bot = _normalCache[rows - 1];
+                cv::Vec3f* top = normalCache[0];
+                cv::Vec3f* bot = normalCache[rows - 1];
                 for (int c = 0; c < cols; c++) { top[c] = qn; bot[c] = qn; }
             }
             #pragma omp parallel for schedule(dynamic, 16)
             for (int r = 1; r < rows - 1; r++) {
-                cv::Vec3f* dst = _normalCache[r];
-                const cv::Vec3f* row = (*_points)[r];
+                cv::Vec3f* dst = normalCache[r];
+                const cv::Vec3f* row = pts[r];
                 dst[0] = qn;
                 dst[cols - 1] = qn;
                 for (int c = 1; c < cols - 1; c++) {
                     if (row[c][0] == -1.f) {
                         dst[c] = qn;
                     } else {
-                        dst[c] = grid_normal_int(*_points, r, c);
+                        dst[c] = grid_normal_int(pts, r, c);
                     }
                 }
             }
@@ -873,7 +1053,7 @@ void QuadSurface::gen(cv::Mat_<cv::Vec3f>* coords,
                               std::numeric_limits<float>::quiet_NaN(),
                               std::numeric_limits<float>::quiet_NaN());
         normals_big.create(h + 8, w + 8);
-        warpNearestConstVec3f(_normalCache, normals_big,
+        warpNearestConstVec3f(normalCache, normals_big,
                               ox, oy, sx, sy, qnVec);
     }
 

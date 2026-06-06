@@ -45,6 +45,7 @@
 #include <source_location>
 #include <sstream>
 #include <unordered_map>
+#include <unordered_set>
 
 #include <opencv2/imgproc.hpp>
 
@@ -1362,8 +1363,20 @@ CChunkedVolumeViewer::RenderResult CChunkedVolumeViewer::renderFrame(RenderConte
             (planeView && ctx.compositeSettings.planeEnabled);
 
         if (profilePhases) phaseTimer.restart();
-        ctx.surf->gen(&coords, needSurfaceNormals ? &normals : nullptr,
-                      cv::Size(ctx.fbW, ctx.fbH), {0, 0, 0}, ctx.scale, offset);
+        // Geometry LOD: when zoomed out, a QuadSurface walks a 2^k-decimated copy
+        // of its control grid (same nominal coords, coarser mesh) instead of the
+        // full-res grid -- the visible tessellation already can't show finer detail
+        // than the screen, and it slashes gen()'s warp cost + the prefetch walk. The
+        // predictor (predictAndPrefetch) picks the SAME LOD so the prefetched chunks
+        // match what this render samples. Planes have no LOD (genLod falls through).
+        if (auto* quadS = dynamic_cast<QuadSurface*>(ctx.surf.get())) {
+            const int glod = quadS->geometryLodForScale(ctx.scale);
+            quadS->genLod(glod, &coords, needSurfaceNormals ? &normals : nullptr,
+                          cv::Size(ctx.fbW, ctx.fbH), {0, 0, 0}, ctx.scale, offset);
+        } else {
+            ctx.surf->gen(&coords, needSurfaceNormals ? &normals : nullptr,
+                          cv::Size(ctx.fbW, ctx.fbH), {0, 0, 0}, ctx.scale, offset);
+        }
         applyPerPixelNormalOffset(coords, normals, ctx.zOff);
         if (profilePhases) phaseGenMs = phaseTimer.elapsed();
         if (!coords.empty()) {
@@ -1505,32 +1518,62 @@ void predictAndPrefetch(Surface* surf, vc::render::ChunkCache& cache, int level,
         cv::Vec3f mn(std::numeric_limits<float>::max(), std::numeric_limits<float>::max(),
                      std::numeric_limits<float>::max());
         cv::Vec3f mx = -mn;
+        // origin/steps are LEVEL-0 voxel coords; scale the bbox to the render LEVEL
+        // so it matches appendChunksForBbox's level-L grid (shape/chunkShape). Without
+        // this, level-0 coords clamped against the tiny level-L shape -> empty box ->
+        // the prefetch predicted NOTHING (keys=0) at coarse LODs.
+        const auto s0 = cache.levelTransform(level).scaleFromLevel0;
         for (float dz : {depthLo, depthHi})
             for (const cv::Vec3f& base : {origin, origin + vxStep * xMax, origin + vyStep * yMax,
                                           origin + vxStep * xMax + vyStep * yMax}) {
-                const cv::Vec3f p = base + n * dz;
+                const cv::Vec3f p0 = base + n * dz;
+                const cv::Vec3f p(p0[0] * float(s0[0]), p0[1] * float(s0[1]), p0[2] * float(s0[2]));
                 for (int k = 0; k < 3; ++k) { mn[k] = std::min(mn[k], p[k]); mx[k] = std::max(mx[k], p[k]); }
             }
         appendChunksForBbox(cache, level, mn, mx, keys);
     } else if (auto* quad = dynamic_cast<QuadSurface*>(surf)) {
         // Only the VISIBLE window of the surface is on screen -- NOT the whole
-        // folded sheet (whose value-bbox is huge at a fine LOD and would OOM).
-        // Replicate gen()'s exact grid sampling: it walks the _points grid from
-        //   ul = ptr + center*_scale   over   size * (_scale/scale)
-        // (see QuadSurface::gen). We collect the distinct CHUNKS the valid points
-        // in that grid window fall in -- a thin sheet traces few chunks, so we
-        // gather the actual chunk set (not a bbox).
-        const cv::Mat_<cv::Vec3f>* pts = quad->rawPointsPtr();
+        // folded sheet. We walk the control-point grid over that window and gather
+        // the distinct CHUNKS its cells fall in (a thin sheet traces few chunks).
+        //
+        // GEOMETRY LOD: the native control grid is millions of cells. When zoomed
+        // out (gen()'s src step _scale/scale >> 1) we'd iterate the whole grid just
+        // to find the few hundred coarse-LOD chunks it touches. Instead pick the
+        // QuadSurface geometry LOD matching the render scale -- a 2^k-decimated grid
+        // whose halved _scale maps to the SAME nominal coords -- and walk THAT. The
+        // walk drops from millions of cells to thousands while covering the same
+        // chunks (a decimated cell still bounds the surface between its corners).
+        const int glod = quad->geometryLodForScale(scale);
+        const QuadSurface::GeometryLod lodg = quad->geometryLod(glod);
+        const cv::Mat_<cv::Vec3f>* pts = lodg.points;
         if (!pts || pts->empty()) return;
-        const cv::Vec2f gsc = quad->scale();      // _scale (grid cells per surface unit)
-        const cv::Vec3f center = quad->center();
-        const float ulX = surfacePtrX + center[0] * gsc[0];
-        const float ulY = surfacePtrY + center[1] * gsc[1];
+        const cv::Vec2f gsc = lodg.scale;          // this LOD's _scale
+        const cv::Vec3f center(float(pts->cols / 2.0 / gsc[0]),
+                               float(pts->rows / 2.0 / gsc[1]), 0.f);
+        // Replicate gen()'s EXACT grid window for this LOD. renderFrame calls
+        //   gen(size={fbW,fbH}, ptr={0,0,0}, scale, offset) with
+        //   offset = (surfacePtrX*scale - fbW/2, surfacePtrY*scale - fbH/2, 0)
+        // and gen computes ul = (offset/scale + center) * _scale, step = _scale/scale.
+        const float offX = surfacePtrX * scale - float(fbW) * 0.5f;
+        const float offY = surfacePtrY * scale - float(fbH) * 0.5f;
+        const float ulX = (offX / scale + center[0]) * gsc[0];
+        const float ulY = (offY / scale + center[1]) * gsc[1];
         const float stepX = gsc[0] / scale, stepY = gsc[1] / scale;   // grid cells per pixel
-        int c0 = std::max(0, int(std::floor(ulX)) - 1);
-        int c1 = std::min(pts->cols - 1, int(std::ceil(ulX + float(fbW) * stepX)) + 1);
-        int r0 = std::max(0, int(std::floor(ulY)) - 1);
-        int r1 = std::min(pts->rows - 1, int(std::ceil(ulY + float(fbH) * stepY)) + 1);
+        // gen() reads source columns from ul-4*step .. ul+(w+4)*step (the ±4 halo,
+        // see QuadSurface::gen ox=ul-4*sx). Pad the window by that halo + 1 so the
+        // border cells gen() actually touches are predicted (was a fixed ±1, which
+        // under-predicted when zoomed out and 4*step > 1 cell).
+        const int haloX = int(std::ceil(4.f * stepX)) + 1;
+        const int haloY = int(std::ceil(4.f * stepY)) + 1;
+        int c0 = std::max(0, int(std::floor(ulX)) - haloX);
+        int c1 = std::min(pts->cols - 1, int(std::ceil(ulX + float(fbW) * stepX)) + haloX);
+        int r0 = std::max(0, int(std::floor(ulY)) - haloY);
+        int r1 = std::min(pts->rows - 1, int(std::ceil(ulY + float(fbH) * stepY)) + haloY);
+        if (::getenv("VCA_TICK_DBG"))
+            fprintf(stderr, "[ts] quad-window glod=%d gsc=(%.3f,%.3f) scale=%.4f "
+                    "grid=%dx%d -> c[%d,%d] r[%d,%d] (%d cells)\n",
+                    glod, gsc[0], gsc[1], scale, pts->cols, pts->rows, c0, c1, r0, r1,
+                    (c1 - c0 + 1) * (r1 - r0 + 1));
         if (c0 > c1 || r0 > r1) return;
 
         const auto cs = cache.chunkShape(level);
@@ -1549,11 +1592,14 @@ void predictAndPrefetch(Surface* surf, vc::render::ChunkCache& cache, int level,
         // CONSERVATIVE: bound each grid CELL (a quad of 4 adjacent control points)
         // by the voxel-space bbox of its corners, and add EVERY chunk in that box.
         // gen() interpolates the surface BETWEEN control points at pixel resolution,
-        // so the rendered surface inside a cell lies within its corners' bbox --
-        // covering the box covers every chunk the render can sample there, including
-        // chunks the cell crosses mid-interpolation that no single corner lands in.
-        // (The old code took only each point's own chunk + a fixed pad, so a cell
-        // spanning >1 chunk between corners under-predicted.)
+        // so the rendered surface inside a cell lies within its corners' bbox.
+        //
+        // Dedup chunks into a set (keyed by packed cz/cy/cx) and cap on the UNIQUE
+        // count, not the cell count. A thin sheet revisits the same chunk from many
+        // cells; the old code pushed a key per cell and tripped a cell-count cap that
+        // then cleared the whole (legitimately small) set to zero -> prefetch nothing.
+        std::unordered_set<uint64_t> chunkSet;
+        chunkSet.reserve(4096);
         auto cellCorner = [&](int r, int c, int& vz, int& vy, int& vx) -> bool {
             const cv::Vec3f& p = (*pts)[r][c];
             if (p[0] == -1.f || isNanBitsF(p[0])) return false;   // hole / NaN
@@ -1563,7 +1609,7 @@ void predictAndPrefetch(Surface* surf, vc::render::ChunkCache& cache, int level,
             return unsigned(vz) < unsigned(ls[0]) && unsigned(vy) < unsigned(ls[1]) &&
                    unsigned(vx) < unsigned(ls[2]);
         };
-        for (int r = r0; r <= r1; ++r) {
+        for (int r = r0; r <= r1 && chunkSet.size() <= kMaxPredictedChunks; ++r) {
             const int r1c = std::min(r + 1, pts->rows - 1);
             for (int c = c0; c <= c1; ++c) {
                 const int c1c = std::min(c + 1, pts->cols - 1);
@@ -1579,22 +1625,29 @@ void predictAndPrefetch(Surface* surf, vc::render::ChunkCache& cache, int level,
                     mxz = std::max(mxz, vz); mxy = std::max(mxy, vy); mxx = std::max(mxx, vx);
                 }
                 if (!any) continue;
-                // expand by composite depth, convert to chunk range, append all.
+                // expand by composite depth, convert to chunk range, insert all.
                 const int cz0 = std::max(0, (mnz - padz) / cs[0]), cz1 = std::min(gz - 1, (mxz + padz) / cs[0]);
                 const int cy0 = std::max(0, (mny - pady) / cs[1]), cy1 = std::min(gy - 1, (mxy + pady) / cs[1]);
                 const int cx0 = std::max(0, (mnx - padx) / cs[2]), cx1 = std::min(gx - 1, (mxx + padx) / cs[2]);
                 for (int kz = cz0; kz <= cz1; ++kz)
                     for (int ky = cy0; ky <= cy1; ++ky)
                         for (int kx = cx0; kx <= cx1; ++kx)
-                            keys.push_back({level, kz, ky, kx});
-                if (keys.size() > kMaxPredictedChunks) { keys.clear(); goto issue; }  // safety
+                            chunkSet.insert((uint64_t(kz) << 42) | (uint64_t(ky) << 21) | uint64_t(kx));
+                if (chunkSet.size() > kMaxPredictedChunks) break;  // unique-count cap
             }
         }
-    issue:;
+        keys.reserve(chunkSet.size());
+        for (uint64_t k : chunkSet)
+            keys.push_back({level, int(k >> 42), int((k >> 21) & 0x1fffff), int(k & 0x1fffff)});
     } else {
         return;
     }
 
+    if (::getenv("VCA_TICK_DBG"))
+        fprintf(stderr, "[ts] predictAndPrefetch level=%d keys=%zu surf=%s\n",
+                level, keys.size(),
+                dynamic_cast<PlaneSurface*>(surf) ? "plane" :
+                dynamic_cast<QuadSurface*>(surf) ? "quad" : "?");
     if (!keys.empty())
         cache.prefetchChunks(keys, /*wait=*/false);
 }
@@ -1705,14 +1758,19 @@ void CChunkedVolumeViewer::submitRender(const char* reason, std::source_location
         // NEXT global tick fetches + folds them. We do NOT tick here -- the one
         // coordinator clock owns the single tick phase. Just stage the result and
         // post the flip to the main thread.
+        // VCA_NO_REACTIVE_MISS: skip feeding render misses back to the cache, to
+        // test whether the a-priori prefetch alone is a complete (conservative)
+        // predictor. If holes appear with this set, the predictor has gaps; if
+        // rendering is unchanged, every needed chunk was already prefetched.
+        static const bool kReactiveMiss = ::getenv("VCA_NO_REACTIVE_MISS") == nullptr;
         if (chunkArray) {
             chunkArray->thaw();
-            if (!result->missedKeys.empty())
+            if (kReactiveMiss && !result->missedKeys.empty())
                 chunkArray->requestChunks(result->missedKeys);
         }
         if (overlayChunkArray) {
             overlayChunkArray->thaw();
-            if (!result->overlayMissedKeys.empty())
+            if (kReactiveMiss && !result->overlayMissedKeys.empty())
                 overlayChunkArray->requestChunks(result->overlayMissedKeys);
         }
 
