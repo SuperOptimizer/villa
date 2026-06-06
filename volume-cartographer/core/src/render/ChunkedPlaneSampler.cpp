@@ -270,7 +270,14 @@ void recordMiss(std::vector<ChunkKey>& missedVec,
 }
 
 // One coarser LOD level for the miss-fallback (precomputed per render call).
-struct CoarseLevel { int shift; int csh, cshY, cshX; int sz, sy, sx; };
+// pow2 + the cshLog* fields let the per-sample chunk math use shifts/masks
+// instead of runtime integer divides (idivl was ~6% of the kernel during
+// streaming, when misses are frequent). cshLog<0 / pow2=false -> divide fallback.
+struct CoarseLevel {
+    int shift; int csh, cshY, cshX; int sz, sy, sx;
+    int cshLog, cshLogY, cshLogX;   // log2 of chunk dims (valid iff pow2)
+    bool pow2;
+};
 
 // LOD miss-fallback: a fine chunk missed at `level`, so sample the same point
 // from the nearest COARSER level that IS resident (blurry but present, no hole,
@@ -290,12 +297,20 @@ int coarseFallbackImpl(LookupFn&& doLookup, int level, uint8_t fillVal,
         if (unsigned(vz) >= unsigned(cl.sz) || unsigned(vy) >= unsigned(cl.sy) ||
             unsigned(vx) >= unsigned(cl.sx))
             continue;
-        const int cz = vz / cl.csh, cy = vy / cl.cshY, cx = vx / cl.cshX;
+        int cz, cy, cx, lz, ly, lx;
+        if (cl.pow2) {
+            // Power-of-2 chunk dims (32^3 in production): chunk index = high bits,
+            // in-chunk offset = low bits. Shifts/masks, no idivl.
+            cz = vz >> cl.cshLog;  cy = vy >> cl.cshLogY;  cx = vx >> cl.cshLogX;
+            lz = vz & (cl.csh - 1); ly = vy & (cl.cshY - 1); lx = vx & (cl.cshX - 1);
+        } else {
+            cz = vz / cl.csh; cy = vy / cl.cshY; cx = vx / cl.cshX;
+            lz = vz - cz * cl.csh; ly = vy - cy * cl.cshY; lx = vx - cx * cl.cshX;
+        }
         const auto rv = doLookup(level + cl.shift, cz, cy, cx);
         if (rv.status == ChunkStatus::AllFill)
             return fillVal;
         if (rv.status == ChunkStatus::Data && rv.bytes) {
-            const int lz = vz - cz * cl.csh, ly = vy - cy * cl.cshY, lx = vx - cx * cl.cshX;
             const std::size_t o = (std::size_t(lz) * std::size_t(cl.cshY)
                                   + std::size_t(ly)) * std::size_t(cl.cshX) + std::size_t(lx);
             if (o < rv.bytes->size())
@@ -434,12 +449,17 @@ __attribute__((noinline)) ChunkedPlaneSampler::Stats renderTileRange(
     std::vector<CoarseLevel> coarse;
     {
         const int n = array.numLevels();
+        auto log2pos = [](int v) { return (v > 0 && (v & (v - 1)) == 0)
+                                          ? __builtin_ctz(unsigned(v)) : -1; };
         for (int L2 = level + 1; L2 < n; ++L2) {
             const auto cs = array.chunkShape(L2);
             const auto ls = array.shape(L2);
             if (cs[0] <= 0) break;
+            const int lg = log2pos(cs[0]), lgY = log2pos(cs[1]), lgX = log2pos(cs[2]);
             coarse.push_back(CoarseLevel{L2 - level, cs[0], cs[1], cs[2],
-                                         ls[0], ls[1], ls[2]});
+                                         ls[0], ls[1], ls[2],
+                                         lg, lgY, lgX,
+                                         /*pow2=*/(lg >= 0 && lgY >= 0 && lgX >= 0)});
         }
     }
 
