@@ -1283,12 +1283,22 @@ CChunkedVolumeViewer::RenderResult CChunkedVolumeViewer::renderFrame(RenderConte
         }
     };
 
+    const bool planeViewForComposite = dynamic_cast<PlaneSurface*>(ctx.surf.get()) != nullptr;
     auto sampleCoords = [&](const cv::Mat_<cv::Vec3f>& coords,
                             const cv::Mat_<cv::Vec3f>& normals,
                             cv::Mat_<uint8_t>& dst,
                             cv::Mat_<uint8_t>& cov,
                             vc::render::ChunkCache& array) {
-        const bool wantComposite = ctx.compositeSettings.enabled &&
+        // Plane and quad surfaces use different composite settings (plane*/layers
+        // vs the segment's). Pick the right set now that one path serves both.
+        const bool compositeOn = planeViewForComposite
+            ? ctx.compositeSettings.planeEnabled
+            : ctx.compositeSettings.enabled;
+        const int front = std::max(0, planeViewForComposite
+            ? ctx.compositeSettings.planeLayersFront : ctx.compositeSettings.layersFront);
+        const int behind = std::max(0, planeViewForComposite
+            ? ctx.compositeSettings.planeLayersBehind : ctx.compositeSettings.layersBehind);
+        const bool wantComposite = compositeOn &&
                                    !streamingCompositeUnsupported() &&
                                    !normals.empty();
         if (!wantComposite) {
@@ -1297,8 +1307,6 @@ CChunkedVolumeViewer::RenderResult CChunkedVolumeViewer::renderFrame(RenderConte
             return;
         }
 
-        const int front = std::max(0, ctx.compositeSettings.layersFront);
-        const int behind = std::max(0, ctx.compositeSettings.layersBehind);
         const int numLayers = front + behind + 1;
         const int zStart = -behind;
         const float zStep = ctx.compositeSettings.reverseDirection ? -1.0f : 1.0f;
@@ -1368,33 +1376,12 @@ CChunkedVolumeViewer::RenderResult CChunkedVolumeViewer::renderFrame(RenderConte
         }
     };
 
+    // Unified surface path: EVERY surface (plane or quad) produces its pixel->voxel
+    // coords (+ normals) via Surface::gen(), then the same sampleCoords lambda
+    // renders them. A plane is just a surface whose gen() fills coords with
+    // origin + vx*x + vy*y -- there is no separate plane sampler anymore.
     const bool planeView = dynamic_cast<PlaneSurface*>(ctx.surf.get()) != nullptr;
-    if (auto* plane = dynamic_cast<PlaneSurface*>(ctx.surf.get())) {
-        const cv::Vec3f vx = plane->basisX();
-        const cv::Vec3f vy = plane->basisY();
-        const cv::Vec3f n = plane->normal({0, 0, 0});
-        const float halfW = static_cast<float>(ctx.fbW) * 0.5f / ctx.scale;
-        const float halfH = static_cast<float>(ctx.fbH) * 0.5f / ctx.scale;
-        const cv::Vec3f origin = vx * (ctx.surfacePtrX - halfW)
-                               + vy * (ctx.surfacePtrY - halfH)
-                               + plane->origin()
-                               + n * ctx.zOff;
-        const cv::Vec3f vxStep = vx / ctx.scale;
-        const cv::Vec3f vyStep = vy / ctx.scale;
-        if (profilePhases) phaseTimer.restart();
-        samplePlane(origin, vxStep, vyStep, n, values, coverage, *ctx.chunkArray);
-        if (profilePhases) phaseSampleMs += phaseTimer.elapsed();
-        if (ctx.overlayChunkArray && ctx.overlayVolume && ctx.overlayOpacity > 0.0f) {
-            overlayValues.create(ctx.fbH, ctx.fbW);
-            overlayCoverage.create(ctx.fbH, ctx.fbW);
-            overlayValues.setTo(0);
-            overlayCoverage.setTo(0);
-            const int level = std::clamp(ctx.startLevel, 0, ctx.overlayChunkArray->numLevels() - 1);
-            collectOverlayMissed(vc::render::ChunkedPlaneSampler::samplePlaneLevel(
-                *ctx.overlayChunkArray, level, origin, vxStep, vyStep,
-                overlayValues, overlayCoverage, options));
-        }
-    } else {
+    {
         cv::Mat_<cv::Vec3f> coords;
         cv::Mat_<cv::Vec3f> normals;
         const cv::Vec3f offset(ctx.surfacePtrX * ctx.scale - float(ctx.fbW) * 0.5f,
@@ -1402,7 +1389,8 @@ CChunkedVolumeViewer::RenderResult CChunkedVolumeViewer::renderFrame(RenderConte
                                0.0f);
         const bool needSurfaceNormals =
             ctx.zOff != 0.0f ||
-            (ctx.compositeSettings.enabled && !streamingCompositeUnsupported());
+            (ctx.compositeSettings.enabled && !streamingCompositeUnsupported()) ||
+            (planeView && ctx.compositeSettings.planeEnabled && !streamingCompositeUnsupported());
 
         if (profilePhases) phaseTimer.restart();
         ctx.surf->gen(&coords, needSurfaceNormals ? &normals : nullptr,
