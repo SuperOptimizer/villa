@@ -140,6 +140,14 @@ endif()
 if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
     set(_dbg -g3 -fno-omit-frame-pointer -fasynchronous-unwind-tables -fstandalone-debug)
     set(_lto -flto=thin)
+    # ThinLTO incremental link cache: without it EVERY relink redoes all backend
+    # codegen for all modules (the ~2-3 min link). With a cache, only modules whose
+    # input changed recompile -> a one-line edit relinks in seconds. lld writes the
+    # cache; pin jobs to all cores. Applied only to executable links (lld handles
+    # it). The cache lives in the build dir so it's per-config and cleaned with it.
+    set(_lto_link
+        "-Wl,--thinlto-cache-dir=${CMAKE_BINARY_DIR}/thinlto-cache"
+        "-Wl,--thinlto-cache-policy=cache_size_bytes=10g")
     if(APPLE)
         set(_link "")
         # ld64.lld (the LLVM Mach-O linker the macOS preset selects via
@@ -273,6 +281,10 @@ endif()
 if(NOT _san AND NOT CMAKE_BUILD_TYPE STREQUAL "Debug" AND NOT CMAKE_BUILD_TYPE STREQUAL "QuickBuild")
     add_compile_options(${_lto})
     add_link_options(${_lto})
+    # ThinLTO incremental cache (clang only; _lto_link is empty for gcc).
+    if(_lto_link)
+        add_link_options(${_lto_link})
+    endif()
 endif()
 
 # ---- Warnings ---------------------------------------------------------------
