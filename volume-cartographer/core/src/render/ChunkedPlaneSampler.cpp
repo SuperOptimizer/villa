@@ -245,9 +245,16 @@ namespace {
 // the rare case (most chunks are resident), and inlining the push_back's grow branch
 // into the kernel bloated it and forced register spills. The kernel calls this only
 // on an actual miss.
-__attribute__((noinline, cold)) void recordMiss(std::vector<ChunkKey>& missedVec, ChunkKey key)
+// Record a UNIQUE missed chunk. Deduped via a flat hash set (O(1) insert, no sort)
+// so a chunk missed by thousands of pixels is pushed once -- without this the miss
+// list floods to millions of duplicate keys. Out-of-line + cold: a miss is the rare
+// case, and keeping the set insert + vector grow out of the hot loop avoids bloat.
+__attribute__((noinline, cold))
+void recordMiss(std::vector<ChunkKey>& missedVec,
+                std::unordered_set<std::uint64_t>& seen, ChunkKey key)
 {
-    missedVec.push_back(key);
+    if (seen.insert(key.word()).second)
+        missedVec.push_back(key);
 }
 
 // here; the Trilinear template path handles 8-corner interpolation.
@@ -320,8 +327,10 @@ __attribute__((noinline)) ChunkedPlaneSampler::Stats renderTileRange(
         if constexpr (kConcrete) return pin.lookupChecked(lv, z, y, x);
         else return pin->lookup(lv, z, y, x);
     };
-    std::vector<ChunkKey> missedVec;   // flat, deduped at flush (no node alloc)
+    std::vector<ChunkKey> missedVec;   // unique missed chunks (deduped via missedSeen)
+    std::unordered_set<std::uint64_t> missedSeen;
     missedVec.reserve(std::max<std::size_t>(16, (end - begin) * 4));
+    missedSeen.reserve(std::max<std::size_t>(16, (end - begin) * 4));
 
     // Read ONE voxel at level-L integer coords (iz,iy,ix). Returns the value, or -1
     // on a miss (records the missed chunk). Used by the trilinear path, whose 8
@@ -356,7 +365,7 @@ __attribute__((noinline)) ChunkedPlaneSampler::Stats renderTileRange(
             return -1;
         }
         if (rv.status == ChunkStatus::MissQueued)
-            recordMiss(missedVec, {level, cz, cy, cx});
+            recordMiss(missedVec, missedSeen, {level, cz, cy, cx});
         else if (rv.status == ChunkStatus::Error)
             ++localStats.errorChunks;
         return -1;
@@ -532,7 +541,7 @@ __attribute__((noinline)) ChunkedPlaneSampler::Stats renderTileRange(
                             // alloc); deduped once at flush. Gated by chunk-change
                             // (lastChunk), so at most one push per chunk crossing.
                             if (rv.status == ChunkStatus::MissQueued)
-                                recordMiss(missedVec, {level, cz, cy, cx});
+                                recordMiss(missedVec, missedSeen, {level, cz, cy, cx});
                             else if (rv.status == ChunkStatus::Error)
                                 ++localStats.errorChunks;
                         }

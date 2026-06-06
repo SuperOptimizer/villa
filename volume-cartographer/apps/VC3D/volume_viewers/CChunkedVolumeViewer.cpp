@@ -1537,39 +1537,56 @@ void predictAndPrefetch(Surface* surf, vc::render::ChunkCache& cache, int level,
         const auto ls = cache.shape(level);
         if (cs[0] <= 0) return;
         const auto s0 = cache.levelTransform(level).scaleFromLevel0;  // L0 voxel -> this-LOD
-        const float pad = std::max(std::abs(depthLo), std::abs(depthHi));
-        // How many chunks the composite depth (pad voxels at L0) spans at this LOD.
-        const int padCz = 1 + int(pad * float(s0[2])) / cs[0];
-        const int padCy = 1 + int(pad * float(s0[1])) / cs[1];
-        const int padCx = 1 + int(pad * float(s0[0])) / cs[2];
-        const int gz = ls[0] / cs[0], gy = ls[1] / cs[1], gx = ls[2] / cs[2];
-        // Walk the visible control points -> the ONE chunk each falls in, dilated by
-        // the depth pad on the chunk grid. No per-point set (prefetchChunks dedups
-        // against entries_ already) and no 3x re-sample -- just track the last chunk
-        // to skip the common run of points landing in the same chunk.
-        int lastCz = -1, lastCy = -1, lastCx = -1;
+        // Composite depth in this-LOD voxels (added as a pad to every cell bbox).
+        const float padL0 = std::max(std::abs(depthLo), std::abs(depthHi));
+        const int padz = int(padL0 * float(s0[2])) + 1;
+        const int pady = int(padL0 * float(s0[1])) + 1;
+        const int padx = int(padL0 * float(s0[0])) + 1;
+        const int gz = (ls[0] + cs[0] - 1) / cs[0];
+        const int gy = (ls[1] + cs[1] - 1) / cs[1];
+        const int gx = (ls[2] + cs[2] - 1) / cs[2];
+
+        // CONSERVATIVE: bound each grid CELL (a quad of 4 adjacent control points)
+        // by the voxel-space bbox of its corners, and add EVERY chunk in that box.
+        // gen() interpolates the surface BETWEEN control points at pixel resolution,
+        // so the rendered surface inside a cell lies within its corners' bbox --
+        // covering the box covers every chunk the render can sample there, including
+        // chunks the cell crosses mid-interpolation that no single corner lands in.
+        // (The old code took only each point's own chunk + a fixed pad, so a cell
+        // spanning >1 chunk between corners under-predicted.)
+        auto cellCorner = [&](int r, int c, int& vz, int& vy, int& vx) -> bool {
+            const cv::Vec3f& p = (*pts)[r][c];
+            if (p[0] == -1.f || isNanBitsF(p[0])) return false;   // hole / NaN
+            vz = int(p[2] * float(s0[2]));
+            vy = int(p[1] * float(s0[1]));
+            vx = int(p[0] * float(s0[0]));
+            return unsigned(vz) < unsigned(ls[0]) && unsigned(vy) < unsigned(ls[1]) &&
+                   unsigned(vx) < unsigned(ls[2]);
+        };
         for (int r = r0; r <= r1; ++r) {
-            const cv::Vec3f* row = (*pts)[r];
+            const int r1c = std::min(r + 1, pts->rows - 1);
             for (int c = c0; c <= c1; ++c) {
-                const cv::Vec3f& p = row[c];
-                if (p[0] == -1.f || isNanBitsF(p[0])) continue;   // hole / NaN
-                const int vz = int(p[2] * float(s0[2]));
-                const int vy = int(p[1] * float(s0[1]));
-                const int vx = int(p[0] * float(s0[0]));
-                if (unsigned(vz) >= unsigned(ls[0]) || unsigned(vy) >= unsigned(ls[1]) ||
-                    unsigned(vx) >= unsigned(ls[2]))
-                    continue;
-                const int cz = vz / cs[0], cy = vy / cs[1], cx = vx / cs[2];
-                if (cz == lastCz && cy == lastCy && cx == lastCx) continue;  // same chunk run
-                lastCz = cz; lastCy = cy; lastCx = cx;
-                for (int dz = -padCz; dz <= padCz; ++dz)
-                    for (int dy = -padCy; dy <= padCy; ++dy)
-                        for (int dx = -padCx; dx <= padCx; ++dx) {
-                            const int kz = cz + dz, ky = cy + dy, kx = cx + dx;
-                            if (unsigned(kz) >= unsigned(gz) || unsigned(ky) >= unsigned(gy) ||
-                                unsigned(kx) >= unsigned(gx)) continue;
+                const int c1c = std::min(c + 1, pts->cols - 1);
+                // bbox over the (up to) 4 corners of this cell that are valid.
+                int mnz = 1 << 30, mny = 1 << 30, mnx = 1 << 30;
+                int mxz = -1, mxy = -1, mxx = -1;
+                bool any = false;
+                for (int rr : {r, r1c}) for (int cc : {c, c1c}) {
+                    int vz, vy, vx;
+                    if (!cellCorner(rr, cc, vz, vy, vx)) continue;
+                    any = true;
+                    mnz = std::min(mnz, vz); mny = std::min(mny, vy); mnx = std::min(mnx, vx);
+                    mxz = std::max(mxz, vz); mxy = std::max(mxy, vy); mxx = std::max(mxx, vx);
+                }
+                if (!any) continue;
+                // expand by composite depth, convert to chunk range, append all.
+                const int cz0 = std::max(0, (mnz - padz) / cs[0]), cz1 = std::min(gz - 1, (mxz + padz) / cs[0]);
+                const int cy0 = std::max(0, (mny - pady) / cs[1]), cy1 = std::min(gy - 1, (mxy + pady) / cs[1]);
+                const int cx0 = std::max(0, (mnx - padx) / cs[2]), cx1 = std::min(gx - 1, (mxx + padx) / cs[2]);
+                for (int kz = cz0; kz <= cz1; ++kz)
+                    for (int ky = cy0; ky <= cy1; ++ky)
+                        for (int kx = cx0; kx <= cx1; ++kx)
                             keys.push_back({level, kz, ky, kx});
-                        }
                 if (keys.size() > kMaxPredictedChunks) { keys.clear(); goto issue; }  // safety
             }
         }
