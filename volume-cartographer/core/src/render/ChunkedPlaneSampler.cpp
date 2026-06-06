@@ -17,79 +17,6 @@
 namespace vc::render {
 namespace {
 
-// Lightweight per-tile chunk view used by the non-composite samplers. It holds
-// only a single last-chunk view (status + raw bytes pointer from readResidentRaw)
-// -- no node-based memo map, no shared_ptr. Trilinear reads 8 corners and
-// adjacent pixels share a chunk, so the lastKey fast path serves almost every
-// lookup; the rare cross-chunk step just re-probes the (now cache-friendly) flat
-// resident map directly. Misses are deduped into requestedKeys for the tick.
-struct ChunkProbe {
-    explicit ChunkProbe(IChunkedArray& a, std::size_t expectedChunks = 0)
-        : array(a)
-    {
-        // Devirtualize the resident lookup when the array is a concrete ChunkCache
-        // (the GUI case): hold a by-value ResidentPin so get() calls the tiny
-        // inlinable lookupChecked directly instead of the virtual IResidentPin::
-        // lookup. Fall back to the virtual pin for other IChunkedArray impls.
-        concrete_ = dynamic_cast<ChunkCache*>(&a);
-        if (concrete_)
-            cpin_ = concrete_->pinConcrete();
-        else
-            pin_ = a.makeResidentPin();
-        missed_.reserve(std::max<std::size_t>(16, expectedChunks));
-    }
-
-    struct View {
-        ChunkStatus status = ChunkStatus::MissQueued;
-        const std::vector<std::byte>* bytes = nullptr;
-    };
-
-    const View& get(const ChunkKey& key, int& requested, int& errors)
-    {
-        if (haveLast && lastKey == key)
-            return last;
-        const auto rv = concrete_
-            ? cpin_.lookup(key.level, key.iz, key.iy, key.ix)
-            : pin_->lookup(key.level, key.iz, key.iy, key.ix);
-        last.status = rv.status;
-        last.bytes = rv.bytes;
-        (void)requested;   // counted from the deduped set in flushMissedKeys
-        if (rv.status == ChunkStatus::MissQueued) {
-            // Flat append (no per-miss node alloc); deduped once at flush. The
-            // last-key cache already collapses the common same-chunk run.
-            missed_.push_back(key);
-        } else if (rv.status == ChunkStatus::Error) {
-            ++errors;
-        }
-        lastKey = key;
-        haveLast = true;
-        return last;
-    }
-
-    // Dedup the flat miss list, append to `out`, and add the unique count to
-    // `requested` (the requestedChunks stat).
-    void flushMissedKeys(std::vector<ChunkKey>& out, int& requested)
-    {
-        std::sort(missed_.begin(), missed_.end(),
-                  [](const ChunkKey& a, const ChunkKey& b) { return a.word() < b.word(); });
-        missed_.erase(std::unique(missed_.begin(), missed_.end()), missed_.end());
-        requested += static_cast<int>(missed_.size());
-        out.insert(out.end(),
-                   std::make_move_iterator(missed_.begin()),
-                   std::make_move_iterator(missed_.end()));
-        missed_.clear();
-    }
-
-    IChunkedArray& array;
-    ChunkCache* concrete_ = nullptr;            // non-null -> use cpin_ (devirt)
-    ChunkCache::ResidentPin cpin_;              // by-value concrete pin
-    std::unique_ptr<IChunkedArray::IResidentPin> pin_;  // virtual fallback
-    std::vector<ChunkKey> missed_;              // flat, deduped at flush
-    ChunkKey lastKey{};
-    View last;
-    bool haveLast = false;
-};
-
 constexpr int kParallelMinPixels = 128 * 128;
 constexpr int kMaxRenderSamplerWorkers = 8;
 
@@ -121,32 +48,12 @@ struct LevelAccess {
     uint8_t fill = 0;
 };
 
-struct LevelPlane {
-    cv::Vec3f origin;
-    cv::Vec3f vxStep;
-    cv::Vec3f vyStep;
-};
-
 struct SampleTile {
     int tx = 0;
     int ty = 0;
     int xEnd = 0;
     int yEnd = 0;
 };
-
-// Bit-level finiteness: |x| bits < 0x7f800000 means finite (excludes Inf and NaN).
-// Like the NaN test below, this survives -ffast-math where std::isfinite folds to
-// a constant true.
-__attribute__((always_inline)) inline bool isFiniteBits(float x)
-{
-    std::uint32_t u;
-    __builtin_memcpy(&u, &x, sizeof(u));
-    return (u & 0x7fffffffu) < 0x7f800000u;
-}
-__attribute__((always_inline)) inline bool finiteCoord(const cv::Vec3f& p)
-{
-    return isFiniteBits(p[0]) && isFiniteBits(p[1]) && isFiniteBits(p[2]);
-}
 
 // Bit-level NaN test. Under -ffast-math (-ffinite-math-only, the Unsafe build) the
 // compiler assumes no NaN/Inf and PROVES the usual `x != x` self-inequality is
@@ -160,27 +67,6 @@ __attribute__((always_inline)) inline bool isNanBits(float x)
     __builtin_memcpy(&u, &x, sizeof(u));
     return (u & 0x7fffffffu) > 0x7f800000u;   // NaN (also catches no value <= +Inf)
 }
-__attribute__((always_inline)) inline bool anyNanBits(float a, float b, float c)
-{
-    return isNanBits(a) || isNanBits(b) || isNanBits(c);
-}
-
-__attribute__((always_inline)) inline bool surfaceSentinel(const cv::Vec3f& p)
-{
-    // Hot path: called per screen pixel in the render sampler. gen() marks holes
-    // as (-1,-1,-1); (0,0,0) is the unset marker; NaN comes from bad source data.
-    // Coordinates never reach +/-Inf in the surface pipeline (see QuadSurface),
-    // so we detect NaN with the branchless self-inequality test (x != x) instead
-    // of std::isfinite (a libm classification call) -- the same trick the mask
-    // builder uses. Cheap == checks first so valid pixels exit fast.
-    const float a = p[0], b = p[1], c = p[2];
-    if (a == -1.0f || b == -1.0f || c == -1.0f)
-        return true;
-    if (a == 0.0f && b == 0.0f && c == 0.0f)
-        return true;
-    return anyNanBits(a, b, c);   // NaN (bit test -- survives -ffast-math)
-}
-
 LevelAccess makeLevelAccess(IChunkedArray& array, int level)
 {
     LevelAccess access;
@@ -195,284 +81,6 @@ bool hasSampleableLevel(const LevelAccess& access)
 {
     return access.shape[0] > 0 && access.shape[1] > 0 && access.shape[2] > 0
         && access.chunkShape[0] > 0 && access.chunkShape[1] > 0 && access.chunkShape[2] > 0;
-}
-
-__attribute__((always_inline)) inline cv::Vec3f toLevelCoord(const LevelAccess& access, const cv::Vec3f& p0)
-{
-    // Hot path: called per screen pixel. The level transform is a uniform scale
-    // with (almost always) zero offset (offsetFromLevel0 = {0,0,0} for the vca/
-    // zarr fetchers), so the common case is a single float multiply per axis --
-    // skip the double round-trip and the +0 adds. Coordinates stay well within
-    // float's exact-integer range (volumes are < 2^24 voxels), so float scaling
-    // is precise enough here.
-    const auto& t = access.transform;
-    const float sx = float(t.scaleFromLevel0[0]);
-    const float sy = float(t.scaleFromLevel0[1]);
-    const float sz = float(t.scaleFromLevel0[2]);
-    if (t.offsetFromLevel0[0] == 0.0 && t.offsetFromLevel0[1] == 0.0 &&
-        t.offsetFromLevel0[2] == 0.0) {
-        return {p0[0] * sx, p0[1] * sy, p0[2] * sz};
-    }
-    return {
-        float(double(p0[0]) * t.scaleFromLevel0[0] + t.offsetFromLevel0[0]),
-        float(double(p0[1]) * t.scaleFromLevel0[1] + t.offsetFromLevel0[1]),
-        float(double(p0[2]) * t.scaleFromLevel0[2] + t.offsetFromLevel0[2]),
-    };
-}
-
-__attribute__((always_inline)) inline cv::Vec3f toLevelVector(const LevelAccess& access, const cv::Vec3f& v0)
-{
-    const auto& t = access.transform;
-    return {
-        float(double(v0[0]) * t.scaleFromLevel0[0]),
-        float(double(v0[1]) * t.scaleFromLevel0[1]),
-        float(double(v0[2]) * t.scaleFromLevel0[2]),
-    };
-}
-
-LevelPlane toLevelPlane(const LevelAccess& access,
-                        const cv::Vec3f& origin,
-                        const cv::Vec3f& vxStep,
-                        const cv::Vec3f& vyStep)
-{
-    return {toLevelCoord(access, origin),
-            toLevelVector(access, vxStep),
-            toLevelVector(access, vyStep)};
-}
-
-bool inLevelBounds(const std::array<int, 3>& shape, float z, float y, float x)
-{
-    return z >= 0.0f && y >= 0.0f && x >= 0.0f
-        && z < float(shape[0]) && y < float(shape[1]) && x < float(shape[2]);
-}
-
-bool readVoxel(IChunkedArray& array,
-               ChunkProbe& cache,
-               const LevelAccess& access,
-               int level,
-               int iz,
-               int iy,
-               int ix,
-               uint8_t& out,
-               int& requested,
-               int& errors)
-{
-    const auto& shape = access.shape;
-    if (unsigned(iz) >= unsigned(shape[0])
-        || unsigned(iy) >= unsigned(shape[1])
-        || unsigned(ix) >= unsigned(shape[2])) {
-        out = access.fill;
-        return true;
-    }
-
-    const auto& chunkShape = access.chunkShape;
-    if (chunkShape[0] <= 0 || chunkShape[1] <= 0 || chunkShape[2] <= 0)
-        return false;
-
-    const int cz = iz / chunkShape[0];
-    const int cy = iy / chunkShape[1];
-    const int cx = ix / chunkShape[2];
-    const auto& result = cache.get({level, cz, cy, cx}, requested, errors);
-    if (result.status == ChunkStatus::MissQueued ||
-        result.status == ChunkStatus::Missing ||
-        result.status == ChunkStatus::Error)
-        return false;
-
-    if (result.status == ChunkStatus::AllFill) {
-        out = access.fill;
-        return true;
-    }
-
-    if (result.status != ChunkStatus::Data || !result.bytes)
-        return false;
-
-    const int lz = iz - cz * chunkShape[0];
-    const int ly = iy - cy * chunkShape[1];
-    const int lx = ix - cx * chunkShape[2];
-    const std::size_t offset = (std::size_t(lz) * std::size_t(chunkShape[1])
-                              + std::size_t(ly)) * std::size_t(chunkShape[2])
-                              + std::size_t(lx);
-    if (offset >= result.bytes->size())
-        return false;
-
-    out = std::to_integer<uint8_t>((*result.bytes)[offset]);
-    return true;
-}
-
-bool sampleNearest(IChunkedArray& array,
-                   ChunkProbe& cache,
-                   const LevelAccess& access,
-                   int level,
-                   const cv::Vec3f& p,
-                   uint8_t& out,
-                   int& requested,
-                   int& errors)
-{
-    const auto& shape = access.shape;
-    const float x = p[0], y = p[1], z = p[2];
-    if (!inLevelBounds(shape, z, y, x)) {
-        out = access.fill;
-        return true;
-    }
-
-    int ix = int(x + 0.5f);
-    int iy = int(y + 0.5f);
-    int iz = int(z + 0.5f);
-    ix = std::clamp(ix, 0, shape[2] - 1);
-    iy = std::clamp(iy, 0, shape[1] - 1);
-    iz = std::clamp(iz, 0, shape[0] - 1);
-    return readVoxel(array, cache, access, level, iz, iy, ix, out, requested, errors);
-}
-
-bool sampleTrilinear(IChunkedArray& array,
-                     ChunkProbe& cache,
-                     const LevelAccess& access,
-                     int level,
-                     const cv::Vec3f& p,
-                     uint8_t& out,
-                     int& requested,
-                     int& errors)
-{
-    const auto& shape = access.shape;
-    const float x = p[0], y = p[1], z = p[2];
-    if (!inLevelBounds(shape, z, y, x)) {
-        out = access.fill;
-        return true;
-    }
-
-    const int ix = int(x);
-    const int iy = int(y);
-    const int iz = int(z);
-    const float fx = x - float(ix);
-    const float fy = y - float(iy);
-    const float fz = z - float(iz);
-
-    const auto& chunkShape = access.chunkShape;
-    if (chunkShape[0] > 0 && chunkShape[1] > 0 && chunkShape[2] > 0 &&
-        ix + 1 < shape[2] && iy + 1 < shape[1] && iz + 1 < shape[0]) {
-        const int cz = iz / chunkShape[0];
-        const int cy = iy / chunkShape[1];
-        const int cx = ix / chunkShape[2];
-        const int lz = iz - cz * chunkShape[0];
-        const int ly = iy - cy * chunkShape[1];
-        const int lx = ix - cx * chunkShape[2];
-        if (lx + 1 < chunkShape[2] && ly + 1 < chunkShape[1] && lz + 1 < chunkShape[0]) {
-            const auto& result = cache.get({level, cz, cy, cx}, requested, errors);
-            if (result.status == ChunkStatus::MissQueued ||
-                result.status == ChunkStatus::Missing ||
-                result.status == ChunkStatus::Error)
-                return false;
-
-            if (result.status == ChunkStatus::AllFill) {
-                out = access.fill;
-                return true;
-            }
-
-            if (result.status == ChunkStatus::Data && result.bytes) {
-                const std::size_t strideX = 1;
-                const std::size_t strideY = std::size_t(chunkShape[2]);
-                const std::size_t strideZ = std::size_t(chunkShape[1]) * std::size_t(chunkShape[2]);
-                const std::size_t offset000 = std::size_t(lz) * strideZ
-                                            + std::size_t(ly) * strideY
-                                            + std::size_t(lx);
-                const std::size_t offset111 = offset000 + strideZ + strideY + strideX;
-                if (offset111 < result.bytes->size()) {
-                    const auto* bytes = result.bytes->data();
-                    const uint8_t v000 = std::to_integer<uint8_t>(bytes[offset000]);
-                    const uint8_t v001 = std::to_integer<uint8_t>(bytes[offset000 + strideX]);
-                    const uint8_t v010 = std::to_integer<uint8_t>(bytes[offset000 + strideY]);
-                    const uint8_t v011 = std::to_integer<uint8_t>(bytes[offset000 + strideY + strideX]);
-                    const uint8_t v100 = std::to_integer<uint8_t>(bytes[offset000 + strideZ]);
-                    const uint8_t v101 = std::to_integer<uint8_t>(bytes[offset000 + strideZ + strideX]);
-                    const uint8_t v110 = std::to_integer<uint8_t>(bytes[offset000 + strideZ + strideY]);
-                    const uint8_t v111 = std::to_integer<uint8_t>(bytes[offset111]);
-
-                    const float c00 = std::fma(fx, float(v001) - float(v000), float(v000));
-                    const float c01 = std::fma(fx, float(v011) - float(v010), float(v010));
-                    const float c10 = std::fma(fx, float(v101) - float(v100), float(v100));
-                    const float c11 = std::fma(fx, float(v111) - float(v110), float(v110));
-                    const float c0 = std::fma(fy, c01 - c00, c00);
-                    const float c1 = std::fma(fy, c11 - c10, c10);
-                    const float value = std::clamp(std::fma(fz, c1 - c0, c0), 0.0f, 255.0f);
-                    out = static_cast<uint8_t>(value);
-                    return true;
-                }
-            }
-        }
-    }
-
-    uint8_t v000 = 0, v001 = 0, v010 = 0, v011 = 0;
-    uint8_t v100 = 0, v101 = 0, v110 = 0, v111 = 0;
-    bool ready = true;
-    ready = readVoxel(array, cache, access, level, iz,     iy,     ix,     v000, requested, errors) && ready;
-    ready = readVoxel(array, cache, access, level, iz,     iy,     ix + 1, v001, requested, errors) && ready;
-    ready = readVoxel(array, cache, access, level, iz,     iy + 1, ix,     v010, requested, errors) && ready;
-    ready = readVoxel(array, cache, access, level, iz,     iy + 1, ix + 1, v011, requested, errors) && ready;
-    ready = readVoxel(array, cache, access, level, iz + 1, iy,     ix,     v100, requested, errors) && ready;
-    ready = readVoxel(array, cache, access, level, iz + 1, iy,     ix + 1, v101, requested, errors) && ready;
-    ready = readVoxel(array, cache, access, level, iz + 1, iy + 1, ix,     v110, requested, errors) && ready;
-    ready = readVoxel(array, cache, access, level, iz + 1, iy + 1, ix + 1, v111, requested, errors) && ready;
-    if (!ready)
-        return false;
-
-    const float c00 = std::fma(fx, float(v001) - float(v000), float(v000));
-    const float c01 = std::fma(fx, float(v011) - float(v010), float(v010));
-    const float c10 = std::fma(fx, float(v101) - float(v100), float(v100));
-    const float c11 = std::fma(fx, float(v111) - float(v110), float(v110));
-    const float c0 = std::fma(fy, c01 - c00, c00);
-    const float c1 = std::fma(fy, c11 - c10, c10);
-    const float value = std::clamp(std::fma(fz, c1 - c0, c0), 0.0f, 255.0f);
-    out = static_cast<uint8_t>(value);
-    return true;
-}
-
-bool samplePoint(IChunkedArray& array,
-                 ChunkProbe& cache,
-                 const LevelAccess& access,
-                 int level,
-                 const cv::Vec3f& p0,
-                 vc::Sampling sampling,
-                 bool zeroIsSentinel,
-                 uint8_t& out,
-                 int& requested,
-                 int& errors)
-{
-    // surfaceSentinel() already subsumes the NaN/Inf check (it tests x != x and
-    // the pipeline never produces +/-Inf), so when zeroIsSentinel we don't also
-    // run finiteCoord -- that was 3 redundant std::isfinite calls per pixel on
-    // the hot render path. Without the sentinel convention we still need the
-    // explicit finite test.
-    if (zeroIsSentinel) {
-        if (surfaceSentinel(p0))
-            return false;
-    } else if (!finiteCoord(p0)) {
-        out = access.fill;
-        return true;
-    }
-
-    const cv::Vec3f p = toLevelCoord(access, p0);
-    if (sampling == vc::Sampling::Nearest)
-        return sampleNearest(array, cache, access, level, p, out, requested, errors);
-
-    return sampleTrilinear(array, cache, access, level, p, out, requested, errors);
-}
-
-bool sampleLevelPoint(IChunkedArray& array,
-                      ChunkProbe& cache,
-                      const LevelAccess& access,
-                      int level,
-                      const cv::Vec3f& p,
-                      vc::Sampling sampling,
-                      uint8_t& out,
-                      int& requested,
-                      int& errors)
-{
-    // Non-finite coords fail inLevelBounds (NaN compares false) and return
-    // fill, identical to an explicit finiteCoord check.
-    if (sampling == vc::Sampling::Nearest)
-        return sampleNearest(array, cache, access, level, p, out, requested, errors);
-
-    return sampleTrilinear(array, cache, access, level, p, out, requested, errors);
 }
 
 void addStats(ChunkedPlaneSampler::Stats& dst, ChunkedPlaneSampler::Stats& src)
@@ -490,153 +98,54 @@ void addStats(ChunkedPlaneSampler::Stats& dst, ChunkedPlaneSampler::Stats& src)
 
 } // namespace
 
-ChunkedPlaneSampler::Stats samplePlaneLevelImpl(
-    IChunkedArray& array,
-    int level,
-    const cv::Vec3f& origin,
-    const cv::Vec3f& vxStep,
-    const cv::Vec3f& vyStep,
-    cv::Mat_<uint8_t>& out,
-    cv::Mat_<uint8_t>& coverage,
-    const ChunkedPlaneSampler::Options& options,
-    bool overwriteCovered)
+namespace {
+
+// Shared driver for BOTH composite and non-composite rendering: build the tile
+// list, pick the compile-time chunk-log specialization + devirtualized array, run
+// renderTileRange (parallel across tiles), reduce stats. Composite passes
+// numLayers/layerStart/layerStep/isoCutoff + normals; non-composite passes a single
+// layer (numLayers ignored when Composite=false) and may pass empty normals.
+template <bool Composite, bool Trilinear>
+ChunkedPlaneSampler::Stats runRenderDriver(
+    IChunkedArray& array, const LevelAccess& access, int level,
+    const cv::Mat_<cv::Vec3f>& coords, const cv::Mat_<cv::Vec3f>& normals,
+    cv::Mat_<uint8_t>& out, cv::Mat_<uint8_t>& coverage,
+    int layerStart, int numLayers, float layerStep, float isoCutoff, int tileSize)
 {
     ChunkedPlaneSampler::Stats stats;
-    if (level < 0 || level >= array.numLevels() || out.empty() || coverage.empty())
-        return stats;
-
-    const LevelAccess access = makeLevelAccess(array, level);
-    if (!hasSampleableLevel(access))
-        return stats;
-    const LevelPlane levelPlane = toLevelPlane(access, origin, vxStep, vyStep);
-    const int tile = std::max(1, options.tileSize);
+    const int tile = std::max(1, tileSize);
+    const int h = std::min(coords.rows, std::min(out.rows, coverage.rows));
+    const int w = std::min(coords.cols, std::min(out.cols, coverage.cols));
     std::vector<SampleTile> tiles;
-    tiles.reserve(std::size_t((out.rows + tile - 1) / tile) *
-                  std::size_t((out.cols + tile - 1) / tile));
-    for (int ty = 0; ty < out.rows; ty += tile) {
-        const int yEnd = std::min(ty + tile, out.rows);
-        for (int tx = 0; tx < out.cols; tx += tile) {
-            const int xEnd = std::min(tx + tile, out.cols);
-            tiles.push_back({tx, ty, xEnd, yEnd});
-        }
-    }
+    tiles.reserve(std::size_t((h + tile - 1) / tile) * std::size_t((w + tile - 1) / tile));
+    for (int ty = 0; ty < h; ty += tile)
+        for (int tx = 0; tx < w; tx += tile)
+            tiles.push_back({tx, ty, std::min(tx + tile, w), std::min(ty + tile, h)});
 
-    auto processTileRange = [&](std::size_t begin, std::size_t end) {
-        ChunkedPlaneSampler::Stats localStats;
-        ChunkProbe chunkCache(array, std::max<std::size_t>(16, (end - begin) * 4));
-        for (std::size_t i = begin; i < end; ++i) {
-            const SampleTile& sampleTile = tiles[i];
-            for (int y = sampleTile.ty; y < sampleTile.yEnd; ++y) {
-                uint8_t* outRow = out.ptr<uint8_t>(y);
-                uint8_t* coverageRow = coverage.ptr<uint8_t>(y);
-                const cv::Vec3f rowBase = levelPlane.origin + levelPlane.vyStep * float(y);
-                for (int x = sampleTile.tx; x < sampleTile.xEnd; ++x) {
-                    if (!overwriteCovered && coverageRow[x])
-                        continue;
+    const int cs0 = access.chunkShape[0];
+    const bool cubicPow2 = cs0 > 0 && (cs0 & (cs0 - 1)) == 0 &&
+                           access.chunkShape[1] == cs0 && access.chunkShape[2] == cs0;
+    const int chunkLog = cubicPow2 ? __builtin_ctz(unsigned(cs0)) : -1;
+    ChunkCache* cc = dynamic_cast<ChunkCache*>(&array);
 
-                    uint8_t value = 0;
-                    if (sampleLevelPoint(array, chunkCache, access, level,
-                                         rowBase + levelPlane.vxStep * float(x),
-                                         options.sampling, value,
-                                         localStats.requestedChunks, localStats.errorChunks)) {
-                        const bool wasCovered = coverageRow[x] != 0;
-                        outRow[x] = value;
-                        coverageRow[x] = 1;
-                        if (!wasCovered)
-                            ++localStats.coveredPixels;
-                    }
-                }
+    auto runRange = [&](std::size_t begin, std::size_t end) {
+        auto dispatch = [&](auto& arr) -> ChunkedPlaneSampler::Stats {
+            switch (chunkLog) {
+                case 5:  return renderTileRange<Composite, Trilinear, 5>(arr, access, level, coords, normals,
+                             out, coverage, tiles, begin, end, layerStart, numLayers, layerStep, isoCutoff);
+                case 4:  return renderTileRange<Composite, Trilinear, 4>(arr, access, level, coords, normals,
+                             out, coverage, tiles, begin, end, layerStart, numLayers, layerStep, isoCutoff);
+                case 6:  return renderTileRange<Composite, Trilinear, 6>(arr, access, level, coords, normals,
+                             out, coverage, tiles, begin, end, layerStart, numLayers, layerStep, isoCutoff);
+                default: return renderTileRange<Composite, Trilinear, -1>(arr, access, level, coords, normals,
+                             out, coverage, tiles, begin, end, layerStart, numLayers, layerStep, isoCutoff);
             }
-        }
-        chunkCache.flushMissedKeys(localStats.missedKeys, localStats.requestedChunks);
-        return localStats;
-    };
-
-    if (!shouldParallelizeSamples(out.rows, out.cols) || tiles.size() <= 1)
-        return processTileRange(0, tiles.size());
-
-    const std::size_t workerCount = std::min<std::size_t>(
-        renderSamplerPool().worker_count(), tiles.size());
-    const std::size_t tilesPerWorker = (tiles.size() + workerCount - 1) / workerCount;
-    std::vector<std::future<ChunkedPlaneSampler::Stats>> futures;
-    futures.reserve(workerCount);
-    for (std::size_t worker = 0; worker < workerCount; ++worker) {
-        const std::size_t begin = worker * tilesPerWorker;
-        const std::size_t end = std::min(begin + tilesPerWorker, tiles.size());
-        if (begin >= end)
-            break;
-        futures.push_back(renderSamplerPool().submit([&, begin, end] {
-            return processTileRange(begin, end);
-        }));
-    }
-    for (auto& future : futures) {
-        auto fstats = future.get();
-        addStats(stats, fstats);
-    }
-    return stats;
-}
-
-ChunkedPlaneSampler::Stats sampleCoordsLevelImpl(
-    IChunkedArray& array,
-    int level,
-    const cv::Mat_<cv::Vec3f>& coords,
-    cv::Mat_<uint8_t>& out,
-    cv::Mat_<uint8_t>& coverage,
-    const ChunkedPlaneSampler::Options& options,
-    bool overwriteCovered)
-{
-    ChunkedPlaneSampler::Stats stats;
-    if (level < 0 || level >= array.numLevels() || coords.empty() || out.empty() || coverage.empty())
-        return stats;
-
-    const LevelAccess access = makeLevelAccess(array, level);
-    if (!hasSampleableLevel(access))
-        return stats;
-    const int tile = std::max(1, options.tileSize);
-    const int h = std::min({coords.rows, out.rows, coverage.rows});
-    const int w = std::min({coords.cols, out.cols, coverage.cols});
-    std::vector<SampleTile> tiles;
-    tiles.reserve(std::size_t((h + tile - 1) / tile) *
-                  std::size_t((w + tile - 1) / tile));
-    for (int ty = 0; ty < h; ty += tile) {
-        const int yEnd = std::min(ty + tile, h);
-        for (int tx = 0; tx < w; tx += tile) {
-            const int xEnd = std::min(tx + tile, w);
-            tiles.push_back({tx, ty, xEnd, yEnd});
-        }
-    }
-
-    auto processTileRange = [&](std::size_t begin, std::size_t end) {
-        ChunkedPlaneSampler::Stats localStats;
-        ChunkProbe chunkCache(array, std::max<std::size_t>(16, (end - begin) * 4));
-        for (std::size_t i = begin; i < end; ++i) {
-            const SampleTile& sampleTile = tiles[i];
-            for (int y = sampleTile.ty; y < sampleTile.yEnd; ++y) {
-                const cv::Vec3f* coordRow = coords.ptr<cv::Vec3f>(y);
-                uint8_t* outRow = out.ptr<uint8_t>(y);
-                uint8_t* coverageRow = coverage.ptr<uint8_t>(y);
-                for (int x = sampleTile.tx; x < sampleTile.xEnd; ++x) {
-                    if (!overwriteCovered && coverageRow[x])
-                        continue;
-
-                    uint8_t value = 0;
-                    if (samplePoint(array, chunkCache, access, level, coordRow[x], options.sampling,
-                                    true, value, localStats.requestedChunks, localStats.errorChunks)) {
-                        const bool wasCovered = coverageRow[x] != 0;
-                        outRow[x] = value;
-                        coverageRow[x] = 1;
-                        if (!wasCovered)
-                            ++localStats.coveredPixels;
-                    }
-                }
-            }
-        }
-        chunkCache.flushMissedKeys(localStats.missedKeys, localStats.requestedChunks);
-        return localStats;
+        };
+        return cc ? dispatch(*cc) : dispatch(array);
     };
 
     if (!shouldParallelizeSamples(h, w) || tiles.size() <= 1)
-        return processTileRange(0, tiles.size());
+        return runRange(0, tiles.size());
 
     const std::size_t workerCount = std::min<std::size_t>(
         renderSamplerPool().worker_count(), tiles.size());
@@ -646,11 +155,8 @@ ChunkedPlaneSampler::Stats sampleCoordsLevelImpl(
     for (std::size_t worker = 0; worker < workerCount; ++worker) {
         const std::size_t begin = worker * tilesPerWorker;
         const std::size_t end = std::min(begin + tilesPerWorker, tiles.size());
-        if (begin >= end)
-            break;
-        futures.push_back(renderSamplerPool().submit([&, begin, end] {
-            return processTileRange(begin, end);
-        }));
+        if (begin >= end) break;
+        futures.push_back(renderSamplerPool().submit([&, begin, end] { return runRange(begin, end); }));
     }
     for (auto& future : futures) {
         auto fstats = future.get();
@@ -658,6 +164,28 @@ ChunkedPlaneSampler::Stats sampleCoordsLevelImpl(
     }
     return stats;
 }
+
+// Non-composite entry shared by sampleCoordsLevel + samplePlaneLevel: dispatch on
+// the sampling mode (nearest vs trilinear) into the unified kernel.
+ChunkedPlaneSampler::Stats runNonComposite(
+    IChunkedArray& array, int level,
+    const cv::Mat_<cv::Vec3f>& coords, const cv::Mat_<cv::Vec3f>& normals,
+    cv::Mat_<uint8_t>& out, cv::Mat_<uint8_t>& coverage,
+    const ChunkedPlaneSampler::Options& options)
+{
+    if (level < 0 || level >= array.numLevels() || coords.empty() || out.empty() || coverage.empty())
+        return {};
+    const LevelAccess access = makeLevelAccess(array, level);
+    if (!hasSampleableLevel(access))
+        return {};
+    if (options.sampling == vc::Sampling::Trilinear)
+        return runRenderDriver<false, true>(array, access, level, coords, normals,
+                                            out, coverage, 0, 1, 0.0f, 0.0f, options.tileSize);
+    return runRenderDriver<false, false>(array, access, level, coords, normals,
+                                         out, coverage, 0, 1, 0.0f, 0.0f, options.tileSize);
+}
+
+}  // namespace
 
 ChunkedPlaneSampler::Stats ChunkedPlaneSampler::samplePlaneLevel(
     IChunkedArray& array,
@@ -669,8 +197,20 @@ ChunkedPlaneSampler::Stats ChunkedPlaneSampler::samplePlaneLevel(
     cv::Mat_<uint8_t>& coverage,
     const Options& options)
 {
-    return samplePlaneLevelImpl(array, level, origin, vxStep, vyStep, out, coverage,
-                                options, false);
+    // A plane is a surface whose coords are origin + vx*x + vy*y. Materialize that
+    // coords Mat (in level-0 space) and run the unified non-composite kernel -- one
+    // path for planes and quads.
+    if (out.empty() || coverage.empty())
+        return {};
+    cv::Mat_<cv::Vec3f> coords(out.rows, out.cols);
+    for (int y = 0; y < out.rows; ++y) {
+        cv::Vec3f* row = coords.ptr<cv::Vec3f>(y);
+        const cv::Vec3f rowBase = origin + vyStep * float(y);
+        for (int x = 0; x < out.cols; ++x)
+            row[x] = rowBase + vxStep * float(x);
+    }
+    static const cv::Mat_<cv::Vec3f> kNoNormals;
+    return runNonComposite(array, level, coords, kNoNormals, out, coverage, options);
 }
 
 ChunkedPlaneSampler::Stats ChunkedPlaneSampler::sampleCoordsLevel(
@@ -681,7 +221,8 @@ ChunkedPlaneSampler::Stats ChunkedPlaneSampler::sampleCoordsLevel(
     cv::Mat_<uint8_t>& coverage,
     const Options& options)
 {
-    return sampleCoordsLevelImpl(array, level, coords, out, coverage, options, false);
+    static const cv::Mat_<cv::Vec3f> kNoNormals;
+    return runNonComposite(array, level, coords, kNoNormals, out, coverage, options);
 }
 
 namespace {
@@ -699,8 +240,8 @@ namespace {
 // the depth loop to one iteration and the reduction to a direct write, so the
 // non-composite case is the same optimized body (inlined lookup, 8-byte key, flat
 // miss list, LOD fallback) with zero composite overhead. Both use nearest sampling
-// here; trilinear is a separate path (kept in sampleTrilinear for now).
-template <bool Composite, int CHUNK_LOG2, typename ArrayT>
+// here; the Trilinear template path handles 8-corner interpolation.
+template <bool Composite, bool Trilinear, int CHUNK_LOG2, typename ArrayT>
 ChunkedPlaneSampler::Stats renderTileRange(
     ArrayT& array,
     const LevelAccess& access,
@@ -765,6 +306,45 @@ ChunkedPlaneSampler::Stats renderTileRange(
     std::vector<ChunkKey> missedVec;   // flat, deduped at flush (no node alloc)
     missedVec.reserve(std::max<std::size_t>(16, (end - begin) * 4));
 
+    // Read ONE voxel at level-L integer coords (iz,iy,ix). Returns the value, or -1
+    // on a miss (records the missed chunk). Used by the trilinear path, whose 8
+    // corners can each fall in a different chunk. Nearest sampling uses the inlined
+    // run-cache in the loop body instead (this is only the per-corner trilinear read).
+    auto readVoxelAt = [&](int iz, int iy, int ix) -> int {
+        if (unsigned(iz) >= unsigned(shp[0]) || unsigned(iy) >= unsigned(shp[1]) ||
+            unsigned(ix) >= unsigned(shp[2]))
+            return -1;
+        int cz, cy, cx, lz, ly, lx;
+        if constexpr (kStatic) {
+            constexpr int kLog = CHUNK_LOG2, kMask = (1 << CHUNK_LOG2) - 1;
+            cz = iz >> kLog; cy = iy >> kLog; cx = ix >> kLog;
+            lz = iz & kMask; ly = iy & kMask; lx = ix & kMask;
+        } else {
+            cz = iz / csh; cy = iy / cshY; cx = ix / cshX;
+            lz = iz - cz * csh; ly = iy - cy * cshY; lx = ix - cx * cshX;
+        }
+        const auto rv = doLookup(level, cz, cy, cx);
+        if (rv.status == ChunkStatus::AllFill)
+            return fillVal;
+        if (rv.status == ChunkStatus::Data && rv.bytes) {
+            std::size_t o;
+            if constexpr (kStatic)
+                o = ((std::size_t(lz) << CHUNK_LOG2) + std::size_t(ly))
+                        * (std::size_t(1) << CHUNK_LOG2) + std::size_t(lx);
+            else
+                o = (std::size_t(lz) * std::size_t(cshY) + std::size_t(ly))
+                        * std::size_t(cshX) + std::size_t(lx);
+            if (o < rv.bytes->size())
+                return std::to_integer<uint8_t>((*rv.bytes)[o]);
+            return -1;
+        }
+        if (rv.status == ChunkStatus::MissQueued)
+            missedVec.push_back({level, cz, cy, cx});
+        else if (rv.status == ChunkStatus::Error)
+            ++localStats.errorChunks;
+        return -1;
+    };
+
     // LOD fallback: when a chunk misses at `level`, sample the same point from the
     // nearest COARSER level that IS resident -- blurry but present, instead of a
     // hole, while the fine chunks stream in. Precompute per coarser level its chunk
@@ -821,7 +401,7 @@ ChunkedPlaneSampler::Stats renderTileRange(
                 // forces it, multi-component uses NaN borders), so for gen() output
                 // a single NaN test per pixel is sufficient. NaN propagates through
                 // all three components, so checking base[0] alone suffices. This
-                // replaces the general surfaceSentinel (-1 / (0,0,0) / NaN) checks
+                // replaces the general (-1 / (0,0,0) / NaN) sentinel checks
                 // -- those markers only appear in raw _points, never in gen output.
                 // Bit test (not base[0]!=base[0]) so -ffast-math can't elide it.
                 if (isNanBits(base[0]))
@@ -860,6 +440,38 @@ ChunkedPlaneSampler::Stats renderTileRange(
                     const float fz = baseL[2] + nrmL[2] * off;
                     if (fx < 0.0f || fy < 0.0f || fz < 0.0f)
                         continue;
+
+                    if constexpr (Trilinear) {
+                        // 8-corner trilinear interp. Corners can cross chunks, so
+                        // each is read individually; any missing corner -> skip
+                        // (the run-cache below is nearest-only). Composite never
+                        // uses Trilinear (it's nearest), so this is the !Composite
+                        // single-sample path.
+                        const int ix = int(fx), iy = int(fy), iz = int(fz);
+                        if (iz + 1 >= shp[0] || iy + 1 >= shp[1] || ix + 1 >= shp[2])
+                            continue;
+                        const float dx = fx - float(ix), dy = fy - float(iy), dz = fz - float(iz);
+                        const int v000 = readVoxelAt(iz,   iy,   ix);
+                        const int v001 = readVoxelAt(iz,   iy,   ix+1);
+                        const int v010 = readVoxelAt(iz,   iy+1, ix);
+                        const int v011 = readVoxelAt(iz,   iy+1, ix+1);
+                        const int v100 = readVoxelAt(iz+1, iy,   ix);
+                        const int v101 = readVoxelAt(iz+1, iy,   ix+1);
+                        const int v110 = readVoxelAt(iz+1, iy+1, ix);
+                        const int v111 = readVoxelAt(iz+1, iy+1, ix+1);
+                        if ((v000|v001|v010|v011|v100|v101|v110|v111) < 0)
+                            continue;   // a corner missed
+                        const float c00 = std::fma(dx, float(v001 - v000), float(v000));
+                        const float c01 = std::fma(dx, float(v011 - v010), float(v010));
+                        const float c10 = std::fma(dx, float(v101 - v100), float(v100));
+                        const float c11 = std::fma(dx, float(v111 - v110), float(v110));
+                        const float c0 = std::fma(dy, c01 - c00, c00);
+                        const float c1 = std::fma(dy, c11 - c10, c10);
+                        best = std::clamp(std::fma(dz, c1 - c0, c0), 0.0f, 255.0f);
+                        any = true;
+                        break;   // single sample (Trilinear implies !Composite)
+                    }
+
                     const int iz = int(fz + 0.5f), iy = int(fy + 0.5f), ix = int(fx + 0.5f);
                     if (unsigned(iz) >= unsigned(shp[0]) || unsigned(iy) >= unsigned(shp[1]) ||
                         unsigned(ix) >= unsigned(shp[2]))
@@ -881,7 +493,7 @@ ChunkedPlaneSampler::Stats renderTileRange(
                                                  |  std::uint64_t(unsigned(cx));
                     if (chunkKey != lastChunk) {
                         lastChunk = chunkKey;
-                        // Raw lock-free resident read -- no ChunkProbe layer,
+                        // Raw lock-free resident read -- no probe layer,
                         // no shared_ptr copy (the tick won't evict mid-frame).
                         const auto rv = doLookup(level, cz, cy, cx);
                         if (rv.status == ChunkStatus::AllFill) {
@@ -971,79 +583,17 @@ ChunkedPlaneSampler::Stats ChunkedPlaneSampler::sampleCoordsMaxComposite(
     cv::Mat_<uint8_t>& coverage,
     const Options& options)
 {
-    ChunkedPlaneSampler::Stats stats;
     if (level < 0 || level >= array.numLevels() || coords.empty() || out.empty() ||
         coverage.empty() || normals.empty() || numLayers <= 0)
-        return stats;
-
+        return {};
     const LevelAccess access = makeLevelAccess(array, level);
     if (!hasSampleableLevel(access))
-        return stats;
-
-    const int tile = std::max(1, options.tileSize);
-    const int h = std::min({coords.rows, out.rows, coverage.rows, normals.rows});
-    const int w = std::min({coords.cols, out.cols, coverage.cols, normals.cols});
-
-    std::vector<SampleTile> tiles;
-    tiles.reserve(std::size_t((h + tile - 1) / tile) * std::size_t((w + tile - 1) / tile));
-    for (int ty = 0; ty < h; ty += tile)
-        for (int tx = 0; tx < w; tx += tile)
-            tiles.push_back({tx, ty, std::min(tx + tile, w), std::min(ty + tile, h)});
-
-    // Pick the compile-time-specialized kernel when the chunk shape is the cubic
-    // power-of-two atom (the only shape in practice, 32^3) so all the chunk-index
-    // math is constant-folded; otherwise the generic runtime kernel.
-    const int cs0 = access.chunkShape[0];
-    const bool cubicPow2 = cs0 > 0 && (cs0 & (cs0 - 1)) == 0 &&
-                           access.chunkShape[1] == cs0 && access.chunkShape[2] == cs0;
-    const int chunkLog = cubicPow2 ? __builtin_ctz(unsigned(cs0)) : -1;
-
-    // Devirtualize the hot per-chunk readResidentRaw call: the array is always a
-    // ChunkCache in practice. Downcast ONCE here so the templated kernel makes
-    // direct (inlinable) calls instead of virtual dispatch through IChunkedArray.
-    // Falls back to the virtual path for any other array type.
-    ChunkCache* cc = dynamic_cast<ChunkCache*>(&array);
-
-    auto runRange = [&](std::size_t begin, std::size_t end) {
-        auto dispatch = [&](auto& arr) -> ChunkedPlaneSampler::Stats {
-            switch (chunkLog) {
-                case 5:  return renderTileRange<true, 5>(arr, access, level, coords, normals,
-                             out, coverage, tiles, begin, end, layerStart, numLayers, layerStep, isoCutoff);
-                case 4:  return renderTileRange<true, 4>(arr, access, level, coords, normals,
-                             out, coverage, tiles, begin, end, layerStart, numLayers, layerStep, isoCutoff);
-                case 6:  return renderTileRange<true, 6>(arr, access, level, coords, normals,
-                             out, coverage, tiles, begin, end, layerStart, numLayers, layerStep, isoCutoff);
-                default: return renderTileRange<true, -1>(arr, access, level, coords, normals,
-                             out, coverage, tiles, begin, end, layerStart, numLayers, layerStep, isoCutoff);
-            }
-        };
-        if (cc)
-            return dispatch(*cc);    // concrete ChunkCache -> direct calls
-        return dispatch(array);      // generic IChunkedArray -> virtual
-    };
-
-    if (!shouldParallelizeSamples(h, w) || tiles.size() <= 1)
-        return runRange(0, tiles.size());
-
-    const std::size_t workerCount = std::min<std::size_t>(
-        renderSamplerPool().worker_count(), tiles.size());
-    const std::size_t tilesPerWorker = (tiles.size() + workerCount - 1) / workerCount;
-    std::vector<std::future<ChunkedPlaneSampler::Stats>> futures;
-    futures.reserve(workerCount);
-    for (std::size_t worker = 0; worker < workerCount; ++worker) {
-        const std::size_t begin = worker * tilesPerWorker;
-        const std::size_t end = std::min(begin + tilesPerWorker, tiles.size());
-        if (begin >= end)
-            break;
-        futures.push_back(renderSamplerPool().submit([&, begin, end] {
-            return runRange(begin, end);
-        }));
-    }
-    for (auto& future : futures) {
-        auto fstats = future.get();
-        addStats(stats, fstats);
-    }
-    return stats;
+        return {};
+    // Composite = max reduction over numLayers, nearest sampling. Same unified
+    // driver + kernel as the plain plane/quad path (Composite=false there).
+    return runRenderDriver<true, false>(array, access, level, coords, normals,
+                                        out, coverage, layerStart, numLayers,
+                                        layerStep, isoCutoff, options.tileSize);
 }
 
 
