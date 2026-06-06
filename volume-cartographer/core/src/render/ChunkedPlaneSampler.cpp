@@ -632,7 +632,12 @@ __attribute__((noinline)) ChunkedPlaneSampler::Stats renderTileRange(
 
                     const float fv = float(value);
                     if constexpr (Composite) {
-                        if (fv > best) best = fv;
+                        // Branchless max-reduce -> vmaxss (reg-to-reg), so `best`
+                        // stays in an xmm register across the depth loop instead of
+                        // the compare+conditional-store the `if` emitted (which was
+                        // spilling best to the stack every layer). fmax(-1, fv)==fv
+                        // for any valid fv>=0, matching the seeded best=-1.
+                        best = std::fmax(best, fv);
                     } else {
                         // Single plane sample: take this value and stop.
                         best = fv;
