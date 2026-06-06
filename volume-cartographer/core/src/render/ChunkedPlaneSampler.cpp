@@ -25,10 +25,18 @@ namespace {
 // resident map directly. Misses are deduped into requestedKeys for the tick.
 struct ChunkProbe {
     explicit ChunkProbe(IChunkedArray& a, std::size_t expectedChunks = 0)
-        : array(a), pin(a.makeResidentPin())
+        : array(a)
     {
-        if (expectedChunks > 0)
-            requestedKeys.reserve(expectedChunks);
+        // Devirtualize the resident lookup when the array is a concrete ChunkCache
+        // (the GUI case): hold a by-value ResidentPin so get() calls the tiny
+        // inlinable lookupChecked directly instead of the virtual IResidentPin::
+        // lookup. Fall back to the virtual pin for other IChunkedArray impls.
+        concrete_ = dynamic_cast<ChunkCache*>(&a);
+        if (concrete_)
+            cpin_ = concrete_->pinConcrete();
+        else
+            pin_ = a.makeResidentPin();
+        missed_.reserve(std::max<std::size_t>(16, expectedChunks));
     }
 
     struct View {
@@ -40,29 +48,43 @@ struct ChunkProbe {
     {
         if (haveLast && lastKey == key)
             return last;
-        const auto rv = pin->lookup(key.level, key.iz, key.iy, key.ix);
+        const auto rv = concrete_
+            ? cpin_.lookup(key.level, key.iz, key.iy, key.ix)
+            : pin_->lookup(key.level, key.iz, key.iy, key.ix);
         last.status = rv.status;
         last.bytes = rv.bytes;
-        if (rv.status == ChunkStatus::MissQueued && requestedKeys.insert(key).second)
-            ++requested;
-        else if (rv.status == ChunkStatus::Error)
+        (void)requested;   // counted from the deduped set in flushMissedKeys
+        if (rv.status == ChunkStatus::MissQueued) {
+            // Flat append (no per-miss node alloc); deduped once at flush. The
+            // last-key cache already collapses the common same-chunk run.
+            missed_.push_back(key);
+        } else if (rv.status == ChunkStatus::Error) {
             ++errors;
+        }
         lastKey = key;
         haveLast = true;
         return last;
     }
 
-    void flushMissedKeys(std::vector<ChunkKey>& out)
+    // Dedup the flat miss list, append to `out`, and add the unique count to
+    // `requested` (the requestedChunks stat).
+    void flushMissedKeys(std::vector<ChunkKey>& out, int& requested)
     {
+        std::sort(missed_.begin(), missed_.end(),
+                  [](const ChunkKey& a, const ChunkKey& b) { return a.word() < b.word(); });
+        missed_.erase(std::unique(missed_.begin(), missed_.end()), missed_.end());
+        requested += static_cast<int>(missed_.size());
         out.insert(out.end(),
-                   std::make_move_iterator(requestedKeys.begin()),
-                   std::make_move_iterator(requestedKeys.end()));
-        requestedKeys.clear();
+                   std::make_move_iterator(missed_.begin()),
+                   std::make_move_iterator(missed_.end()));
+        missed_.clear();
     }
 
     IChunkedArray& array;
-    std::unique_ptr<IChunkedArray::IResidentPin> pin;  // keeps the resident map alive
-    std::unordered_set<ChunkKey, ChunkKeyHash> requestedKeys;
+    ChunkCache* concrete_ = nullptr;            // non-null -> use cpin_ (devirt)
+    ChunkCache::ResidentPin cpin_;              // by-value concrete pin
+    std::unique_ptr<IChunkedArray::IResidentPin> pin_;  // virtual fallback
+    std::vector<ChunkKey> missed_;              // flat, deduped at flush
     ChunkKey lastKey{};
     View last;
     bool haveLast = false;
@@ -526,7 +548,7 @@ ChunkedPlaneSampler::Stats samplePlaneLevelImpl(
                 }
             }
         }
-        chunkCache.flushMissedKeys(localStats.missedKeys);
+        chunkCache.flushMissedKeys(localStats.missedKeys, localStats.requestedChunks);
         return localStats;
     };
 
@@ -609,7 +631,7 @@ ChunkedPlaneSampler::Stats sampleCoordsLevelImpl(
                 }
             }
         }
-        chunkCache.flushMissedKeys(localStats.missedKeys);
+        chunkCache.flushMissedKeys(localStats.missedKeys, localStats.requestedChunks);
         return localStats;
     };
 
