@@ -360,12 +360,6 @@ __attribute__((noinline)) ChunkedPlaneSampler::Stats renderTileRange(
     // because the optimizer can't always prove the cv::Mat output writes don't
     // alias `access`. As locals they stay in registers across the depth loop.
     const int shp0 = shp[0], shp1 = shp[1], shp2 = shp[2];
-    // Float upper bounds for the composite nearest path's in-grid test. round(f) in
-    // [0,n) <=> f in [-0.5, n-0.5). Testing in the FLOAT domain keeps the coords in
-    // xmm for the bounds compare, so they don't have to be extracted to GP registers
-    // (vpextrq/vmovq from the packed vcvtps2dq) just to range-check -- the convert
-    // then only feeds the offset math on the pixels that pass. Was ~8% of the kernel.
-    const float shp0f = float(shp0) - 0.5f, shp1f = float(shp1) - 0.5f, shp2f = float(shp2) - 0.5f;
     const uint8_t fillVal = access.fill;
 
     // Precompute the level transform ONCE as float scalars (it's constant for the
@@ -589,14 +583,10 @@ __attribute__((noinline)) ChunkedPlaneSampler::Stats renderTileRange(
                         break;   // single sample (Trilinear implies !Composite); best>=0 marks covered
                     }
 
-                    // In-grid test in the float domain (keeps fx/fy/fz in xmm; no
-                    // GP extract just to range-check). round(f) in [0,n) <=> f in
-                    // [-0.5, n-0.5). -0.5 lower bound: a coord in [-0.5,0) rounds to
-                    // 0, which is in-grid -- matches the old unsigned(int) behavior.
-                    if (fz < -0.5f || fz >= shp0f || fy < -0.5f || fy >= shp1f ||
-                        fx < -0.5f || fx >= shp2f)
-                        continue;
                     const int iz = nearestIdx(fz), iy = nearestIdx(fy), ix = nearestIdx(fx);
+                    if (unsigned(iz) >= unsigned(shp0) || unsigned(iy) >= unsigned(shp1) ||
+                        unsigned(ix) >= unsigned(shp2))
+                        continue;
 
                     // In-chunk offset (needed every layer for the byte load).
                     int lz, ly, lx;
