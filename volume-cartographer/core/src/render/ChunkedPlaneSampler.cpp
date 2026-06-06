@@ -67,6 +67,17 @@ __attribute__((always_inline)) inline bool isNanBits(float x)
     __builtin_memcpy(&u, &x, sizeof(u));
     return (u & 0x7fffffffu) > 0x7f800000u;   // NaN (also catches no value <= +Inf)
 }
+
+// Round a coord to its nearest integer voxel index. int(f + 0.5f) compiles to an
+// addps + a float-domain round-trip (cvttps2dq) + per-lane addss/cvttss2si; the
+// hardware round-to-nearest convert (cvtss2si, one insn, no +0.5) is leaner and
+// was ~3-4% of the composite kernel. Differs from round-half-up only on exact .5
+// ties (measure-zero for continuous sample coords; <=1-voxel shift, well within
+// the nearest-sampling tolerance). Caller guarantees f >= 0 here.
+__attribute__((always_inline)) inline int nearestIdx(float f)
+{
+    return int(__builtin_lrintf(f));
+}
 LevelAccess makeLevelAccess(IChunkedArray& array, int level)
 {
     LevelAccess access;
@@ -452,8 +463,12 @@ __attribute__((noinline)) ChunkedPlaneSampler::Stats renderTileRange(
                 // resident chunk buffer. One pointer carries the chunk state, so
                 // the per-depth fast path stays in registers.
                 const std::vector<std::byte>* curBytes = nullptr;
-                float best = 0.0f;
-                bool any = false;
+                // Seed best at -1 (below any real sample, which is [0,255]) so the
+                // composite max-reduce is a plain `fv > best` -- no separate `any`
+                // bool, no `!any ||` disjunction, no flag spilled across the depth
+                // loop. "covered" is then just best >= 0 after the loop. This drops
+                // the kmovd/setae/masked-mov flag-tracking cluster from the hot path.
+                float best = -1.0f;
                 // Composite walks numLayers along the normal + max-reduces; the
                 // non-composite (single plane) case is the SAME body with exactly
                 // one layer at the surface and a direct write (if constexpr collapses
@@ -473,7 +488,13 @@ __attribute__((noinline)) ChunkedPlaneSampler::Stats renderTileRange(
                 const float sz = nrmL[2] * layerStep;
                 for (int l = 0; l < kLayers; ++l,
                          fx += sx, fy += sy, fz += sz) {
-                    if (fx < 0.0f || fy < 0.0f || fz < 0.0f)
+                    // Cull samples that step off the low edge. Folded into ONE
+                    // compare+branch via min(fx,fy,fz) < 0 instead of three
+                    // separate `f < 0` tests -- in the composite depth loop those
+                    // were 3 of the hottest instructions (3x vucomiss + 3x jb per
+                    // layer, ~7% of kernel time). min is two vminss + one branch,
+                    // a shorter dep chain with fewer mispredict-prone branches.
+                    if (std::fmin(fx, std::fmin(fy, fz)) < 0.0f)
                         continue;
 
                     if constexpr (Trilinear) {
@@ -503,11 +524,10 @@ __attribute__((noinline)) ChunkedPlaneSampler::Stats renderTileRange(
                         const float c0 = std::fma(dy, c01 - c00, c00);
                         const float c1 = std::fma(dy, c11 - c10, c10);
                         best = std::clamp(std::fma(dz, c1 - c0, c0), 0.0f, 255.0f);
-                        any = true;
-                        break;   // single sample (Trilinear implies !Composite)
+                        break;   // single sample (Trilinear implies !Composite); best>=0 marks covered
                     }
 
-                    const int iz = int(fz + 0.5f), iy = int(fy + 0.5f), ix = int(fx + 0.5f);
+                    const int iz = nearestIdx(fz), iy = nearestIdx(fy), ix = nearestIdx(fx);
                     if (unsigned(iz) >= unsigned(shp[0]) || unsigned(iy) >= unsigned(shp[1]) ||
                         unsigned(ix) >= unsigned(shp[2]))
                         continue;
@@ -574,14 +594,14 @@ __attribute__((noinline)) ChunkedPlaneSampler::Stats renderTileRange(
 
                     const float fv = float(value);
                     if constexpr (Composite) {
-                        if (!any || fv > best) { best = fv; any = true; }
+                        if (fv > best) best = fv;
                     } else {
                         // Single plane sample: take this value and stop.
-                        best = fv; any = true;
+                        best = fv;
                         break;
                     }
                 }
-                if (any) {
+                if (best >= 0.0f) {
                     outRow[x] = static_cast<uint8_t>(std::clamp(best, 0.0f, 255.0f));
                     if (coverageRow[x] == 0)
                         ++localStats.coveredPixels;
