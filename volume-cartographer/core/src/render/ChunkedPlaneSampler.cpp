@@ -111,6 +111,16 @@ void addStats(ChunkedPlaneSampler::Stats& dst, ChunkedPlaneSampler::Stats& src)
 
 namespace {
 
+// Forward decl: the chunk-major (sample-binned) composite kernel, defined after
+// the driver. Routed in via VCA_BINNED.
+template <int CHUNK_LOG2, typename ArrayT>
+ChunkedPlaneSampler::Stats renderTileRangeBinned(
+    ArrayT& array, const LevelAccess& access, int level,
+    const cv::Mat_<cv::Vec3f>& coords, const cv::Mat_<cv::Vec3f>& normals,
+    cv::Mat_<uint8_t>& out, cv::Mat_<uint8_t>& coverage,
+    const std::vector<SampleTile>& tiles, std::size_t begin, std::size_t end,
+    int layerStart, int numLayers, float layerStep);
+
 // Shared driver for BOTH composite and non-composite rendering: build the tile
 // list, pick the compile-time chunk-log specialization + devirtualized array, run
 // renderTileRange (parallel across tiles), reduce stats. Composite passes
@@ -139,14 +149,23 @@ ChunkedPlaneSampler::Stats runRenderDriver(
     const int chunkLog = cubicPow2 ? __builtin_ctz(unsigned(cs0)) : -1;
     ChunkCache* cc = dynamic_cast<ChunkCache*>(&array);
 
+    // VCA_BINNED: route the composite path through the chunk-major (sample-binned)
+    // kernel instead of the pixel-major one. A/B flag while binning is validated.
+    static const bool kBinned = Composite && (::getenv("VCA_BINNED") != nullptr);
     auto runRange = [&](std::size_t begin, std::size_t end) {
         auto dispatch = [&](auto& arr) -> ChunkedPlaneSampler::Stats {
+            if constexpr (Composite) {
+                if (kBinned) {
+                    if (chunkLog == 5)
+                        return renderTileRangeBinned<5>(arr, access, level, coords, normals,
+                            out, coverage, tiles, begin, end, layerStart, numLayers, layerStep);
+                    return renderTileRangeBinned<-1>(arr, access, level, coords, normals,
+                        out, coverage, tiles, begin, end, layerStart, numLayers, layerStep);
+                }
+            }
             // Only the production 32^3 chunk size gets a dedicated static (shift/mask)
             // kernel. Every other chunk size -- rare; no real volume uses one -- falls
-            // to the generic dynamic-dims path (a few divides instead of shifts),
-            // which is correct for any size. This keeps the template fan-out small:
-            // CHUNK_LOG2 was {4,5,6,-1} (4 variants per Composite x Trilinear x Array);
-            // {4,6} were speculative and never instantiated by a real run. Now {5,-1}.
+            // to the generic dynamic-dims path (a few divides instead of shifts).
             if (chunkLog == 5)
                 return renderTileRange<Composite, Trilinear, 5>(arr, access, level, coords, normals,
                     out, coverage, tiles, begin, end, layerStart, numLayers, layerStep);
@@ -760,6 +779,231 @@ __attribute__((noinline)) ChunkedPlaneSampler::Stats renderTileRange(
     localStats.missedKeys.insert(localStats.missedKeys.end(),
         std::make_move_iterator(missedVec.begin()),
         std::make_move_iterator(missedVec.end()));
+    return localStats;
+}
+
+// ---------------------------------------------------------------------------
+// CHUNK-MAJOR (sample-binned) composite kernel.
+//
+// The pixel-major kernel above walks each pixel's depth column and resolves a
+// chunk on every chunk-change -- so adjacent pixels re-resolve the same chunks,
+// and a missing chunk re-runs the coarse-LOD fallback per layer per pixel.
+//
+// This kernel inverts the order. Per tile:
+//   PASS 1 (scatter): walk every (pixel,layer) sample, compute its level-L voxel
+//     coord, and append {pixelLocalIdx, inChunkOffset} to a bucket keyed by chunk.
+//   PASS 2 (gather): for each DISTINCT chunk, resolve it ONCE (one resident-map
+//     probe; one coarse-LOD fallback if missing), then sweep its bucket writing
+//     max into a per-pixel accumulator. Same-chunk bytes are touched contiguously.
+//
+// Wins vs pixel-major: one lookup per chunk per TILE (not per pixel), the coarse
+// fallback's expensive pyramid walk happens once per missing chunk, and the chunk
+// bytes are read in a contiguous sweep. Composite-only (binning pays off only with
+// many samples/chunk; the 1-layer non-composite path stays pixel-major).
+template <int CHUNK_LOG2, typename ArrayT>
+__attribute__((noinline)) ChunkedPlaneSampler::Stats renderTileRangeBinned(
+    ArrayT& array, const LevelAccess& access, int level,
+    const cv::Mat_<cv::Vec3f>& coords, const cv::Mat_<cv::Vec3f>& normals,
+    cv::Mat_<uint8_t>& out, cv::Mat_<uint8_t>& coverage,
+    const std::vector<SampleTile>& tiles, std::size_t begin, std::size_t end,
+    int layerStart, int numLayers, float layerStep)
+{
+    constexpr bool kStatic = (CHUNK_LOG2 >= 0);
+    const int csh  = kStatic ? (1 << CHUNK_LOG2) : access.chunkShape[0];
+    const int cshY = kStatic ? (1 << CHUNK_LOG2) : access.chunkShape[1];
+    const int cshX = kStatic ? (1 << CHUNK_LOG2) : access.chunkShape[2];
+
+    const int shp0 = access.shape[0], shp1 = access.shape[1], shp2 = access.shape[2];
+    const uint8_t fillVal = access.fill;
+    const auto& tf = access.transform;
+    const float tsx = float(tf.scaleFromLevel0[0]), tsy = float(tf.scaleFromLevel0[1]),
+                tsz = float(tf.scaleFromLevel0[2]);
+    const float tox = float(tf.offsetFromLevel0[0]), toy = float(tf.offsetFromLevel0[1]),
+                toz = float(tf.offsetFromLevel0[2]);
+    const bool zeroOffset = tf.offsetFromLevel0[0] == 0.0 && tf.offsetFromLevel0[1] == 0.0
+                         && tf.offsetFromLevel0[2] == 0.0;
+
+    ChunkedPlaneSampler::Stats localStats;
+    constexpr bool kConcrete = std::is_same_v<ArrayT, ChunkCache>;
+    auto pin = [&] { if constexpr (kConcrete) return array.pinConcrete();
+                     else return array.makeResidentPin(); }();
+    auto doLookup = [&](int lv, int z, int y, int x) {
+        if constexpr (kConcrete) return pin.lookupChecked(lv, z, y, x);
+        else return pin->lookup(lv, z, y, x);
+    };
+    std::vector<ChunkKey> missedVec;
+    std::unordered_set<std::uint64_t> missedSeen;
+    missedVec.reserve(64); missedSeen.reserve(64);
+
+    // Coarse-LOD table (same as the pixel-major path).
+    std::vector<CoarseLevel> coarse;
+    {
+        const int n = array.numLevels();
+        auto log2pos = [](int v){ return (v>0 && (v&(v-1))==0) ? __builtin_ctz(unsigned(v)) : -1; };
+        for (int L2 = level + 1; L2 < n; ++L2) {
+            const auto cs = array.chunkShape(L2); const auto ls = array.shape(L2);
+            if (cs[0] <= 0) break;
+            const int lg=log2pos(cs[0]), lgY=log2pos(cs[1]), lgX=log2pos(cs[2]);
+            coarse.push_back(CoarseLevel{L2-level, cs[0],cs[1],cs[2], ls[0],ls[1],ls[2],
+                                         lg,lgY,lgX, (lg>=0&&lgY>=0&&lgX>=0)});
+        }
+    }
+
+    // One binned sample: which tile-local pixel, and the voxel coord (kept as
+    // int coords; the in-chunk offset is derived in the gather sweep). 16 bytes.
+    struct BSample { int pix; int iz, iy, ix; };
+    // Per-distinct-chunk record: packed key + the [start,count) slice of `order`
+    // (sample indices grouped to this chunk) filled during the grouping step.
+    struct BChunk { std::uint64_t key; int cz, cy, cx; int start, count; };
+
+    std::vector<BSample> samples;      // all in-grid samples for the current tile
+    std::vector<BChunk>  chunks;       // distinct chunks in the tile
+    std::vector<int>     order;        // sample indices, grouped by chunk
+    std::vector<int>     bestI;        // per-tile-pixel running max (-1 = uncovered)
+    // Small open-addressed map chunkKey -> index in `chunks` for the scatter group.
+    std::vector<int>     hmap;
+
+    for (std::size_t ti = begin; ti < end; ++ti) {
+        const SampleTile& st = tiles[ti];
+        const int tw = st.xEnd - st.tx, th = st.yEnd - st.ty;
+        if (tw <= 0 || th <= 0) continue;
+        const int npix = tw * th;
+        samples.clear(); chunks.clear();
+        bestI.assign(npix, -1);
+
+        // --- PASS 1: scatter samples into per-chunk groups ------------------
+        // Open-addressed hash (power-of-2, linear probe) chunkKey -> chunks[] idx.
+        int hbits = 1; while ((1 << hbits) < npix * 2) ++hbits;   // generous
+        const int hsize = 1 << hbits, hmask = hsize - 1;
+        hmap.assign(hsize, -1);
+        auto chunkIndexFor = [&](std::uint64_t key, int cz, int cy, int cx) -> int {
+            int h = int((key * 0x9E3779B97F4A7C15ull) >> (64 - hbits)) & hmask;
+            while (true) {
+                int ci = hmap[h];
+                if (ci < 0) {
+                    ci = int(chunks.size());
+                    chunks.push_back(BChunk{key, cz, cy, cx, 0, 0});
+                    hmap[h] = ci;
+                    return ci;
+                }
+                if (chunks[ci].key == key) return ci;
+                h = (h + 1) & hmask;
+            }
+        };
+
+        for (int ly = 0; ly < th; ++ly) {
+            const int y = st.ty + ly;
+            const cv::Vec3f* coordRow = coords.ptr<cv::Vec3f>(y);
+            const cv::Vec3f* normalRow = normals.ptr<cv::Vec3f>(y);
+            for (int lx = 0; lx < tw; ++lx) {
+                const int x = st.tx + lx;
+                const cv::Vec3f base = coordRow[x];
+                if (isNanBits(base[0])) continue;
+                const cv::Vec3f baseL = zeroOffset
+                    ? cv::Vec3f(base[0]*tsx, base[1]*tsy, base[2]*tsz)
+                    : cv::Vec3f(base[0]*tsx+tox, base[1]*tsy+toy, base[2]*tsz+toz);
+                const cv::Vec3f nrm = normalRow[x];
+                const cv::Vec3f nrmL(nrm[0]*tsx, nrm[1]*tsy, nrm[2]*tsz);
+                const float off0 = float(layerStart) * layerStep;
+                float fx = baseL[0]+nrmL[0]*off0, fy = baseL[1]+nrmL[1]*off0, fz = baseL[2]+nrmL[2]*off0;
+                const float sxp = nrmL[0]*layerStep, syp = nrmL[1]*layerStep, szp = nrmL[2]*layerStep;
+                const int pix = ly * tw + lx;
+                for (int l = 0; l < numLayers; ++l, fx += sxp, fy += syp, fz += szp) {
+                    const int iz = nearestIdx(fz), iy = nearestIdx(fy), ix = nearestIdx(fx);
+                    if (unsigned(iz) >= unsigned(shp0) || unsigned(iy) >= unsigned(shp1) ||
+                        unsigned(ix) >= unsigned(shp2))
+                        continue;
+                    int cz, cy, cx; std::uint64_t key;
+                    if constexpr (kStatic) {
+                        cz = iz >> CHUNK_LOG2; cy = iy >> CHUNK_LOG2; cx = ix >> CHUNK_LOG2;
+                    } else {
+                        cz = iz / csh; cy = iy / cshY; cx = ix / cshX;
+                    }
+                    key = (std::uint64_t(unsigned(cz)) << 42) | (std::uint64_t(unsigned(cy)) << 21)
+                        | std::uint64_t(unsigned(cx));
+                    const int ci = chunkIndexFor(key, cz, cy, cx);
+                    chunks[ci].count++;
+                    samples.push_back(BSample{(pix << 0), iz, iy, ix});
+                    // stash the chunk index in the high bits of pix? No -- keep a
+                    // parallel array via order grouping below. Use samples index +
+                    // remember ci by re-deriving in grouping. Simpler: store ci now.
+                    samples.back().pix = pix | (ci << 16);   // pix < 1024 fits in 16 bits
+                }
+            }
+        }
+        if (samples.empty()) continue;
+
+        // --- group sample indices by chunk (counting sort over chunks) ------
+        int total = 0;
+        for (auto& c : chunks) { c.start = total; total += c.count; c.count = 0; }
+        order.resize(total);
+        for (int si = 0; si < int(samples.size()); ++si) {
+            const int ci = samples[si].pix >> 16;
+            order[chunks[ci].start + chunks[ci].count++] = si;
+        }
+
+        // --- PASS 2: gather -- resolve each chunk once, sweep its samples ----
+        for (const auto& c : chunks) {
+            const auto rv = doLookup(level, c.cz, c.cy, c.cx);
+            const std::byte* cdata = nullptr; std::size_t csize = 0; bool cfill = false;
+            bool cmiss = false;
+            if (rv.status == ChunkStatus::AllFill) cfill = true;
+            else if (rv.status == ChunkStatus::Data && rv.bytes) { cdata = rv.bytes->data(); csize = rv.bytes->size(); }
+            else {
+                cmiss = true;
+                if (rv.status == ChunkStatus::MissQueued)
+                    recordMiss(missedVec, missedSeen, {level, c.cz, c.cy, c.cx});
+                else if (rv.status == ChunkStatus::Error) ++localStats.errorChunks;
+            }
+            for (int k = c.start; k < c.start + c.count; ++k) {
+                const BSample& s = samples[order[k]];
+                const int pix = s.pix & 0xffff;
+                int value;
+                if (cfill) value = fillVal;
+                else if (cdata) {
+                    std::size_t o;
+                    if constexpr (kStatic) {
+                        const int kMask = (1 << CHUNK_LOG2) - 1;
+                        o = ((std::size_t(s.iz & kMask) << CHUNK_LOG2) + std::size_t(s.iy & kMask))
+                            * (std::size_t(1) << CHUNK_LOG2) + std::size_t(s.ix & kMask);
+                    } else {
+                        const int lz = s.iz - c.cz*csh, lyy = s.iy - c.cy*cshY, lxx = s.ix - c.cx*cshX;
+                        o = (std::size_t(lz)*std::size_t(cshY) + std::size_t(lyy))*std::size_t(cshX) + std::size_t(lxx);
+                    }
+                    if (o >= csize) continue;
+                    value = std::to_integer<uint8_t>(cdata[o]);
+                } else {
+                    // Missing fine chunk: coarse-LOD fallback. The expensive pyramid
+                    // walk's chunk lookups happen here; still per-sample (each maps to
+                    // a different coarse voxel) but grouped, so the coarse CHUNK probes
+                    // hit the same few coarse chunks back-to-back (cache-warm).
+                    const int fb = coarseFallbackImpl(pin, level, fillVal, coarse, s.iz, s.iy, s.ix);
+                    if (fb < 0) continue;
+                    value = fb;
+                }
+                if (value > bestI[pix]) bestI[pix] = value;
+            }
+            (void)cmiss;
+        }
+
+        // --- write tile output ---------------------------------------------
+        for (int ly = 0; ly < th; ++ly) {
+            uint8_t* outRow = out.ptr<uint8_t>(st.ty + ly);
+            uint8_t* covRow = coverage.ptr<uint8_t>(st.ty + ly);
+            for (int lx = 0; lx < tw; ++lx) {
+                const int b = bestI[ly*tw + lx];
+                if (b >= 0) {
+                    outRow[st.tx + lx] = uint8_t(std::clamp(b, 0, 255));
+                    if (covRow[st.tx + lx] == 0) ++localStats.coveredPixels;
+                    covRow[st.tx + lx] = 1;
+                }
+            }
+        }
+    }
+
+    localStats.requestedChunks += int(missedVec.size());
+    localStats.missedKeys.insert(localStats.missedKeys.end(),
+        std::make_move_iterator(missedVec.begin()), std::make_move_iterator(missedVec.end()));
     return localStats;
 }
 
