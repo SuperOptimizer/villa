@@ -468,14 +468,10 @@ __attribute__((noinline)) ChunkedPlaneSampler::Stats renderTileRange(
                     nrmL = cv::Vec3f(nrm[0]*tsx, nrm[1]*tsy, nrm[2]*tsz);
                 }
 
-                // Chunk-change detection across depth layers. The STATIC path
-                // detects "still in the same 2^LOG chunk" straight from the int
-                // voxel coords: chunk changed iff any of (iz,iy,ix) crossed a
-                // 2^LOG boundary, i.e. their high bits changed -- a few scalar
-                // XOR/OR/shift ops (no SIMD pack/extract). pPrev seeds to -1 so the
-                // first in-bounds layer's high bits always differ -> forces the
-                // first lookup. The DYNAMIC path (rare) keeps the packed-u64 key.
-                int pz = -1, py = -1, px = -1;
+                // Chunk-change detection across depth layers: hold the previous
+                // chunk index as ONE packed u64 (see the per-layer build below) and
+                // compare. ~0 forces the first lookup. Both static and dynamic paths
+                // share it; the static build uses scalar shifts (no SIMD pack).
                 std::uint64_t lastChunk = ~std::uint64_t(0);
                 // Chunk-resident state cached across the depth loop. The previous
                 // code held a `const std::vector<std::byte>*` and dereferenced its
@@ -566,22 +562,26 @@ __attribute__((noinline)) ChunkedPlaneSampler::Stats renderTileRange(
                         lz = iz - cz0 * csh; ly = iy - cy0 * cshY; lx = ix - cx0 * cshX;
                     }
 
-                    // Did we leave the previous chunk? Static: high bits changed.
-                    // Dynamic: compare the packed divide-based key.
-                    bool chunkChanged;
+                    // Did we leave the previous chunk? Build the chunk index with
+                    // SCALAR shifts (cheap, one GP register) and compare to the prior
+                    // one held in a single u64 -- instead of 3 separate prev-coord
+                    // ints (pz/py/px were 3 live registers contributing to the depth
+                    // loop's spilling) OR the SIMD pack (vpsllvq/vpextrq). cz/cy/cx
+                    // are only materialized on an actual crossing (deferred below).
                     int cz = 0, cy = 0, cx = 0;
+                    std::uint64_t chunkKey;
                     if constexpr (kStatic) {
-                        chunkChanged = ((unsigned(iz ^ pz) | unsigned(iy ^ py)
-                                       | unsigned(ix ^ px)) >> CHUNK_LOG2) != 0;
-                        pz = iz; py = iy; px = ix;
+                        chunkKey = (std::uint64_t(unsigned(iz >> CHUNK_LOG2)) << 42)
+                                 | (std::uint64_t(unsigned(iy >> CHUNK_LOG2)) << 21)
+                                 |  std::uint64_t(unsigned(ix >> CHUNK_LOG2));
                     } else {
                         cz = iz / csh; cy = iy / cshY; cx = ix / cshX;
-                        const std::uint64_t chunkKey = (std::uint64_t(unsigned(cz)) << 42)
-                                                     | (std::uint64_t(unsigned(cy)) << 21)
-                                                     |  std::uint64_t(unsigned(cx));
-                        chunkChanged = (chunkKey != lastChunk);
-                        lastChunk = chunkKey;
+                        chunkKey = (std::uint64_t(unsigned(cz)) << 42)
+                                 | (std::uint64_t(unsigned(cy)) << 21)
+                                 |  std::uint64_t(unsigned(cx));
                     }
+                    const bool chunkChanged = (chunkKey != lastChunk);
+                    lastChunk = chunkKey;
                     if (chunkChanged) {
                         // Resolve chunk coords (static path defers these to here --
                         // only needed on an actual chunk crossing, not every layer).
