@@ -484,10 +484,13 @@ __attribute__((noinline)) ChunkedPlaneSampler::Stats renderTileRange(
                 std::size_t curSize = 0;
                 bool curFill = false;
                 // Seed best at -1 (below any real sample, which is [0,255]) so the
-                // composite max-reduce is a plain `fv > best` -- no separate `any`
-                // bool, no `!any ||` disjunction, no flag spilled across the depth
-                // loop. "covered" is then just best >= 0 after the loop. This drops
-                // the kmovd/setae/masked-mov flag-tracking cluster from the hot path.
+                // reduction needs no separate `any` bool ("covered" is best >= 0
+                // after the loop). COMPOSITE keeps the running max as an INT -- the
+                // samples are bytes and the reduce is a pure max, so staying in the
+                // integer domain drops the per-layer byte->float vcvtsi2ss (~3%); we
+                // convert once after the loop. The non-composite/trilinear paths
+                // produce a (possibly fractional) float result, so they use `best`.
+                int bestI = -1;
                 float best = -1.0f;
                 // Composite walks numLayers along the normal + max-reduces; the
                 // non-composite (single plane) case is the SAME body with exactly
@@ -637,20 +640,21 @@ __attribute__((noinline)) ChunkedPlaneSampler::Stats renderTileRange(
                         value = uint8_t(fb);
                     }
 
-                    const float fv = float(value);
                     if constexpr (Composite) {
-                        // Branchless max-reduce -> vmaxss (reg-to-reg), so `best`
-                        // stays in an xmm register across the depth loop instead of
-                        // the compare+conditional-store the `if` emitted (which was
-                        // spilling best to the stack every layer). fmax(-1, fv)==fv
-                        // for any valid fv>=0, matching the seeded best=-1.
-                        best = std::fmax(best, fv);
+                        // Integer max-reduce: value is a byte, stays in a GP register
+                        // across the loop -- no per-layer byte->float convert. Branchy
+                        // max compiles to cmov (no spill). Converted to float once
+                        // after the loop.
+                        const int vi = value;
+                        if (vi > bestI) bestI = vi;
                     } else {
                         // Single plane sample: take this value and stop.
-                        best = fv;
+                        best = float(value);
                         break;
                     }
                 }
+                if constexpr (Composite)
+                    best = float(bestI);
                 if (best >= 0.0f) {
                     outRow[x] = static_cast<uint8_t>(std::clamp(best, 0.0f, 255.0f));
                     if (coverageRow[x] == 0)
