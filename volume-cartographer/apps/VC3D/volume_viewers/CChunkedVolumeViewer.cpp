@@ -1464,6 +1464,15 @@ CChunkedVolumeViewer::RenderResult CChunkedVolumeViewer::renderFrame(RenderConte
 
 namespace {
 
+// Bit-level NaN test (survives -ffast-math, which elides x != x). See the same
+// helper in ChunkedPlaneSampler.cpp.
+inline bool isNanBitsF(float x)
+{
+    std::uint32_t u;
+    __builtin_memcpy(&u, &x, sizeof(u));
+    return (u & 0x7fffffffu) > 0x7f800000u;
+}
+
 // A-priori chunk prefetch: predict the chunk working set from COARSE geometry and
 // issue the fetches BEFORE the render runs, so the frame's chunks are already
 // loading (or resident) when the sampler reaches them. The render's own miss list
@@ -1571,24 +1580,38 @@ void predictAndPrefetch(Surface* surf, vc::render::ChunkCache& cache, int level,
         if (cs[0] <= 0) return;
         const auto s0 = cache.levelTransform(level).scaleFromLevel0;  // L0 voxel -> this-LOD
         const float pad = std::max(std::abs(depthLo), std::abs(depthHi));
-        std::unordered_set<std::uint64_t> seen;
+        // How many chunks the composite depth (pad voxels at L0) spans at this LOD.
+        const int padCz = 1 + int(pad * float(s0[2])) / cs[0];
+        const int padCy = 1 + int(pad * float(s0[1])) / cs[1];
+        const int padCx = 1 + int(pad * float(s0[0])) / cs[2];
+        const int gz = ls[0] / cs[0], gy = ls[1] / cs[1], gx = ls[2] / cs[2];
+        // Walk the visible control points -> the ONE chunk each falls in, dilated by
+        // the depth pad on the chunk grid. No per-point set (prefetchChunks dedups
+        // against entries_ already) and no 3x re-sample -- just track the last chunk
+        // to skip the common run of points landing in the same chunk.
+        int lastCz = -1, lastCy = -1, lastCx = -1;
         for (int r = r0; r <= r1; ++r) {
             const cv::Vec3f* row = (*pts)[r];
             for (int c = c0; c <= c1; ++c) {
                 const cv::Vec3f& p = row[c];
-                if (p[0] == -1.f || p[0] != p[0]) continue;   // hole / NaN
-                for (float dz : {-pad, 0.f, pad}) {
-                    const int vz = int((p[2] + dz) * float(s0[2]));
-                    const int vy = int((p[1] + dz) * float(s0[1]));
-                    const int vx = int((p[0] + dz) * float(s0[0]));
-                    if (unsigned(vz) >= unsigned(ls[0]) || unsigned(vy) >= unsigned(ls[1]) ||
-                        unsigned(vx) >= unsigned(ls[2]))
-                        continue;
-                    const int cz = vz / cs[0], cy = vy / cs[1], cx = vx / cs[2];
-                    const std::uint64_t k = (std::uint64_t(cz) << 42) ^ (std::uint64_t(cy) << 21) ^ std::uint64_t(cx);
-                    if (seen.insert(k).second)
-                        keys.push_back({level, cz, cy, cx});
-                }
+                if (p[0] == -1.f || isNanBitsF(p[0])) continue;   // hole / NaN
+                const int vz = int(p[2] * float(s0[2]));
+                const int vy = int(p[1] * float(s0[1]));
+                const int vx = int(p[0] * float(s0[0]));
+                if (unsigned(vz) >= unsigned(ls[0]) || unsigned(vy) >= unsigned(ls[1]) ||
+                    unsigned(vx) >= unsigned(ls[2]))
+                    continue;
+                const int cz = vz / cs[0], cy = vy / cs[1], cx = vx / cs[2];
+                if (cz == lastCz && cy == lastCy && cx == lastCx) continue;  // same chunk run
+                lastCz = cz; lastCy = cy; lastCx = cx;
+                for (int dz = -padCz; dz <= padCz; ++dz)
+                    for (int dy = -padCy; dy <= padCy; ++dy)
+                        for (int dx = -padCx; dx <= padCx; ++dx) {
+                            const int kz = cz + dz, ky = cy + dy, kx = cx + dx;
+                            if (unsigned(kz) >= unsigned(gz) || unsigned(ky) >= unsigned(gy) ||
+                                unsigned(kx) >= unsigned(gx)) continue;
+                            keys.push_back({level, kz, ky, kx});
+                        }
                 if (keys.size() > kMaxPredictedChunks) { keys.clear(); goto issue; }  // safety
             }
         }
