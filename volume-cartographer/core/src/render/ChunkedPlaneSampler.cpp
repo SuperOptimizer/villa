@@ -340,6 +340,11 @@ __attribute__((noinline)) ChunkedPlaneSampler::Stats renderTileRange(
     (void)dynLog; (void)csh; (void)cshY; (void)cshX;
 
     const std::array<int, 3>& shp = access.shape;
+    // Hoist the grid extents to plain scalars. shp is a reference into `access`;
+    // the per-layer bounds check reloaded shp[0..2] from memory every layer
+    // because the optimizer can't always prove the cv::Mat output writes don't
+    // alias `access`. As locals they stay in registers across the depth loop.
+    const int shp0 = shp[0], shp1 = shp[1], shp2 = shp[2];
     const uint8_t fillVal = access.fill;
 
     // Precompute the level transform ONCE as float scalars (it's constant for the
@@ -383,8 +388,8 @@ __attribute__((noinline)) ChunkedPlaneSampler::Stats renderTileRange(
     // corners can each fall in a different chunk. Nearest sampling uses the inlined
     // run-cache in the loop body instead (this is only the per-corner trilinear read).
     auto readVoxelAt = [&](int iz, int iy, int ix) -> int {
-        if (unsigned(iz) >= unsigned(shp[0]) || unsigned(iy) >= unsigned(shp[1]) ||
-            unsigned(ix) >= unsigned(shp[2]))
+        if (unsigned(iz) >= unsigned(shp0) || unsigned(iy) >= unsigned(shp1) ||
+            unsigned(ix) >= unsigned(shp2))
             return -1;
         int cz, cy, cx, lz, ly, lx;
         if constexpr (kStatic) {
@@ -535,7 +540,7 @@ __attribute__((noinline)) ChunkedPlaneSampler::Stats renderTileRange(
                         // uses Trilinear (it's nearest), so this is the !Composite
                         // single-sample path.
                         const int ix = int(fx), iy = int(fy), iz = int(fz);
-                        if (iz + 1 >= shp[0] || iy + 1 >= shp[1] || ix + 1 >= shp[2])
+                        if (iz + 1 >= shp0 || iy + 1 >= shp1 || ix + 1 >= shp2)
                             continue;
                         const float dx = fx - float(ix), dy = fy - float(iy), dz = fz - float(iz);
                         const int v000 = readVoxelAt(iz,   iy,   ix);
@@ -559,8 +564,8 @@ __attribute__((noinline)) ChunkedPlaneSampler::Stats renderTileRange(
                     }
 
                     const int iz = nearestIdx(fz), iy = nearestIdx(fy), ix = nearestIdx(fx);
-                    if (unsigned(iz) >= unsigned(shp[0]) || unsigned(iy) >= unsigned(shp[1]) ||
-                        unsigned(ix) >= unsigned(shp[2]))
+                    if (unsigned(iz) >= unsigned(shp0) || unsigned(iy) >= unsigned(shp1) ||
+                        unsigned(ix) >= unsigned(shp2))
                         continue;
 
                     // In-chunk offset (needed every layer for the byte load).
