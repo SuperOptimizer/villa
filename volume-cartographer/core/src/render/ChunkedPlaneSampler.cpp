@@ -453,11 +453,14 @@ __attribute__((noinline)) ChunkedPlaneSampler::Stats renderTileRange(
                     nrmL = cv::Vec3f(nrm[0]*tsx, nrm[1]*tsy, nrm[2]*tsz);
                 }
 
-                // Track the current chunk as ONE packed 64-bit key instead of
-                // three lastCz/Cy/Cx ints -- a single compare per depth, and one
-                // live value instead of three (cuts the register spilling the
-                // 3-int compare caused in the inner loop). Chunk coords are < 2^21
-                // for any real volume, so 21 bits per axis is ample.
+                // Chunk-change detection across depth layers. The STATIC path
+                // detects "still in the same 2^LOG chunk" straight from the int
+                // voxel coords: chunk changed iff any of (iz,iy,ix) crossed a
+                // 2^LOG boundary, i.e. their high bits changed -- a few scalar
+                // XOR/OR/shift ops (no SIMD pack/extract). pPrev seeds to -1 so the
+                // first in-bounds layer's high bits always differ -> forces the
+                // first lookup. The DYNAMIC path (rare) keeps the packed-u64 key.
+                int pz = -1, py = -1, px = -1;
                 std::uint64_t lastChunk = ~std::uint64_t(0);
                 // curBytes: nullptr=unusable, &kAllFillTag=all-fill, else the
                 // resident chunk buffer. One pointer carries the chunk state, so
@@ -532,22 +535,38 @@ __attribute__((noinline)) ChunkedPlaneSampler::Stats renderTileRange(
                         unsigned(ix) >= unsigned(shp[2]))
                         continue;
 
-                    int cz, cy, cx, lz, ly, lx;
+                    // In-chunk offset (needed every layer for the byte load).
+                    int lz, ly, lx;
                     if constexpr (kStatic) {
-                        constexpr int kLog = CHUNK_LOG2;
                         constexpr int kMask = (1 << CHUNK_LOG2) - 1;
-                        cz = iz >> kLog; cy = iy >> kLog; cx = ix >> kLog;
                         lz = iz & kMask; ly = iy & kMask; lx = ix & kMask;
                     } else {
-                        cz = iz / csh; cy = iy / cshY; cx = ix / cshX;
-                        lz = iz - cz * csh; ly = iy - cy * cshY; lx = ix - cx * cshX;
+                        const int cz0 = iz / csh, cy0 = iy / cshY, cx0 = ix / cshX;
+                        lz = iz - cz0 * csh; ly = iy - cy0 * cshY; lx = ix - cx0 * cshX;
                     }
 
-                    const std::uint64_t chunkKey = (std::uint64_t(unsigned(cz)) << 42)
-                                                 | (std::uint64_t(unsigned(cy)) << 21)
-                                                 |  std::uint64_t(unsigned(cx));
-                    if (chunkKey != lastChunk) {
+                    // Did we leave the previous chunk? Static: high bits changed.
+                    // Dynamic: compare the packed divide-based key.
+                    bool chunkChanged;
+                    int cz = 0, cy = 0, cx = 0;
+                    if constexpr (kStatic) {
+                        chunkChanged = ((unsigned(iz ^ pz) | unsigned(iy ^ py)
+                                       | unsigned(ix ^ px)) >> CHUNK_LOG2) != 0;
+                        pz = iz; py = iy; px = ix;
+                    } else {
+                        cz = iz / csh; cy = iy / cshY; cx = ix / cshX;
+                        const std::uint64_t chunkKey = (std::uint64_t(unsigned(cz)) << 42)
+                                                     | (std::uint64_t(unsigned(cy)) << 21)
+                                                     |  std::uint64_t(unsigned(cx));
+                        chunkChanged = (chunkKey != lastChunk);
                         lastChunk = chunkKey;
+                    }
+                    if (chunkChanged) {
+                        // Resolve chunk coords (static path defers these to here --
+                        // only needed on an actual chunk crossing, not every layer).
+                        if constexpr (kStatic) {
+                            cz = iz >> CHUNK_LOG2; cy = iy >> CHUNK_LOG2; cx = ix >> CHUNK_LOG2;
+                        }
                         // Raw lock-free resident read -- no probe layer,
                         // no shared_ptr copy (the tick won't evict mid-frame).
                         const auto rv = doLookup(level, cz, cy, cx);
