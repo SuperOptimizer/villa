@@ -341,8 +341,6 @@ __attribute__((noinline)) ChunkedPlaneSampler::Stats renderTileRange(
 
     const std::array<int, 3>& shp = access.shape;
     const uint8_t fillVal = access.fill;
-    // A resolved chunk: bytes == kAllFill means an all-fill chunk (no buffer).
-    static const std::vector<std::byte> kAllFillTag;
 
     // Precompute the level transform ONCE as float scalars (it's constant for the
     // whole call). The per-pixel toLevelCoord/toLevelVector were doing double-
@@ -479,10 +477,16 @@ __attribute__((noinline)) ChunkedPlaneSampler::Stats renderTileRange(
                 // first lookup. The DYNAMIC path (rare) keeps the packed-u64 key.
                 int pz = -1, py = -1, px = -1;
                 std::uint64_t lastChunk = ~std::uint64_t(0);
-                // curBytes: nullptr=unusable, &kAllFillTag=all-fill, else the
-                // resident chunk buffer. One pointer carries the chunk state, so
-                // the per-depth fast path stays in registers.
-                const std::vector<std::byte>* curBytes = nullptr;
+                // Chunk-resident state cached across the depth loop. The previous
+                // code held a `const std::vector<std::byte>*` and dereferenced its
+                // header (data ptr at +0x0, size at +0x8) EVERY layer for the
+                // bounds check + load. Those are invariant within a chunk, so cache
+                // the RAW data pointer + size on a chunk crossing; the per-layer
+                // path is then `if (o < curSize) curData[o]` -- two registers, no
+                // vector-header indirection. curFill = the all-fill chunk (no buffer).
+                const std::byte* curData = nullptr;
+                std::size_t curSize = 0;
+                bool curFill = false;
                 // Seed best at -1 (below any real sample, which is [0,255]) so the
                 // composite max-reduce is a plain `fv > best` -- no separate `any`
                 // bool, no `!any ||` disjunction, no flag spilled across the depth
@@ -587,12 +591,15 @@ __attribute__((noinline)) ChunkedPlaneSampler::Stats renderTileRange(
                         // Raw lock-free resident read -- no probe layer,
                         // no shared_ptr copy (the tick won't evict mid-frame).
                         const auto rv = doLookup(level, cz, cy, cx);
+                        curFill = false; curData = nullptr; curSize = 0;
                         if (rv.status == ChunkStatus::AllFill) {
-                            curBytes = &kAllFillTag;
+                            curFill = true;
                         } else if (rv.status == ChunkStatus::Data && rv.bytes) {
-                            curBytes = rv.bytes;
+                            // Cache the raw buffer ptr + size ONCE per chunk; the
+                            // per-layer load below skips the vector-header deref.
+                            curData = rv.bytes->data();
+                            curSize = rv.bytes->size();
                         } else {
-                            curBytes = nullptr;
                             // Append misses to a flat vector (no per-insert node
                             // alloc); deduped once at flush. Gated by chunk-change
                             // (lastChunk), so at most one push per chunk crossing.
@@ -604,9 +611,9 @@ __attribute__((noinline)) ChunkedPlaneSampler::Stats renderTileRange(
                     }
 
                     uint8_t value;
-                    if (curBytes == &kAllFillTag) {
+                    if (curFill) {
                         value = fillVal;
-                    } else if (curBytes) {
+                    } else if (curData) {
                         std::size_t o;
                         if constexpr (kStatic) {
                             o = ((std::size_t(lz) << CHUNK_LOG2) + std::size_t(ly)
@@ -616,9 +623,9 @@ __attribute__((noinline)) ChunkedPlaneSampler::Stats renderTileRange(
                                 + std::size_t(ly)) * std::size_t(cshX)
                                 + std::size_t(lx);
                         }
-                        if (o >= curBytes->size())
+                        if (o >= curSize)
                             continue;
-                        value = std::to_integer<uint8_t>((*curBytes)[o]);
+                        value = std::to_integer<uint8_t>(curData[o]);
                     } else {
                         // Miss at this level -> try a coarser resident level (blurry
                         // but present). -1 means no coarser level has it either.
