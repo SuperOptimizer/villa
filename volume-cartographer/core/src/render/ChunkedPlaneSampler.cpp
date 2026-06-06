@@ -240,9 +240,27 @@ namespace {
 // the depth loop to one iteration and the reduction to a direct write, so the
 // non-composite case is the same optimized body (inlined lookup, 8-byte key, flat
 // miss list, LOD fallback) with zero composite overhead. Both use nearest sampling
+// Record a missed chunk. Out-of-line + cold so the vector's capacity-grow/realloc
+// (operator new) machinery stays OUT of the hot per-depth lookup loop -- a miss is
+// the rare case (most chunks are resident), and inlining the push_back's grow branch
+// into the kernel bloated it and forced register spills. The kernel calls this only
+// on an actual miss.
+__attribute__((noinline, cold)) void recordMiss(std::vector<ChunkKey>& missedVec, ChunkKey key)
+{
+    missedVec.push_back(key);
+}
+
 // here; the Trilinear template path handles 8-corner interpolation.
+//
+// noinline: each <Composite,Trilinear,CHUNK_LOG2,ArrayT> instantiation must be its
+// OWN function. Without this, the dispatch switch inlines ALL the variants (composite
+// max, plain nearest, trilinear, x3 chunk-logs, x2 array types) into one giant blob
+// in the worker thunk -- the register allocator then juggles every variant's live set
+// at once and spills heavily (~31 stack slots, 44 inlined vector-grow calls). Split
+// out, each kernel gets its own register budget and the hot composite loop stays in
+// registers.
 template <bool Composite, bool Trilinear, int CHUNK_LOG2, typename ArrayT>
-ChunkedPlaneSampler::Stats renderTileRange(
+__attribute__((noinline)) ChunkedPlaneSampler::Stats renderTileRange(
     ArrayT& array,
     const LevelAccess& access,
     int level,
@@ -338,7 +356,7 @@ ChunkedPlaneSampler::Stats renderTileRange(
             return -1;
         }
         if (rv.status == ChunkStatus::MissQueued)
-            missedVec.push_back({level, cz, cy, cx});
+            recordMiss(missedVec, {level, cz, cy, cx});
         else if (rv.status == ChunkStatus::Error)
             ++localStats.errorChunks;
         return -1;
@@ -514,7 +532,7 @@ ChunkedPlaneSampler::Stats renderTileRange(
                             // alloc); deduped once at flush. Gated by chunk-change
                             // (lastChunk), so at most one push per chunk crossing.
                             if (rv.status == ChunkStatus::MissQueued)
-                                missedVec.push_back({level, cz, cy, cx});
+                                recordMiss(missedVec, {level, cz, cy, cx});
                             else if (rv.status == ChunkStatus::Error)
                                 ++localStats.errorChunks;
                         }
