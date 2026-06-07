@@ -1,11 +1,15 @@
 #include "LineAnnotationController.hpp"
 
 #include "CState.hpp"
+#include "FiberSliceGeometry.hpp"
 #include "LineAnnotationFiberNaming.hpp"
+#include "LineAnnotationGeneratedViews.hpp"
+#include "LineAnnotationShiftScroll.hpp"
 #include "LineAnnotationDialog.hpp"
 #include "SurfacePanelController.hpp"
 #include "VCSettings.hpp"
 #include "ViewerManager.hpp"
+#include "overlays/FiberSliceOverlayController.hpp"
 #include "vc/core/types/VolumePkg.hpp"
 #include "vc/core/types/Segmentation.hpp"
 #include "vc/core/util/Logging.hpp"
@@ -20,19 +24,35 @@
 #include "vc/lasagna/LineOptimizer.hpp"
 #include "vc/lasagna/LineViewBuilder.hpp"
 #include "volume_viewers/CChunkedVolumeViewer.hpp"
+#include "volume_viewers/CVolumeViewerView.hpp"
+#include "volume_viewers/VolumeViewerBase.hpp"
 
 #include <QFileDialog>
 #include <QFutureWatcher>
+#include <QButtonGroup>
+#include <QColor>
+#include <QEvent>
+#include <QHBoxLayout>
+#include <QKeyEvent>
+#include <QLabel>
 #include <QMessageBox>
+#include <QMdiArea>
+#include <QMdiSubWindow>
 #include <QPoint>
 #include <QPointF>
+#include <QPushButton>
+#include <QRadioButton>
+#include <QShortcut>
 #include <QDateTime>
 #include <QSettings>
 #include <QStringList>
 #include <QtConcurrent/QtConcurrent>
+#include <QVariant>
+#include <QVBoxLayout>
 #include <QWidget>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cctype>
 #include <chrono>
@@ -42,6 +62,7 @@
 #include <filesystem>
 #include <iomanip>
 #include <locale>
+#include <map>
 #include <sstream>
 #include <string_view>
 #include <utility>
@@ -85,6 +106,46 @@ struct LineAnnotationController::LineAnnotationSession {
     std::string fiberFileName;
     std::string fiberManualHvTag;
     bool suppressFiberSave = false;
+    bool suppressGeneratedViews = false;
+    std::function<void(LineAnnotationSession&)> optimizationSucceededCallback;
+};
+
+struct LineAnnotationController::IntersectionInspectionSession {
+    struct FollowSlice {
+        bool valid = false;
+        bool followsMouse = true;
+        bool sourceSide = true;
+        std::string surfaceName;
+        QPointer<CChunkedVolumeViewer> viewer;
+        std::vector<cv::Vec3d> linePoints;
+        std::vector<cv::Vec3f> lineUpVectors;
+        std::vector<vc::lasagna::LineControlPoint> controlPoints;
+        double linePosition = 0.0;
+    };
+
+    struct GeneratedSurfaceContext {
+        bool valid = false;
+        bool sourceSide = true;
+        bool strip = false;
+        bool follow = false;
+        double linePosition = 0.0;
+    };
+
+    QPointer<QMdiArea> targetArea;
+    vc::atlas::FiberIntersectionResult result;
+    std::optional<fs::path> atlasDir;
+    double sourceFocusLinePosition = 0.0;
+    double targetFocusLinePosition = 0.0;
+    std::vector<std::string> surfaceNames;
+    std::shared_ptr<LineAnnotationSession> sourceLineSession;
+    std::shared_ptr<LineAnnotationSession> targetLineSession;
+    std::string sourceSessionSurfaceName;
+    std::string targetSessionSurfaceName;
+    FollowSlice sourceFollow;
+    FollowSlice targetFollow;
+    QPointer<QShortcut> followShortcut;
+    std::optional<bool> activeFollowSourceSide;
+    std::map<std::string, GeneratedSurfaceContext> generatedSurfaceContexts;
 };
 
 namespace {
@@ -134,9 +195,166 @@ bool finitePoint(const cv::Vec3d& v)
     return std::isfinite(v[0]) && std::isfinite(v[1]) && std::isfinite(v[2]);
 }
 
+bool finitePoint(const cv::Vec3f& v)
+{
+    return std::isfinite(v[0]) && std::isfinite(v[1]) && std::isfinite(v[2]);
+}
+
+cv::Vec3f toVec3f(const cv::Vec3d& v)
+{
+    return {static_cast<float>(v[0]),
+            static_cast<float>(v[1]),
+            static_cast<float>(v[2])};
+}
+
+cv::Vec3d toVec3d(const cv::Vec3f& v)
+{
+    return {static_cast<double>(v[0]),
+            static_cast<double>(v[1]),
+            static_cast<double>(v[2])};
+}
+
 bool approximatelyEqual(double a, double b)
 {
     return std::abs(a - b) <= 1.0e-9;
+}
+
+cv::Vec3d interpolatedPointAtLinePosition(const std::vector<cv::Vec3d>& points,
+                                          double linePosition)
+{
+    if (points.empty() || !std::isfinite(linePosition)) {
+        return {0.0, 0.0, 0.0};
+    }
+    linePosition = std::clamp(linePosition, 0.0, static_cast<double>(points.size() - 1));
+    const int lower = static_cast<int>(std::floor(linePosition));
+    const int upper = std::min<int>(lower + 1, static_cast<int>(points.size()) - 1);
+    const double t = linePosition - static_cast<double>(lower);
+    return points[static_cast<size_t>(lower)] * (1.0 - t) +
+           points[static_cast<size_t>(upper)] * t;
+}
+
+cv::Vec3d tangentAtLinePosition(const std::vector<cv::Vec3d>& points,
+                                double linePosition)
+{
+    if (points.size() < 2 || !std::isfinite(linePosition)) {
+        return {1.0, 0.0, 0.0};
+    }
+    linePosition = std::clamp(linePosition, 0.0, static_cast<double>(points.size() - 1));
+    int lower = static_cast<int>(std::floor(linePosition));
+    int upper = std::min<int>(lower + 1, static_cast<int>(points.size()) - 1);
+    if (lower == upper && lower > 0) {
+        --lower;
+    }
+    cv::Vec3d tangent = points[static_cast<size_t>(upper)] - points[static_cast<size_t>(lower)];
+    tangent = normalizedOrZero(tangent);
+    return finiteDirection(tangent) ? tangent : cv::Vec3d{1.0, 0.0, 0.0};
+}
+
+cv::Vec3f interpolatedUpAtLinePosition(const std::vector<cv::Vec3f>& upVectors,
+                                       double linePosition,
+                                       const cv::Vec3d& tangent)
+{
+    if (upVectors.empty() || !std::isfinite(linePosition)) {
+        return {0.0f, 1.0f, 0.0f};
+    }
+    linePosition = std::clamp(linePosition, 0.0, static_cast<double>(upVectors.size() - 1));
+    const int lower = static_cast<int>(std::floor(linePosition));
+    const int upper = std::min<int>(lower + 1, static_cast<int>(upVectors.size()) - 1);
+    cv::Vec3f lowerUp = upVectors[static_cast<size_t>(lower)];
+    cv::Vec3f upperUp = upVectors[static_cast<size_t>(upper)];
+    if (!finitePoint(lowerUp) || !finitePoint(upperUp)) {
+        return {0.0f, 1.0f, 0.0f};
+    }
+    if (lowerUp.dot(upperUp) < 0.0f) {
+        upperUp *= -1.0f;
+    }
+    const float t = static_cast<float>(linePosition - static_cast<double>(lower));
+    cv::Vec3d up = toVec3d(lowerUp * (1.0f - t) + upperUp * t);
+    up -= tangent * up.dot(tangent);
+    up = normalizedOrZero(up);
+    return finiteDirection(up) ? toVec3f(up) : cv::Vec3f{0.0f, 1.0f, 0.0f};
+}
+
+std::optional<cv::Vec2f> stripLinePositionToSurfacePoint(QuadSurface* surface,
+                                                         double linePosition)
+{
+    if (!surface || !std::isfinite(linePosition)) {
+        return std::nullopt;
+    }
+    const auto* points = surface->rawPointsPtr();
+    if (!points || points->empty()) {
+        return std::nullopt;
+    }
+    const cv::Vec2f scale = surface->scale();
+    if (scale[0] == 0.0f || scale[1] == 0.0f) {
+        return std::nullopt;
+    }
+    const float surfaceX = (static_cast<float>(linePosition) -
+                            static_cast<float>(points->cols) / 2.0f) / scale[0];
+    const float centerRow = static_cast<float>(points->rows / 2);
+    const float surfaceY = (centerRow - static_cast<float>(points->rows) / 2.0f) / scale[1];
+    return cv::Vec2f{surfaceX, surfaceY};
+}
+
+void frameStripLineSpan(CChunkedVolumeViewer* viewer,
+                        QuadSurface* surface,
+                        double firstLinePosition,
+                        double secondLinePosition)
+{
+    if (!viewer || !surface ||
+        !std::isfinite(firstLinePosition) ||
+        !std::isfinite(secondLinePosition)) {
+        return;
+    }
+    const auto first = stripLinePositionToSurfacePoint(surface, firstLinePosition);
+    const auto second = stripLinePositionToSurfacePoint(surface, secondLinePosition);
+    if (!first || !second) {
+        return;
+    }
+    const double span = std::abs(static_cast<double>((*second)[0] - (*first)[0]));
+    if (!std::isfinite(span) || span <= 1.0e-6) {
+        return;
+    }
+    auto* view = viewer->graphicsView();
+    const int viewportWidth = view && view->viewport() ? view->viewport()->width() : 0;
+    if (viewportWidth <= 0) {
+        return;
+    }
+    constexpr double kViewportFill = 0.86;
+    auto camera = viewer->cameraState();
+    camera.surfacePtrX = static_cast<float>((static_cast<double>((*first)[0]) +
+                                             static_cast<double>((*second)[0])) * 0.5);
+    camera.surfacePtrY = static_cast<float>((static_cast<double>((*first)[1]) +
+                                             static_cast<double>((*second)[1])) * 0.5);
+    camera.scale = static_cast<float>(std::clamp(kViewportFill * static_cast<double>(viewportWidth) / span,
+                                                 0.01,
+                                                 100000.0));
+    viewer->applyCameraState(camera, true);
+}
+
+std::vector<vc3d::line_annotation::GeneratedOverlay::ControlPointMarker>
+generatedControlMarkers(const std::vector<vc::lasagna::LineControlPoint>& controls)
+{
+    std::vector<vc3d::line_annotation::GeneratedOverlay::ControlPointMarker> markers;
+    markers.reserve(controls.size());
+    for (const auto& control : controls) {
+        vc3d::line_annotation::GeneratedOverlay::ControlPointMarker marker;
+        marker.point = toVec3f(control.volumePoint);
+        marker.linePosition = control.linePosition;
+        marker.isSeed = control.isSeed;
+        markers.push_back(marker);
+    }
+    return markers;
+}
+
+std::vector<cv::Vec3f> generatedLinePoints(const std::vector<cv::Vec3d>& points)
+{
+    std::vector<cv::Vec3f> converted;
+    converted.reserve(points.size());
+    for (const auto& point : points) {
+        converted.push_back(toVec3f(point));
+    }
+    return converted;
 }
 
 nlohmann::json pointToJson(const cv::Vec3d& point)
@@ -429,6 +647,7 @@ LineAnnotationController::LineAnnotationController(CState* state,
     , _state(state)
     , _viewerManager(viewerManager)
     , _parentWidget(parentWidget)
+    , _fiberSliceOverlay(std::make_unique<FiberSliceOverlayController>())
     , _datasetPicker([this](QWidget* parent, const fs::path& startDir) {
         return pickDataset(parent, startDir);
     })
@@ -463,6 +682,10 @@ LineAnnotationController::LineAnnotationController(CState* state,
             loadFibersForCurrentPackage();
         }
     }
+}
+
+LineAnnotationController::~LineAnnotationController()
+{
 }
 
 void LineAnnotationController::setDatasetPickerForTesting(DatasetPicker picker)
@@ -965,9 +1188,9 @@ void LineAnnotationController::createAtlasFromFiber(uint64_t fiberId)
 
         vc::atlas::FiberInput input;
         std::error_code relativeEc;
-        input.fiberPath = fs::relative(fiberPath(fiberId), volpkgRoot, relativeEc);
+        input.fiberPath = fs::relative(fiberPath(*fiberIt), volpkgRoot, relativeEc);
         if (relativeEc || input.fiberPath.empty()) {
-            input.fiberPath = fs::path("fibers") / (std::to_string(fiberId) + ".json");
+            input.fiberPath = fs::path("fibers") / fiberIt->fileName;
         }
         input.controlPoints = fiberIt->controlPoints;
         input.linePoints = fiberIt->linePoints;
@@ -1010,6 +1233,1394 @@ void LineAnnotationController::createAtlasFromFiber(uint64_t fiberId)
     }
 }
 
+void LineAnnotationController::showFiberSlice(uint64_t fiberId, QMdiArea* targetArea)
+{
+    namespace fslice = vc3d::fiber_slice;
+
+    try {
+        if (!_state || !_viewerManager || !targetArea) {
+            throw std::runtime_error("Fiber slice workspace is not available");
+        }
+        auto fiberIt = std::find_if(_fibers.begin(), _fibers.end(), [fiberId](const StoredFiber& fiber) {
+            return fiber.id == fiberId;
+        });
+        if (fiberIt == _fibers.end()) {
+            throw std::runtime_error("Selected fiber is not loaded");
+        }
+        if (fiberIt->linePoints.empty()) {
+            throw std::runtime_error("Selected fiber has no line points");
+        }
+
+        const fslice::ControlSpanSelection span =
+            fslice::selectControlSpan(fiberIt->linePoints, fiberIt->controlPoints);
+        if (!span.valid) {
+            throw std::runtime_error(span.error);
+        }
+        const fslice::PlaneFit fit = fslice::fitLeastSquaresPlane(span, fiberIt->linePoints);
+        if (!fit.valid) {
+            throw std::runtime_error(fit.error);
+        }
+
+        if (_fiberSliceOverlay) {
+            _fiberSliceOverlay->clearSlice();
+        }
+        for (QMdiSubWindow* subWindow : targetArea->subWindowList()) {
+            if (!subWindow) {
+                continue;
+            }
+            const QString oldSurface = subWindow->property("vc_fiber_slice_surface").toString();
+            if (!oldSurface.isEmpty()) {
+                _state->setSurface(oldSurface.toStdString(), nullptr);
+            }
+        }
+        targetArea->closeAllSubWindows();
+
+        const std::string surfaceName =
+            "fiber_slice_" + std::to_string(fiberId) + "_" + std::to_string(_nextPaneId++);
+        auto surface = std::make_shared<PlaneSurface>();
+        surface->setFromNormalAndUp(
+            cv::Vec3f{static_cast<float>(fit.origin[0]),
+                      static_cast<float>(fit.origin[1]),
+                      static_cast<float>(fit.origin[2])},
+            cv::Vec3f{static_cast<float>(fit.normal[0]),
+                      static_cast<float>(fit.normal[1]),
+                      static_cast<float>(fit.normal[2])},
+            cv::Vec3f{static_cast<float>(fit.upHint[0]),
+                      static_cast<float>(fit.upHint[1]),
+                      static_cast<float>(fit.upHint[2])});
+        surface->id = surfaceName;
+        _state->setSurface(surfaceName, surface);
+
+        VolumeViewerBase* viewer = _viewerManager->createViewer(
+            surfaceName,
+            tr("Fiber %1 Slice").arg(fiberId),
+            targetArea,
+            ViewerManager::ViewerRole::Annotation);
+        if (!viewer) {
+            _state->setSurface(surfaceName, nullptr);
+            throw std::runtime_error("Could not create fiber slice viewer");
+        }
+        if (auto* viewerWidget = qobject_cast<QWidget*>(viewer->asQObject())) {
+            if (auto* subWindow = qobject_cast<QMdiSubWindow*>(viewerWidget->parentWidget())) {
+                subWindow->setProperty("vc_fiber_slice_surface", QString::fromStdString(surfaceName));
+                subWindow->showMaximized();
+            } else {
+                viewerWidget->show();
+            }
+            connect(viewerWidget, &QObject::destroyed, this, [this, surfaceName]() {
+                if (_state) {
+                    _state->setSurface(surfaceName, nullptr);
+                }
+            });
+        }
+
+        const cv::Vec3f center{
+            static_cast<float>(span.centroid[0]),
+            static_cast<float>(span.centroid[1]),
+            static_cast<float>(span.centroid[2]),
+        };
+        viewer->fitSurfaceInView();
+        viewer->centerOnVolumePoint(center, true);
+
+        if (_fiberSliceOverlay) {
+            FiberSliceOverlayController::SliceData overlayData;
+            overlayData.surfaceName = surfaceName;
+            overlayData.selectedFiberId = fiberId;
+            overlayData.plane = fslice::Plane{fit.origin, fit.normal};
+            overlayData.fitSamples = span.samples;
+            overlayData.fibers.reserve(_fibers.size());
+            for (const StoredFiber& fiber : _fibers) {
+                overlayData.fibers.push_back(FiberSliceOverlayController::FiberData{
+                    fiber.id,
+                    fiber.linePoints,
+                    fiber.controlPoints,
+                    FiberSliceOverlayController::sourceFiberStyle(),
+                });
+            }
+            _fiberSliceOverlay->setSlice(viewer, std::move(overlayData));
+        }
+
+        if (auto* viewerWidget = qobject_cast<QWidget*>(viewer->asQObject())) {
+            viewerWidget->raise();
+            viewerWidget->setFocus(Qt::OtherFocusReason);
+        }
+    } catch (const std::exception& ex) {
+        showError(tr("Could not show fiber slice: %1")
+                      .arg(QString::fromStdString(ex.what())));
+    }
+}
+
+void LineAnnotationController::showIntersectionInspection(
+    const vc::atlas::FiberIntersectionResult& result,
+    QMdiArea* targetArea,
+    std::optional<fs::path> atlasDir)
+{
+    try {
+        if (!_state || !_viewerManager || !targetArea) {
+            throw std::runtime_error("Intersections workspace is not available");
+        }
+        cleanupIntersectionInspectionSurfaces();
+        _intersectionInspection = std::make_unique<IntersectionInspectionSession>();
+        _intersectionInspection->targetArea = targetArea;
+        _intersectionInspection->result = result;
+        _intersectionInspection->atlasDir = std::move(atlasDir);
+        targetArea->installEventFilter(this);
+        if (auto* viewport = targetArea->viewport()) {
+            viewport->installEventFilter(this);
+        }
+        auto* followShortcut = new QShortcut(QKeySequence(Qt::Key_Space), targetArea);
+        followShortcut->setContext(Qt::WidgetWithChildrenShortcut);
+        _intersectionInspection->followShortcut = followShortcut;
+        connect(followShortcut, &QShortcut::activated, this, [this]() {
+            (void)handleIntersectionFollowKeyPress(Qt::Key_Space, Qt::NoModifier);
+        });
+        rebuildIntersectionInspection();
+    } catch (const std::exception& ex) {
+        showError(tr("Could not show intersection inspection: %1")
+                      .arg(QString::fromStdString(ex.what())));
+    }
+}
+
+bool LineAnnotationController::acceptIntersectionSameWindingChoice()
+{
+    try {
+        if (!_intersectionInspection) {
+            throw std::runtime_error("No intersection inspection is active");
+        }
+        if (!_intersectionInspection->atlasDir || _intersectionInspection->atlasDir->empty()) {
+            throw std::runtime_error("Select an atlas before accepting an intersection link");
+        }
+        auto vpkg = _state ? _state->vpkg() : nullptr;
+        if (!vpkg) {
+            throw std::runtime_error("No volume package is loaded");
+        }
+        const fs::path volpkgRoot = vpkg->path().empty()
+            ? fs::path(vpkg->getVolpkgDirectory())
+            : vpkg->path().parent_path();
+        if (volpkgRoot.empty()) {
+            throw std::runtime_error("The current volume package has no root directory");
+        }
+
+        const auto result = _intersectionInspection->result;
+        auto sourceIt = std::find_if(_fibers.begin(), _fibers.end(),
+                                     [&result](const StoredFiber& fiber) {
+                                         return fiber.id == result.sourceFiberId;
+                                     });
+        auto targetIt = std::find_if(_fibers.begin(), _fibers.end(),
+                                     [&result](const StoredFiber& fiber) {
+                                         return fiber.id == result.targetFiberId;
+                                     });
+        if (sourceIt == _fibers.end() || targetIt == _fibers.end()) {
+            throw std::runtime_error("One or both intersection fibers are not loaded");
+        }
+
+        auto makeInput = [this, &volpkgRoot](const StoredFiber& fiber) {
+            vc::atlas::FiberInput input;
+            std::error_code relativeEc;
+            input.fiberPath = fs::relative(fiberPath(fiber), volpkgRoot, relativeEc);
+            if (relativeEc || input.fiberPath.empty()) {
+                input.fiberPath = fs::path("fibers") / fiber.fileName;
+            }
+            input.controlPoints = fiber.controlPoints;
+            input.linePoints = fiber.linePoints;
+            return input;
+        };
+        const vc::atlas::FiberInput sourceInput = makeInput(*sourceIt);
+        const vc::atlas::FiberInput targetInput = makeInput(*targetIt);
+
+        vc::atlas::Atlas atlas = vc::atlas::Atlas::load(*_intersectionInspection->atlasDir);
+        auto findMapping = [](vc::atlas::Atlas& atlas, const fs::path& fiberPath) {
+            const std::string key = vc::atlas::atlasFiberPathKey(fiberPath);
+            return std::find_if(atlas.fibers.begin(),
+                                atlas.fibers.end(),
+                                [&key](const vc::atlas::FiberMapping& mapping) {
+                                    return vc::atlas::atlasFiberPathKey(mapping.fiberPath) == key;
+                                });
+        };
+        auto sourceMappingIt = findMapping(atlas, sourceInput.fiberPath);
+        auto targetMappingIt = findMapping(atlas, targetInput.fiberPath);
+        const bool sourceMapped = sourceMappingIt != atlas.fibers.end();
+        const bool targetMapped = targetMappingIt != atlas.fibers.end();
+        if (!sourceMapped && !targetMapped) {
+            throw std::runtime_error(
+                "An atlas must be seeded from one inspected object before linked objects can be added");
+        }
+
+        fs::path manifestPath = vpkg->selectedLasagnaDatasetPath();
+        if (manifestPath.empty()) {
+            throw std::runtime_error("No Lasagna normal dataset selected");
+        }
+        if (!fs::exists(manifestPath)) {
+            throw std::runtime_error("Selected Lasagna normal dataset does not exist");
+        }
+        vc::lasagna::LasagnaDataset dataset = vc::lasagna::LasagnaDataset::open(manifestPath);
+        vc::lasagna::LasagnaNormalSampler sampler(dataset);
+
+        const fs::path basePath = *_intersectionInspection->atlasDir / atlas.metadata.baseMeshPath;
+        auto baseSurface = std::make_shared<QuadSurface>(basePath);
+        SurfacePatchIndex baseIndex;
+        baseIndex.rebuild({baseSurface});
+        const int periodColumns = vc::atlas::atlasHorizontalPeriodColumns(*baseSurface);
+
+        if (!sourceMapped) {
+            auto mapping = vc::atlas::mapFiberToBaseSurface(
+                sourceInput, *baseSurface, baseIndex, sampler);
+            atlas.fibers.push_back(std::move(mapping));
+        }
+        if (!targetMapped) {
+            auto mapping = vc::atlas::mapFiberToBaseSurface(
+                targetInput, *baseSurface, baseIndex, sampler);
+            atlas.fibers.push_back(std::move(mapping));
+        }
+
+        sourceMappingIt = findMapping(atlas, sourceInput.fiberPath);
+        targetMappingIt = findMapping(atlas, targetInput.fiberPath);
+        if (sourceMappingIt == atlas.fibers.end() || targetMappingIt == atlas.fibers.end()) {
+            throw std::runtime_error("Could not map both inspected fibers into the selected atlas");
+        }
+
+        const auto sourceSample =
+            vc3d::fiber_slice::samplePolylineAtArclength(sourceIt->linePoints,
+                                                         result.sourceArclength);
+        const auto targetSample =
+            vc3d::fiber_slice::samplePolylineAtArclength(targetIt->linePoints,
+                                                         result.targetArclength);
+        if (!sourceSample.valid || !targetSample.valid) {
+            throw std::runtime_error("Could not sample inspected arclengths on the loaded fibers");
+        }
+
+        auto endpointFor = [](const vc::atlas::FiberMapping& mapping,
+                              double arclength,
+                              double linePosition) {
+            const vc::atlas::AtlasAnchor* best = nullptr;
+            double bestDelta = std::numeric_limits<double>::infinity();
+            for (const auto& anchor : mapping.lineAnchors) {
+                const double delta = std::abs(static_cast<double>(anchor.sourceIndex) - linePosition);
+                if (delta < bestDelta) {
+                    best = &anchor;
+                    bestDelta = delta;
+                }
+            }
+            if (!best) {
+                throw std::runtime_error("Mapped fiber has no line anchors for the inspected link");
+            }
+            vc::atlas::AtlasLinkEndpoint endpoint;
+            endpoint.fiberPath = mapping.fiberPath;
+            endpoint.sourceIndex = best->sourceIndex;
+            endpoint.arclength = arclength;
+            endpoint.atlasU = best->atlasU;
+            endpoint.atlasV = best->atlasV;
+            return endpoint;
+        };
+
+        vc::atlas::AtlasLink link;
+        link.first = endpointFor(*sourceMappingIt,
+                                 result.sourceArclength,
+                                 sourceSample.linePosition);
+        link.second = endpointFor(*targetMappingIt,
+                                  result.targetArclength,
+                                  targetSample.linePosition);
+        link.desiredWindingDelta = 0;
+        atlas.links.push_back(std::move(link));
+        vc::atlas::layoutAtlasObjects(atlas, periodColumns);
+        atlas.save(*_intersectionInspection->atlasDir);
+
+        emit atlasCreated(*_intersectionInspection->atlasDir);
+        return true;
+    } catch (const std::exception& ex) {
+        showError(tr("Could not accept intersection link: %1")
+                      .arg(QString::fromStdString(ex.what())));
+        return false;
+    }
+}
+
+void LineAnnotationController::cleanupIntersectionInspectionSurfaces()
+{
+    if (!_intersectionInspection) {
+        return;
+    }
+    if (_fiberSliceOverlay) {
+        _fiberSliceOverlay->clearSlice();
+    }
+    if (auto* area = _intersectionInspection->targetArea.data()) {
+        for (QMdiSubWindow* subWindow : area->subWindowList()) {
+            if (!subWindow) {
+                continue;
+            }
+            const QString oldSurface = subWindow->property("vc_intersection_slice_surface").toString();
+            if (!oldSurface.isEmpty() && _state) {
+                _state->setSurface(oldSurface.toStdString(), nullptr);
+            }
+        }
+        area->closeAllSubWindows();
+    }
+    if (_state) {
+        for (const auto& name : _intersectionInspection->surfaceNames) {
+            _state->setSurface(name, nullptr);
+        }
+    }
+    const std::string sourceSession = _intersectionInspection->sourceSessionSurfaceName;
+    const std::string targetSession = _intersectionInspection->targetSessionSurfaceName;
+    _panes.erase(std::remove_if(_panes.begin(),
+                                _panes.end(),
+                                [&sourceSession, &targetSession](const PaneRecord& pane) {
+                                    return (!sourceSession.empty() && pane.surfaceName == sourceSession) ||
+                                           (!targetSession.empty() && pane.surfaceName == targetSession);
+                                }),
+                 _panes.end());
+    _intersectionInspection->surfaceNames.clear();
+    _intersectionInspection->sourceLineSession.reset();
+    _intersectionInspection->targetLineSession.reset();
+    _intersectionInspection->sourceSessionSurfaceName.clear();
+    _intersectionInspection->targetSessionSurfaceName.clear();
+    _intersectionInspection->sourceFollow = {};
+    _intersectionInspection->targetFollow = {};
+    if (_intersectionInspection->followShortcut) {
+        delete _intersectionInspection->followShortcut.data();
+        _intersectionInspection->followShortcut = nullptr;
+    }
+    _intersectionInspection->activeFollowSourceSide.reset();
+    _intersectionInspection->generatedSurfaceContexts.clear();
+}
+
+bool LineAnnotationController::updateIntersectionFollowSlice(bool sourceSideFlag,
+                                                             double linePosition,
+                                                             const char* reason)
+{
+    if (!_intersectionInspection || !_state) {
+        return false;
+    }
+    auto& follow = sourceSideFlag ? _intersectionInspection->sourceFollow
+                                  : _intersectionInspection->targetFollow;
+    if (!follow.valid || follow.linePoints.empty()) {
+        return false;
+    }
+    linePosition = std::clamp(linePosition,
+                              0.0,
+                              static_cast<double>(follow.linePoints.size() - 1));
+    const cv::Vec3d origin = interpolatedPointAtLinePosition(follow.linePoints, linePosition);
+    const cv::Vec3d tangent = tangentAtLinePosition(follow.linePoints, linePosition);
+    const cv::Vec3f upHint = interpolatedUpAtLinePosition(follow.lineUpVectors,
+                                                           linePosition,
+                                                           tangent);
+    const auto fit = vc3d::fiber_slice::planeFromNormalAndTangent(origin,
+                                                                  tangent,
+                                                                  toVec3d(upHint));
+    if (!fit.valid) {
+        return false;
+    }
+    auto surface = std::make_shared<PlaneSurface>();
+    surface->setFromNormalAndUp(toVec3f(fit.origin),
+                                toVec3f(fit.normal),
+                                toVec3f(fit.upHint));
+    surface->id = follow.surfaceName;
+    _state->setSurface(follow.surfaceName, surface, false, true);
+    follow.linePosition = linePosition;
+    if (auto* viewer = follow.viewer.data()) {
+        viewer->centerOnVolumePoint(toVec3f(origin), false);
+        viewer->renderVisible(true, reason);
+        if (_fiberSliceOverlay) {
+            _fiberSliceOverlay->refreshViewer(viewer);
+        }
+    }
+    return true;
+}
+
+void LineAnnotationController::toggleIntersectionFollowSlice(bool sourceSideFlag)
+{
+    if (!_intersectionInspection) {
+        return;
+    }
+    auto& follow = sourceSideFlag ? _intersectionInspection->sourceFollow
+                                  : _intersectionInspection->targetFollow;
+    if (!follow.valid) {
+        return;
+    }
+    if (follow.followsMouse) {
+        std::vector<double> controlLinePositions;
+        controlLinePositions.reserve(follow.controlPoints.size());
+        for (const auto& control : follow.controlPoints) {
+            if (std::isfinite(control.linePosition)) {
+                controlLinePositions.push_back(control.linePosition);
+            }
+        }
+        const double snapped = vc3d::line_annotation::snappedControlPointLinePosition(
+            follow.linePosition,
+            controlLinePositions);
+        (void)updateIntersectionFollowSlice(sourceSideFlag,
+                                            snapped,
+                                            "intersection follow slice frozen");
+        follow.followsMouse = false;
+    } else {
+        follow.followsMouse = true;
+    }
+}
+
+bool LineAnnotationController::handleIntersectionFollowKeyPress(int key,
+                                                                Qt::KeyboardModifiers modifiers)
+{
+    if (!_intersectionInspection || key != Qt::Key_Space || modifiers != Qt::NoModifier) {
+        return false;
+    }
+
+    const bool anyFollowing =
+        (_intersectionInspection->sourceFollow.valid &&
+         _intersectionInspection->sourceFollow.followsMouse) ||
+        (_intersectionInspection->targetFollow.valid &&
+         _intersectionInspection->targetFollow.followsMouse);
+    if (!anyFollowing) {
+        if (_intersectionInspection->sourceFollow.valid) {
+            _intersectionInspection->sourceFollow.followsMouse = true;
+        }
+        if (_intersectionInspection->targetFollow.valid) {
+            _intersectionInspection->targetFollow.followsMouse = true;
+        }
+        return true;
+    }
+
+    if (_intersectionInspection->sourceFollow.valid &&
+        _intersectionInspection->sourceFollow.followsMouse) {
+        toggleIntersectionFollowSlice(true);
+    } else if (_intersectionInspection->sourceFollow.valid) {
+        _intersectionInspection->sourceFollow.followsMouse = false;
+    }
+    if (_intersectionInspection->targetFollow.valid &&
+        _intersectionInspection->targetFollow.followsMouse) {
+        toggleIntersectionFollowSlice(false);
+    } else if (_intersectionInspection->targetFollow.valid) {
+        _intersectionInspection->targetFollow.followsMouse = false;
+    }
+    return true;
+}
+
+bool LineAnnotationController::eventFilter(QObject* watched, QEvent* event)
+{
+    if (_intersectionInspection && event && event->type() == QEvent::KeyPress) {
+        auto* keyEvent = static_cast<QKeyEvent*>(event);
+        if (watched) {
+            const QVariant side = watched->property("vc_intersection_follow_source_side");
+            if (side.isValid()) {
+                _intersectionInspection->activeFollowSourceSide = side.toBool();
+            }
+        }
+        if (handleIntersectionFollowKeyPress(keyEvent->key(), keyEvent->modifiers())) {
+            keyEvent->accept();
+            return true;
+        }
+    }
+    return QObject::eventFilter(watched, event);
+}
+
+void LineAnnotationController::rebuildIntersectionInspection()
+{
+    namespace fslice = vc3d::fiber_slice;
+
+    struct SliceSpec {
+        QString title;
+        std::string surfaceName;
+        uint64_t selectedFiberId = 0;
+        fslice::PlaneFit fit;
+        cv::Vec3d center{0.0, 0.0, 0.0};
+        std::vector<uint64_t> fullLineFiberIds;
+        std::vector<FiberSliceOverlayController::FocusMarker> focusMarkers;
+        bool editableCurrentCross = false;
+        std::shared_ptr<LineAnnotationSession> editSession;
+        double editLinePosition = 0.0;
+        bool editUsesFollowLinePosition = false;
+        bool shiftScroll = false;
+        bool showGenericCrossings = true;
+        bool showConnectionSegment = true;
+        bool followCross = false;
+        bool hasFollowSide = false;
+        bool sourceFollow = true;
+    };
+
+    struct SideBuild {
+        const StoredFiber* fiber = nullptr;
+        uint64_t otherFiberId = 0;
+        bool sourceSide = true;
+        double focusLinePosition = 0.0;
+        cv::Vec3d focusPoint{0.0, 0.0, 0.0};
+        cv::Vec3d tangent{1.0, 0.0, 0.0};
+        vc::lasagna::LineViewSurfaces lineViews;
+        fslice::ControlTripletSelection triplet;
+        std::shared_ptr<LineAnnotationSession> editSession;
+        std::string editSessionName;
+        std::string stripSurfaceName;
+        QString displayTitle;
+        std::string displayPrefix;
+        FiberSliceOverlayController::FiberStyle style;
+    };
+
+    try {
+        if (!_intersectionInspection || !_state || !_viewerManager) {
+            return;
+        }
+        auto* targetArea = _intersectionInspection->targetArea.data();
+        if (!targetArea) {
+            throw std::runtime_error("Intersections workspace is not available");
+        }
+
+        const auto result = _intersectionInspection->result;
+        auto sourceIt = std::find_if(_fibers.begin(), _fibers.end(),
+                                     [&result](const StoredFiber& fiber) {
+                                         return fiber.id == result.sourceFiberId;
+                                     });
+        auto targetIt = std::find_if(_fibers.begin(), _fibers.end(),
+                                     [&result](const StoredFiber& fiber) {
+                                         return fiber.id == result.targetFiberId;
+                                     });
+        if (sourceIt == _fibers.end() || targetIt == _fibers.end()) {
+            throw std::runtime_error("One or both intersection fibers are not loaded");
+        }
+        auto finitePointCount = [](const std::vector<cv::Vec3d>& points) {
+            return std::count_if(points.begin(), points.end(), fslice::isFinitePoint);
+        };
+        if (finitePointCount(sourceIt->linePoints) < 2 ||
+            finitePointCount(targetIt->linePoints) < 2) {
+            throw std::runtime_error("One or both intersection fibers have too few finite line points");
+        }
+
+        const fslice::ArclengthSample sourceSample =
+            fslice::samplePolylineAtArclength(sourceIt->linePoints, result.sourceArclength);
+        const fslice::ArclengthSample targetSample =
+            fslice::samplePolylineAtArclength(targetIt->linePoints, result.targetArclength);
+        if (!sourceSample.valid || !targetSample.valid) {
+            throw std::runtime_error("Could not sample intersection arclengths on the loaded fibers");
+        }
+
+        cleanupIntersectionInspectionSurfaces();
+        _intersectionInspection->sourceFocusLinePosition = sourceSample.linePosition;
+        _intersectionInspection->targetFocusLinePosition = targetSample.linePosition;
+
+        const cv::Vec3d connector = result.targetPoint - result.sourcePoint;
+        const cv::Vec3d midpoint = (result.sourcePoint + result.targetPoint) * 0.5;
+        const double connectorDistance = std::max(cv::norm(connector), 1.0e-6);
+        if (!fslice::isFinitePoint(connector) || cv::norm(connector) <= 1.0e-10) {
+            throw std::runtime_error("The refined connector segment is too short to define an inspection plane");
+        }
+
+        const double oldSourceArclength = result.sourceArclength;
+        const double oldTargetArclength = result.targetArclength;
+        auto sourceCallback = [this, oldSourceArclength, oldTargetArclength]() {
+            if (_intersectionInspection && _intersectionInspection->sourceLineSession) {
+                saveSessionAsFiber(*_intersectionInspection->sourceLineSession);
+            }
+            refreshIntersectionInspectionAfterEdit(
+                _intersectionInspection ? _intersectionInspection->result.sourceFiberId : 0,
+                oldSourceArclength,
+                oldTargetArclength);
+        };
+        auto targetCallback = [this, oldSourceArclength, oldTargetArclength]() {
+            if (_intersectionInspection && _intersectionInspection->targetLineSession) {
+                saveSessionAsFiber(*_intersectionInspection->targetLineSession);
+            }
+            refreshIntersectionInspectionAfterEdit(
+                _intersectionInspection ? _intersectionInspection->result.targetFiberId : 0,
+                oldSourceArclength,
+                oldTargetArclength);
+        };
+
+        SideBuild sourceSide;
+        sourceSide.fiber = &*sourceIt;
+        sourceSide.otherFiberId = targetIt->id;
+        sourceSide.sourceSide = true;
+        sourceSide.focusLinePosition = sourceSample.linePosition;
+        sourceSide.focusPoint = result.sourcePoint;
+        sourceSide.tangent = sourceSample.tangent;
+        sourceSide.editSessionName = "intersection_edit_source_" + std::to_string(_nextPaneId++);
+        sourceSide.editSession = makeIntersectionLineSession(*sourceIt,
+                                                             sourceSample.linePosition,
+                                                             sourceSample.tangent,
+                                                             sourceSide.editSessionName,
+                                                             sourceCallback);
+
+        SideBuild targetSide;
+        targetSide.fiber = &*targetIt;
+        targetSide.otherFiberId = sourceIt->id;
+        targetSide.sourceSide = false;
+        targetSide.focusLinePosition = targetSample.linePosition;
+        targetSide.focusPoint = result.targetPoint;
+        targetSide.tangent = targetSample.tangent;
+        targetSide.editSessionName = "intersection_edit_target_" + std::to_string(_nextPaneId++);
+        targetSide.editSession = makeIntersectionLineSession(*targetIt,
+                                                             targetSample.linePosition,
+                                                             targetSample.tangent,
+                                                             targetSide.editSessionName,
+                                                             targetCallback);
+
+        const bool sourceIsH = vc3d::line_annotation::firstFiberDisplaysAsH(
+            sourceIt->hvClassification,
+            sourceIt->manualHvTag,
+            targetIt->hvClassification,
+            targetIt->manualHvTag,
+            sourceIt->id < targetIt->id);
+        SideBuild& hSide = sourceIsH ? sourceSide : targetSide;
+        SideBuild& vSide = sourceIsH ? targetSide : sourceSide;
+        hSide.displayTitle = tr("h");
+        hSide.displayPrefix = "h";
+        hSide.style = FiberSliceOverlayController::sourceFiberStyle();
+        vSide.displayTitle = tr("v");
+        vSide.displayPrefix = "v";
+        vSide.style = FiberSliceOverlayController::targetFiberStyle();
+
+        auto prepareSide = [this](SideBuild& side) {
+            side.lineViews = vc::lasagna::buildLineViewSurfaces(
+                syntheticLineModelFromPoints(side.fiber->linePoints));
+            side.triplet = vc3d::fiber_slice::selectControlTriplet(
+                side.fiber->linePoints,
+                side.fiber->controlPoints,
+                side.focusLinePosition,
+                side.focusPoint);
+            if (!side.triplet.valid) {
+                throw std::runtime_error("Could not select intersection cross-slice control points");
+            }
+            side.stripSurfaceName = std::string("intersection_strip_") +
+                                    side.displayPrefix + "_" +
+                                    std::to_string(_nextPaneId++);
+            if (!side.lineViews.lineSideSlice) {
+                throw std::runtime_error("Could not build intersection side line strip");
+            }
+            side.lineViews.lineSideSlice->id = side.stripSurfaceName;
+            _state->setSurface(side.stripSurfaceName, side.lineViews.lineSideSlice);
+            _intersectionInspection->surfaceNames.push_back(side.stripSurfaceName);
+            side.editSession->generatedSurfaceNames.push_back(side.stripSurfaceName);
+        };
+        prepareSide(sourceSide);
+        prepareSide(targetSide);
+
+        _intersectionInspection->sourceLineSession = sourceSide.editSession;
+        _intersectionInspection->targetLineSession = targetSide.editSession;
+        _intersectionInspection->sourceSessionSurfaceName = sourceSide.editSessionName;
+        _intersectionInspection->targetSessionSurfaceName = targetSide.editSessionName;
+        _panes.push_back(PaneRecord{_nextPaneId++,
+                                    SourceKind::Plane,
+                                    sourceSide.editSessionName,
+                                    {},
+                                    sourceSide.editSession});
+        _panes.push_back(PaneRecord{_nextPaneId++,
+                                    SourceKind::Plane,
+                                    targetSide.editSessionName,
+                                    {},
+                                    targetSide.editSession});
+
+        std::vector<FiberSliceOverlayController::FiberData> overlayFibers{
+            {sourceIt->id, sourceIt->linePoints, sourceIt->controlPoints, sourceSide.style},
+            {targetIt->id, targetIt->linePoints, targetIt->controlPoints, targetSide.style},
+        };
+
+        auto makeCrossFit = [](const SideBuild& side, double position, const cv::Vec3d& origin) {
+            const cv::Vec3d tangent = tangentAtLinePosition(side.fiber->linePoints, position);
+            const cv::Vec3f upHint = interpolatedUpAtLinePosition(
+                side.lineViews.lineUpVectors,
+                position,
+                tangent);
+            return vc3d::fiber_slice::planeFromNormalAndTangent(origin,
+                                                                 tangent,
+                                                                 toVec3d(upHint));
+        };
+
+        std::vector<SliceSpec> planeSpecs;
+        planeSpecs.reserve(9);
+        auto appendSideSpecs = [&](const SideBuild& side) {
+            const std::array<std::pair<QString, std::pair<double, cv::Vec3d>>, 3> crosses{{
+                {tr("previous"), {side.triplet.previousLinePosition, side.triplet.previousPoint}},
+                {tr("current"), {side.triplet.currentLinePosition, side.triplet.currentPoint}},
+                {tr("next"), {side.triplet.nextLinePosition, side.triplet.nextPoint}},
+            }};
+            for (const auto& cross : crosses) {
+                const std::string surfaceName = "intersection_" + side.displayPrefix + "_cross_" +
+                    cross.first.toStdString() + "_" + std::to_string(_nextPaneId++);
+                SliceSpec spec;
+                spec.title = side.displayTitle + QStringLiteral(" ") + cross.first;
+                spec.surfaceName = surfaceName;
+                spec.selectedFiberId = 0;
+                spec.fit = makeCrossFit(side, cross.second.first, cross.second.second);
+                spec.center = cross.second.second;
+                spec.focusMarkers = {
+                    FiberSliceOverlayController::FocusMarker{side.fiber->id,
+                                                             side.focusPoint,
+                                                             4.5,
+                                                             true},
+                };
+                spec.editableCurrentCross = true;
+                spec.editSession = side.editSession;
+                spec.editLinePosition = cross.second.first;
+                spec.showGenericCrossings = false;
+                spec.showConnectionSegment = false;
+                spec.hasFollowSide = true;
+                spec.sourceFollow = side.sourceSide;
+                planeSpecs.push_back(std::move(spec));
+                side.editSession->generatedSurfaceNames.push_back(surfaceName);
+                _intersectionInspection->generatedSurfaceContexts[surfaceName] =
+                    IntersectionInspectionSession::GeneratedSurfaceContext{
+                        true,
+                        side.sourceSide,
+                        false,
+                        false,
+                        cross.second.first,
+                    };
+            }
+            SliceSpec connection;
+            connection.title = side.displayTitle + tr(" connection");
+            connection.surfaceName = "intersection_" + side.displayPrefix + "_connection_" +
+                                     std::to_string(_nextPaneId++);
+            connection.selectedFiberId = side.fiber->id;
+            connection.fit = fslice::planeFromDirections(midpoint, connector, side.tangent);
+            connection.center = midpoint;
+            connection.fullLineFiberIds = {side.fiber->id};
+            connection.shiftScroll = true;
+            connection.showGenericCrossings = true;
+            connection.showConnectionSegment = true;
+            connection.hasFollowSide = true;
+            connection.sourceFollow = side.sourceSide;
+            planeSpecs.push_back(std::move(connection));
+        };
+        appendSideSpecs(hSide);
+        appendSideSpecs(vSide);
+
+        SliceSpec normalSpec;
+        normalSpec.title = tr("normal");
+        normalSpec.surfaceName = "intersection_normal_" + std::to_string(_nextPaneId++);
+        normalSpec.selectedFiberId = hSide.fiber->id;
+        normalSpec.fit = fslice::planeFromDirections(midpoint,
+                                                     sourceSample.tangent,
+                                                     targetSample.tangent);
+        normalSpec.center = midpoint;
+        normalSpec.fullLineFiberIds = {hSide.fiber->id, vSide.fiber->id};
+        normalSpec.shiftScroll = true;
+        normalSpec.showGenericCrossings = true;
+        normalSpec.showConnectionSegment = true;
+
+        auto makeFollowSpec = [&](const SideBuild& side) {
+            SliceSpec spec;
+            spec.title = side.displayTitle + tr(" follow");
+            spec.surfaceName = "intersection_" + side.displayPrefix + "_follow_" +
+                               std::to_string(_nextPaneId++);
+            spec.selectedFiberId = 0;
+            spec.fit = makeCrossFit(side, side.focusLinePosition, side.focusPoint);
+            spec.center = side.focusPoint;
+            spec.focusMarkers = {
+                FiberSliceOverlayController::FocusMarker{side.fiber->id,
+                                                         side.focusPoint,
+                                                         4.5,
+                                                         true},
+            };
+            spec.showGenericCrossings = false;
+            spec.showConnectionSegment = false;
+            spec.followCross = true;
+            spec.hasFollowSide = true;
+            spec.sourceFollow = side.sourceSide;
+            spec.editableCurrentCross = true;
+            spec.editSession = side.editSession;
+            spec.editLinePosition = side.focusLinePosition;
+            spec.editUsesFollowLinePosition = true;
+            side.editSession->generatedSurfaceNames.push_back(spec.surfaceName);
+            _intersectionInspection->generatedSurfaceContexts[spec.surfaceName] =
+                IntersectionInspectionSession::GeneratedSurfaceContext{
+                    true,
+                    side.sourceSide,
+                    false,
+                    true,
+                    side.focusLinePosition,
+                };
+            return spec;
+        };
+        SliceSpec hFollowSpec = makeFollowSpec(hSide);
+        SliceSpec vFollowSpec = makeFollowSpec(vSide);
+
+        auto addPlaneViewer = [&](const SliceSpec& spec, const QRect& geometry) -> VolumeViewerBase* {
+            if (!spec.fit.valid) {
+                throw std::runtime_error(spec.fit.error);
+            }
+            auto surface = std::make_shared<PlaneSurface>();
+            surface->setFromNormalAndUp(toVec3f(spec.fit.origin),
+                                        toVec3f(spec.fit.normal),
+                                        toVec3f(spec.fit.upHint));
+            surface->id = spec.surfaceName;
+            _state->setSurface(spec.surfaceName, surface);
+            _intersectionInspection->surfaceNames.push_back(spec.surfaceName);
+
+            VolumeViewerBase* viewer = _viewerManager->createViewer(
+                spec.surfaceName,
+                spec.title,
+                targetArea,
+                ViewerManager::ViewerRole::Annotation);
+            if (!viewer) {
+                throw std::runtime_error("Could not create intersection slice viewer");
+            }
+            if (auto* viewerWidget = qobject_cast<QWidget*>(viewer->asQObject())) {
+                viewerWidget->installEventFilter(this);
+                if (spec.hasFollowSide) {
+                    viewerWidget->setProperty("vc_intersection_follow_source_side", spec.sourceFollow);
+                }
+                if (auto* subWindow = qobject_cast<QMdiSubWindow*>(viewerWidget->parentWidget())) {
+                    subWindow->installEventFilter(this);
+                    if (spec.hasFollowSide) {
+                        subWindow->setProperty("vc_intersection_follow_source_side", spec.sourceFollow);
+                    }
+                    subWindow->setProperty("vc_intersection_slice_surface",
+                                           QString::fromStdString(spec.surfaceName));
+                    subWindow->setGeometry(geometry);
+                    subWindow->show();
+                } else {
+                    viewerWidget->show();
+                }
+                connect(viewerWidget, &QObject::destroyed, this, [this, name = spec.surfaceName]() {
+                    if (_state) {
+                        _state->setSurface(name, nullptr);
+                    }
+                });
+            }
+            if (auto* chunkedViewer = qobject_cast<CChunkedVolumeViewer*>(viewer->asQObject())) {
+                if (auto* view = chunkedViewer->graphicsView()) {
+                    view->installEventFilter(this);
+                    if (spec.hasFollowSide) {
+                        view->setProperty("vc_intersection_follow_source_side", spec.sourceFollow);
+                    }
+                    if (auto* viewport = view->viewport()) {
+                        viewport->installEventFilter(this);
+                        if (spec.hasFollowSide) {
+                            viewport->setProperty("vc_intersection_follow_source_side", spec.sourceFollow);
+                        }
+                    }
+                }
+                if (spec.followCross && _intersectionInspection) {
+                    auto& follow = spec.sourceFollow ? _intersectionInspection->sourceFollow
+                                                     : _intersectionInspection->targetFollow;
+                    const SideBuild& followSide = spec.sourceFollow ? sourceSide : targetSide;
+                    follow.valid = true;
+                    follow.followsMouse = true;
+                    follow.sourceSide = spec.sourceFollow;
+                    follow.surfaceName = spec.surfaceName;
+                    follow.viewer = chunkedViewer;
+                    follow.linePoints = followSide.fiber->linePoints;
+                    follow.lineUpVectors = followSide.lineViews.lineUpVectors;
+                    follow.controlPoints = followSide.editSession->controlPoints;
+                    follow.linePosition = followSide.focusLinePosition;
+                }
+                if (spec.shiftScroll) {
+                    chunkedViewer->setProperty("vc_show_custom_normal_offset", true);
+                    chunkedViewer->setProperty("vc_custom_normal_offset_vx", 0.0);
+                    const cv::Vec3f stableUpHint = toVec3f(spec.fit.upHint);
+                    auto offsetVx = std::make_shared<double>(0.0);
+                    chunkedViewer->setShiftScrollOverride(
+                        [this, surfaceName = spec.surfaceName, stableUpHint, offsetVx, chunkedViewer](
+                            int steps,
+                            QPointF,
+                            Qt::KeyboardModifiers) {
+                            if (!_state || steps == 0) {
+                                return true;
+                            }
+                            auto planeShared =
+                                std::dynamic_pointer_cast<PlaneSurface>(_state->surface(surfaceName));
+                            if (!planeShared) {
+                                return false;
+                            }
+                            const cv::Vec3f normal = planeShared->normal({0, 0, 0});
+                            if (!std::isfinite(normal[0]) || !std::isfinite(normal[1]) ||
+                                !std::isfinite(normal[2]) || cv::norm(normal) <= 0.0f) {
+                                return true;
+                            }
+
+                            QSettings settings(vc3d::settingsFilePath(), QSettings::IniFormat);
+                            const double sensitivity = std::max(
+                                0.01,
+                                settings.value(vc3d::settings::viewer::ZSCROLL_SENSITIVITY,
+                                               vc3d::settings::viewer::ZSCROLL_SENSITIVITY_DEFAULT)
+                                    .toDouble());
+                            const double delta = static_cast<double>(steps) * sensitivity;
+                            auto shiftedPlane = std::make_shared<PlaneSurface>();
+                            shiftedPlane->setFromNormalAndUp(
+                                planeShared->origin() + normal * static_cast<float>(delta),
+                                normal,
+                                stableUpHint);
+                            shiftedPlane->id = surfaceName;
+                            *offsetVx += delta;
+                            chunkedViewer->setProperty("vc_custom_normal_offset_vx", *offsetVx);
+                            _state->setSurface(surfaceName, shiftedPlane, false, true);
+                            return true;
+                        });
+                }
+                if (spec.editableCurrentCross && spec.editSession) {
+                    connect(chunkedViewer,
+                            &CChunkedVolumeViewer::sendMousePressVolume,
+                            this,
+                            [this,
+                             surfaceName = spec.surfaceName,
+                             linePosition = spec.editLinePosition,
+                             useFollowLinePosition = spec.editUsesFollowLinePosition,
+                             sourceFollow = spec.sourceFollow](
+                                cv::Vec3f volumePoint,
+                                cv::Vec3f,
+                                Qt::MouseButton button,
+                                Qt::KeyboardModifiers modifiers,
+                                QPointF) {
+                                double effectiveLinePosition = linePosition;
+                                if (useFollowLinePosition && _intersectionInspection) {
+                                    const auto& follow = sourceFollow
+                                        ? _intersectionInspection->sourceFollow
+                                        : _intersectionInspection->targetFollow;
+                                    if (follow.valid && std::isfinite(follow.linePosition)) {
+                                        effectiveLinePosition = follow.linePosition;
+                                    }
+                                }
+                                if (button == Qt::LeftButton && modifiers == Qt::NoModifier) {
+                                    handleGeneratedControlPoint(surfaceName,
+                                                                volumePoint,
+                                                                effectiveLinePosition);
+                                }
+                            });
+                    const SideBuild& generatedSide = spec.sourceFollow ? sourceSide : targetSide;
+                    const std::vector<cv::Vec3d> linePoints = generatedSide.fiber->linePoints;
+                    const std::vector<cv::Vec3f> lineUpVectors = generatedSide.lineViews.lineUpVectors;
+                    const auto session = spec.editSession;
+                    const bool sourceFollowFlag = spec.sourceFollow;
+                    const bool useFollowPosition = spec.editUsesFollowLinePosition;
+                    const double fixedLinePosition = spec.editLinePosition;
+                    auto applyGeneratedCrossOverlay =
+                        [this,
+                         chunkedViewer,
+                         surfaceName = spec.surfaceName,
+                         linePoints,
+                         lineUpVectors,
+                         session,
+                         sourceFollowFlag,
+                         useFollowPosition,
+                         fixedLinePosition]() {
+                            if (!chunkedViewer || !_state || !session) {
+                                return;
+                            }
+                            double linePosition = fixedLinePosition;
+                            if (useFollowPosition && _intersectionInspection) {
+                                const auto& follow = sourceFollowFlag
+                                    ? _intersectionInspection->sourceFollow
+                                    : _intersectionInspection->targetFollow;
+                                if (follow.valid && std::isfinite(follow.linePosition)) {
+                                    linePosition = follow.linePosition;
+                                }
+                            }
+                            auto planeShared =
+                                std::dynamic_pointer_cast<PlaneSurface>(_state->surface(surfaceName));
+                            vc3d::line_annotation::GeneratedViews views;
+                            views.linePoints = generatedLinePoints(linePoints);
+                            views.lineUpVectors = lineUpVectors;
+                            views.controlPoints = generatedControlMarkers(session->controlPoints);
+                            vc3d::line_annotation::applyGeneratedOverlay(
+                                chunkedViewer,
+                                surfaceName,
+                                vc3d::line_annotation::makeGeneratedCrossSliceOverlayForPlane(
+                                    views,
+                                    linePosition,
+                                    true,
+                                    chunkedViewer,
+                                    planeShared.get()));
+                        };
+                    chunkedViewer->renderVisible(true, "intersection generated cross overlay");
+                    applyGeneratedCrossOverlay();
+                    chunkedViewer->connectOverlaysUpdated(this, applyGeneratedCrossOverlay);
+                }
+            }
+            viewer->fitSurfaceInView();
+            viewer->centerOnVolumePoint(toVec3f(spec.center), true);
+            if (_fiberSliceOverlay) {
+                FiberSliceOverlayController::SliceData overlayData;
+                overlayData.surfaceName = spec.surfaceName;
+                overlayData.selectedFiberId = spec.selectedFiberId;
+                overlayData.fullLineFiberIds = spec.fullLineFiberIds;
+                overlayData.plane = fslice::Plane{spec.fit.origin, spec.fit.normal};
+                overlayData.fitSamples = {result.sourcePoint, result.targetPoint, spec.center};
+                overlayData.fibers = overlayFibers;
+                overlayData.focusMarkers = spec.focusMarkers;
+                overlayData.showGenericCrossings = spec.showGenericCrossings;
+                if (spec.showConnectionSegment) {
+                    overlayData.connectionSegment = FiberSliceOverlayController::ConnectionSegment{
+                        sourceIt->id,
+                        targetIt->id,
+                        result.sourcePoint,
+                        result.targetPoint,
+                        connectorDistance,
+                    };
+                }
+                _fiberSliceOverlay->setSlice(viewer, std::move(overlayData));
+            }
+            return viewer;
+        };
+
+        auto addStripViewer = [&](const SideBuild& side, const QRect& geometry) {
+            VolumeViewerBase* viewer = _viewerManager->createViewer(
+                side.stripSurfaceName,
+                side.displayTitle + tr(" line"),
+                targetArea,
+                ViewerManager::ViewerRole::Annotation);
+            if (!viewer) {
+                throw std::runtime_error("Could not create intersection line strip viewer");
+            }
+            if (auto* viewerWidget = qobject_cast<QWidget*>(viewer->asQObject())) {
+                viewerWidget->installEventFilter(this);
+                viewerWidget->setProperty("vc_intersection_follow_source_side", side.sourceSide);
+                if (auto* subWindow = qobject_cast<QMdiSubWindow*>(viewerWidget->parentWidget())) {
+                    subWindow->installEventFilter(this);
+                    subWindow->setProperty("vc_intersection_follow_source_side", side.sourceSide);
+                    subWindow->setProperty("vc_intersection_slice_surface",
+                                           QString::fromStdString(side.stripSurfaceName));
+                    subWindow->setGeometry(geometry);
+                    subWindow->show();
+                } else {
+                    viewerWidget->show();
+                }
+            }
+            auto* chunkedViewer = qobject_cast<CChunkedVolumeViewer*>(viewer->asQObject());
+            if (!chunkedViewer) {
+                return;
+            }
+            if (auto* view = chunkedViewer->graphicsView()) {
+                view->installEventFilter(this);
+                view->setProperty("vc_intersection_follow_source_side", side.sourceSide);
+                if (auto* viewport = view->viewport()) {
+                    viewport->installEventFilter(this);
+                    viewport->setProperty("vc_intersection_follow_source_side", side.sourceSide);
+                }
+            }
+            chunkedViewer->fitSurfaceInView();
+            if (auto* quad = dynamic_cast<QuadSurface*>(chunkedViewer->currentSurface())) {
+                frameStripLineSpan(chunkedViewer,
+                                   quad,
+                                   side.triplet.previousLinePosition,
+                                   side.triplet.nextLinePosition);
+            }
+            if (_intersectionInspection) {
+                _intersectionInspection->generatedSurfaceContexts[side.stripSurfaceName] =
+                    IntersectionInspectionSession::GeneratedSurfaceContext{
+                        true,
+                        side.sourceSide,
+                        true,
+                        false,
+                        side.focusLinePosition,
+                    };
+            }
+            const std::vector<cv::Vec3d> linePoints = side.fiber->linePoints;
+            const std::vector<cv::Vec3f> lineUpVectors = side.lineViews.lineUpVectors;
+            const auto session = side.editSession;
+            const double focus = side.focusLinePosition;
+            const std::vector<double> markerLinePositions{
+                side.triplet.previousLinePosition,
+                side.triplet.currentLinePosition,
+                side.triplet.nextLinePosition,
+            };
+            auto applyGeneratedStripOverlay =
+                [chunkedViewer,
+                 key = side.stripSurfaceName,
+                 linePoints,
+                 lineUpVectors,
+                 session,
+                 focus,
+                 markerLinePositions]() {
+                    if (!chunkedViewer || !session) {
+                        return;
+                    }
+                    vc3d::line_annotation::GeneratedViews views;
+                    views.linePoints = generatedLinePoints(linePoints);
+                    views.lineUpVectors = lineUpVectors;
+                    views.controlPoints = generatedControlMarkers(session->controlPoints);
+                    auto overlay = vc3d::line_annotation::makeGeneratedStripOverlay(
+                        views,
+                        focus,
+                        markerLinePositions);
+                    overlay.currentLineMarkerAsCross = true;
+                    vc3d::line_annotation::applyGeneratedOverlay(chunkedViewer, key, overlay);
+                };
+            chunkedViewer->renderVisible(true, "intersection generated strip overlay");
+            applyGeneratedStripOverlay();
+            chunkedViewer->connectOverlaysUpdated(this, applyGeneratedStripOverlay);
+            connect(chunkedViewer,
+                    &CChunkedVolumeViewer::sendMouseMoveVolume,
+                    this,
+                    [this,
+                     chunkedViewer,
+                     sourceSideFlag = side.sourceSide](cv::Vec3f,
+                                                       Qt::MouseButtons,
+                                                       Qt::KeyboardModifiers,
+                                                       QPointF scenePoint) {
+                        if (!_intersectionInspection) {
+                            return;
+                        }
+                        auto& follow = sourceSideFlag ? _intersectionInspection->sourceFollow
+                                                      : _intersectionInspection->targetFollow;
+                        _intersectionInspection->activeFollowSourceSide = sourceSideFlag;
+                        if (!follow.valid || !follow.followsMouse) {
+                            return;
+                        }
+                        const double linePosition =
+                            vc3d::line_annotation::generatedLinePositionFromStripScene(
+                                chunkedViewer,
+                                scenePoint);
+                        if (std::isfinite(linePosition)) {
+                            (void)updateIntersectionFollowSlice(
+                                sourceSideFlag,
+                                linePosition,
+                                "intersection follow slice hover");
+                        }
+                    });
+            connect(chunkedViewer,
+                    &CChunkedVolumeViewer::sendMousePressVolume,
+                    this,
+                    [this,
+                     surfaceName = side.stripSurfaceName,
+                     sourceSideFlag = side.sourceSide](
+                        cv::Vec3f volumePoint,
+                        cv::Vec3f,
+                        Qt::MouseButton button,
+                        Qt::KeyboardModifiers modifiers,
+                        QPointF scenePoint) {
+                        if (modifiers != Qt::NoModifier) {
+                            return;
+                        }
+                        const double linePosition =
+                            vc3d::line_annotation::generatedLinePositionFromStripScene(
+                                qobject_cast<CChunkedVolumeViewer*>(sender()),
+                                scenePoint);
+                        if (!std::isfinite(linePosition)) {
+                            return;
+                        }
+                        if (_intersectionInspection) {
+                            _intersectionInspection->activeFollowSourceSide = sourceSideFlag;
+                        }
+                        if (button == Qt::LeftButton) {
+                            handleGeneratedControlPoint(surfaceName, volumePoint, linePosition);
+                        }
+                    });
+        };
+
+        auto fiberDisplayName = [](const StoredFiber& fiber) {
+            if (!fiber.fileName.empty()) {
+                return QString::fromStdString(fs::path(fiber.fileName).stem().string());
+            }
+            return QStringLiteral("fiber %1").arg(fiber.id);
+        };
+        auto hvSummary = [](const StoredFiber& fiber) {
+            const QString manual = fiber.manualHvTag.empty()
+                ? QStringLiteral("unknown")
+                : QString::fromStdString(fiber.manualHvTag);
+            const auto& c = fiber.hvClassification;
+            return QStringLiteral("manual %1; auto %2 h=%3 v=%4 cert=%5")
+                .arg(manual,
+                     QString::fromStdString(vc3d::line_annotation::fiberHvTagToString(c.automaticTag)))
+                .arg(c.horizontalScore, 0, 'f', 2)
+                .arg(c.verticalScore, 0, 'f', 2)
+                .arg(c.automaticCertainty, 0, 'f', 2);
+        };
+        auto addDecisionPane = [&](const QRect& geometry) {
+            auto* pane = new QWidget;
+            pane->setObjectName(QStringLiteral("intersectionDecisionPane"));
+            auto* layout = new QVBoxLayout(pane);
+            layout->setContentsMargins(8, 8, 8, 8);
+            layout->setSpacing(4);
+
+            auto* title = new QLabel(tr("Intersection decision"), pane);
+            title->setObjectName(QStringLiteral("intersectionDecisionTitle"));
+            layout->addWidget(title);
+
+            auto* hLabel = new QLabel(
+                tr("H: %1 - %2").arg(fiberDisplayName(*hSide.fiber), hvSummary(*hSide.fiber)),
+                pane);
+            hLabel->setObjectName(QStringLiteral("intersectionDecisionHLabel"));
+            hLabel->setWordWrap(true);
+            layout->addWidget(hLabel);
+
+            auto* vLabel = new QLabel(
+                tr("V: %1 - %2").arg(fiberDisplayName(*vSide.fiber), hvSummary(*vSide.fiber)),
+                pane);
+            vLabel->setObjectName(QStringLiteral("intersectionDecisionVLabel"));
+            vLabel->setWordWrap(true);
+            layout->addWidget(vLabel);
+
+            auto* choices = new QButtonGroup(pane);
+            choices->setExclusive(true);
+            auto* same = new QRadioButton(tr("same winding (h inside v)"), pane);
+            same->setObjectName(QStringLiteral("intersectionDecisionSameWinding"));
+            auto* different = new QRadioButton(tr("different winding"), pane);
+            different->setObjectName(QStringLiteral("intersectionDecisionDifferentWinding"));
+            auto* hard = new QRadioButton(tr("hard to say"), pane);
+            hard->setObjectName(QStringLiteral("intersectionDecisionHardToSay"));
+            hard->setChecked(true);
+            choices->addButton(same, 0);
+            choices->addButton(different, 1);
+            choices->addButton(hard, 2);
+            layout->addWidget(same);
+            layout->addWidget(different);
+            layout->addWidget(hard);
+
+            auto* bottomRow = new QHBoxLayout;
+            auto* status = new QLabel(pane);
+            status->setObjectName(QStringLiteral("intersectionDecisionStatus"));
+            status->setWordWrap(true);
+            status->setText(_intersectionInspection && _intersectionInspection->atlasDir
+                ? tr("Ready")
+                : tr("No atlas selected"));
+            bottomRow->addWidget(status, 1);
+
+            auto* accept = new QPushButton(tr("Accept choice"), pane);
+            accept->setObjectName(QStringLiteral("intersectionDecisionAccept"));
+            accept->setEnabled(_intersectionInspection &&
+                               _intersectionInspection->atlasDir.has_value() &&
+                               hSide.fiber && vSide.fiber &&
+                               hSide.fiber->linePoints.size() >= 2 &&
+                               vSide.fiber->linePoints.size() >= 2);
+            bottomRow->addWidget(accept);
+            layout->addLayout(bottomRow);
+
+            connect(accept, &QPushButton::clicked, this, [this, choices, status]() {
+                switch (choices->checkedId()) {
+                case 0:
+                    if (acceptIntersectionSameWindingChoice() && status) {
+                        status->setText(tr("Saved same-winding link"));
+                    }
+                    break;
+                case 1:
+                    if (status) {
+                        status->setText(tr("No atlas change recorded for different winding"));
+                    }
+                    break;
+                case 2:
+                default:
+                    if (status) {
+                        status->setText(tr("No atlas change recorded"));
+                    }
+                    break;
+                }
+            });
+
+            auto* subWindow = targetArea->addSubWindow(pane);
+            subWindow->setObjectName(QStringLiteral("intersectionDecisionSubWindow"));
+            subWindow->setWindowTitle(tr("Decision"));
+            subWindow->setGeometry(geometry);
+            subWindow->show();
+        };
+
+        const QSize size = targetArea->viewport() ? targetArea->viewport()->size()
+                                                  : targetArea->size();
+        const int width = std::max(3, size.width());
+        const int height = std::max(4, size.height());
+        const int colW = width / 3;
+        const int leftX = 0;
+        const int centerX = colW;
+        const int rightX = colW * 2;
+        const int rightW = width - rightX;
+        const int topH = height / 4;
+        const int midH = height / 2;
+        const int bottomY = topH + midH;
+        const int bottomH = height - bottomY;
+        const int centerTopH = std::min(std::max(1, height / 3),
+                                        std::max(1, colW / 2));
+        const int centerFollowW = std::max(1, colW / 2);
+        auto topRect = [&](int x, int colWidth, int slot) {
+            const int slotW = colWidth / 3;
+            const int slotX = x + slot * slotW;
+            const int w = slot == 2 ? colWidth - slotW * 2 : slotW;
+            return QRect(slotX, 0, w, topH);
+        };
+        const QRect leftMid(leftX, topH, colW, midH);
+        const QRect leftBottom(leftX, bottomY, colW, bottomH);
+        const QRect hFollowRect(centerX, 0, centerFollowW, centerTopH);
+        const QRect vFollowRect(centerX + centerFollowW,
+                                0,
+                                colW - centerFollowW,
+                                centerTopH);
+        const QRect centerRect(centerX, centerTopH, colW, std::max(1, bottomY - centerTopH));
+        const QRect decisionRect(centerX, bottomY, colW, bottomH);
+        const QRect rightMid(rightX, topH, rightW, midH);
+        const QRect rightBottom(rightX, bottomY, rightW, bottomH);
+
+        addPlaneViewer(planeSpecs[0], topRect(leftX, colW, 0));
+        addPlaneViewer(planeSpecs[1], topRect(leftX, colW, 1));
+        addPlaneViewer(planeSpecs[2], topRect(leftX, colW, 2));
+        addPlaneViewer(planeSpecs[3], leftMid);
+        addStripViewer(hSide, leftBottom);
+        addPlaneViewer(hFollowSpec, hFollowRect);
+        addPlaneViewer(vFollowSpec, vFollowRect);
+        addPlaneViewer(normalSpec, centerRect);
+        addDecisionPane(decisionRect);
+        addPlaneViewer(planeSpecs[4], topRect(rightX, rightW, 0));
+        addPlaneViewer(planeSpecs[5], topRect(rightX, rightW, 1));
+        addPlaneViewer(planeSpecs[6], topRect(rightX, rightW, 2));
+        addPlaneViewer(planeSpecs[7], rightMid);
+        addStripViewer(vSide, rightBottom);
+
+        if (auto* active = targetArea->activeSubWindow()) {
+            if (auto* viewer = dynamic_cast<VolumeViewerBase*>(active->widget())) {
+                if (auto* graphicsView = viewer->graphicsView()) {
+                    graphicsView->setFocus();
+                }
+            }
+        }
+    } catch (const std::exception& ex) {
+        showError(tr("Could not show intersection inspection: %1")
+                      .arg(QString::fromStdString(ex.what())));
+    }
+}
+
+void LineAnnotationController::refreshIntersectionInspectionAfterEdit(uint64_t editedFiberId,
+                                                                      double oldSourceArclength,
+                                                                      double oldTargetArclength)
+{
+    if (!_intersectionInspection || editedFiberId == 0) {
+        return;
+    }
+    const uint64_t sourceId = _intersectionInspection->result.sourceFiberId;
+    const uint64_t targetId = _intersectionInspection->result.targetFiberId;
+    try {
+        std::vector<vc::atlas::FiberPolyline> fibers;
+        fibers.reserve(2);
+        for (const auto& fiber : _fibers) {
+            if (fiber.id != sourceId && fiber.id != targetId) {
+                continue;
+            }
+            vc::atlas::FiberPolyline polyline;
+            polyline.id = fiber.id;
+            polyline.generation = fiber.generation;
+            polyline.controlPoints = fiber.controlPoints;
+            polyline.points.reserve(fiber.linePoints.size());
+            for (const auto& point : fiber.linePoints) {
+                polyline.points.push_back(vc::atlas::FiberPoint{point, std::nullopt});
+            }
+            fibers.push_back(std::move(polyline));
+        }
+        if (fibers.size() != 2) {
+            throw std::runtime_error("The edited intersection fibers are no longer both loaded");
+        }
+        vc::atlas::FiberSpatialIndex index;
+        vc::atlas::FiberIntersectionCache cache;
+        vc::atlas::FiberIntersectionBroadPhaseOptions broad;
+        vc::atlas::FiberIntersectionCeresOptions ceres;
+        const auto results = vc::atlas::searchFiberIntersections(
+            fibers,
+            {sourceId},
+            {targetId},
+            index,
+            &cache,
+            broad,
+            ceres);
+        const auto nearest = vc::atlas::nearestIntersectionResultByArclength(
+            results,
+            oldSourceArclength,
+            oldTargetArclength);
+        if (!nearest) {
+            cleanupIntersectionInspectionSurfaces();
+            _intersectionInspection.reset();
+            QMessageBox::warning(_parentWidget,
+                                 tr("Intersections"),
+                                 tr("The edited fiber pair no longer has an intersection result."));
+            return;
+        }
+        _intersectionInspection->result = results[*nearest];
+        rebuildIntersectionInspection();
+    } catch (const std::exception& ex) {
+        showError(tr("Could not refresh intersection inspection: %1")
+                      .arg(QString::fromStdString(ex.what())));
+    }
+}
+
 void LineAnnotationController::saveOpenFibers()
 {
     for (const auto& pane : _panes) {
@@ -1042,7 +2653,7 @@ bool LineAnnotationController::showGeneratedControlPointContextMenu(CChunkedVolu
         return false;
     }
     auto* pane = paneForSurface(viewer->surfName());
-    if (!pane || !pane->dialog || !pane->session) {
+    if (!pane || !pane->session) {
         return false;
     }
     if (std::find(pane->session->generatedSurfaceNames.begin(),
@@ -1050,11 +2661,56 @@ bool LineAnnotationController::showGeneratedControlPointContextMenu(CChunkedVolu
                   viewer->surfName()) == pane->session->generatedSurfaceNames.end()) {
         return false;
     }
-    const auto result = pane->dialog->showGeneratedControlPointContextMenu(
-        viewer->surfName(),
-        viewer,
-        scenePoint,
-        globalPos);
+    vc3d::line_annotation::GeneratedControlPointContextResult result =
+        vc3d::line_annotation::GeneratedControlPointContextResult::None;
+    if (pane->dialog) {
+        result = pane->dialog->showGeneratedControlPointContextMenu(
+            viewer->surfName(),
+            viewer,
+            scenePoint,
+            globalPos);
+    } else if (_intersectionInspection) {
+        const auto contextIt =
+            _intersectionInspection->generatedSurfaceContexts.find(viewer->surfName());
+        if (contextIt == _intersectionInspection->generatedSurfaceContexts.end() ||
+            !contextIt->second.valid) {
+            return false;
+        }
+        const auto& context = contextIt->second;
+        double linePosition = context.linePosition;
+        if (context.strip) {
+            linePosition = vc3d::line_annotation::generatedLinePositionFromStripScene(
+                viewer,
+                scenePoint);
+        } else if (context.follow) {
+            const auto& follow = context.sourceSide
+                ? _intersectionInspection->sourceFollow
+                : _intersectionInspection->targetFollow;
+            if (follow.valid && std::isfinite(follow.linePosition)) {
+                linePosition = follow.linePosition;
+            }
+        }
+        vc3d::line_annotation::GeneratedControlPointContextMenuOptions options;
+        options.parent = viewer;
+        options.surfaceName = viewer->surfName();
+        options.viewer = viewer;
+        options.scenePoint = scenePoint;
+        options.globalPos = globalPos;
+        options.controlPoints = generatedControlMarkers(pane->session->controlPoints);
+        options.linePointCount = pane->session->optimizedLine.points.empty()
+            ? pane->session->controlPoints.size()
+            : pane->session->optimizedLine.points.size();
+        options.linePosition = linePosition;
+        options.stripViewer = context.strip;
+        options.deleteControlPoint = [this, surfaceName = viewer->surfName()](
+                                         double selectedLinePosition,
+                                         cv::Vec3f selectedPoint) {
+            handleGeneratedControlPointDelete(surfaceName,
+                                              selectedLinePosition,
+                                              selectedPoint);
+        };
+        result = vc3d::line_annotation::showGeneratedControlPointContextMenu(options);
+    }
     if (result == LineAnnotationDialog::GeneratedControlPointContextResult::NewLineAnnotationRequested) {
         launchFromViewerAtPoint(viewer, scenePoint);
     }
@@ -1068,6 +2724,7 @@ std::vector<LineAnnotationController::FiberSummary> LineAnnotationController::fi
     for (const auto& fiber : _fibers) {
         summaries.push_back(FiberSummary{
             fiber.id,
+            fiber.fileName,
             static_cast<int>(fiber.controlPoints.size()),
             static_cast<int>(fiber.linePoints.size()),
             lineLengthVx(fiber.linePoints),
@@ -1094,10 +2751,86 @@ std::vector<vc::atlas::FiberPolyline> LineAnnotationController::fiberSnapshots()
         vc::atlas::FiberPolyline snapshot;
         snapshot.id = fiber.id;
         snapshot.generation = fiber.generation;
+        snapshot.controlPoints = fiber.controlPoints;
         snapshot.points.reserve(fiber.linePoints.size());
         for (const auto& point : fiber.linePoints) {
             snapshot.points.push_back(vc::atlas::FiberPoint{point, std::nullopt});
         }
+        snapshots.push_back(std::move(snapshot));
+    }
+    return snapshots;
+}
+
+std::vector<vc::atlas::FiberPolyline> LineAnnotationController::fiberSnapshotsFromStorage() const
+{
+    std::vector<vc::atlas::FiberPolyline> snapshots;
+    const auto snapshotsWithPaths = fiberSnapshotsFromStorageWithPaths();
+    snapshots.reserve(snapshotsWithPaths.size());
+    for (const auto& snapshot : snapshotsWithPaths) {
+        snapshots.push_back(snapshot.fiber);
+    }
+    return snapshots;
+}
+
+std::vector<LineAnnotationController::FiberSnapshotWithPath>
+LineAnnotationController::fiberSnapshotsFromStorageWithPaths() const
+{
+    auto snapshotForFiber = [](const StoredFiber& fiber) {
+        vc::atlas::FiberPolyline snapshot;
+        snapshot.id = 0;
+        snapshot.generation = fiber.generation;
+        snapshot.controlPoints = fiber.controlPoints;
+        snapshot.points.reserve(fiber.linePoints.size());
+        for (const auto& point : fiber.linePoints) {
+            snapshot.points.push_back(vc::atlas::FiberPoint{point, std::nullopt});
+        }
+        return snapshot;
+    };
+    auto relativeFiberPath = [](const StoredFiber& fiber) {
+        return fs::path("fibers") / fiber.fileName;
+    };
+
+    std::map<fs::path, FiberSnapshotWithPath> byPath;
+    const fs::path dir = fibersDir();
+    std::error_code ec;
+    if (!dir.empty() && fs::exists(dir, ec)) {
+        for (const auto& entry : fs::directory_iterator(dir, ec)) {
+            if (ec) {
+                break;
+            }
+            if (!entry.is_regular_file() || entry.path().extension() != ".json") {
+                continue;
+            }
+            try {
+                if (auto fiber = loadFiberFile(entry.path())) {
+                    const fs::path path = relativeFiberPath(*fiber);
+                    byPath[path] = FiberSnapshotWithPath{path, snapshotForFiber(*fiber)};
+                }
+            } catch (const std::exception& ex) {
+                Logger()->warn("Skipping invalid VC3D fiber file {} during atlas search: {}",
+                               entry.path().string(),
+                               ex.what());
+            }
+        }
+    }
+
+    for (const auto& fiber : _fibers) {
+        const fs::path path = relativeFiberPath(fiber);
+        byPath[path] = FiberSnapshotWithPath{path, snapshotForFiber(fiber)};
+    }
+
+    std::vector<fs::path> orderedPaths;
+    orderedPaths.reserve(byPath.size());
+    for (const auto& [path, snapshot] : byPath) {
+        (void)snapshot;
+        orderedPaths.push_back(path);
+    }
+    const auto runtimeIds = vc::atlas::makeFiberRuntimeIdentityMap(orderedPaths);
+
+    std::vector<FiberSnapshotWithPath> snapshots;
+    snapshots.reserve(byPath.size());
+    for (auto& [path, snapshot] : byPath) {
+        snapshot.fiber.id = runtimeIds.idForPath(path);
         snapshots.push_back(std::move(snapshot));
     }
     return snapshots;
@@ -1545,9 +3278,11 @@ void LineAnnotationController::finishOptimization(const std::string& surfaceName
                            session.controlPoints,
                            linePointsToJson(session.optimizedLine),
                            &session.optimizationReport);
-        if (!materializeGeneratedViews(session)) {
-            session.taskState = LineAnnotationSession::TaskState::Failed;
-            return;
+        if (!session.suppressGeneratedViews) {
+            if (!materializeGeneratedViews(session)) {
+                session.taskState = LineAnnotationSession::TaskState::Failed;
+                return;
+            }
         }
         if (session.deferShowUntilGenerated && pane->dialog && !pane->dialog->isVisible()) {
             pane->dialog->showMaximized();
@@ -1562,6 +3297,10 @@ void LineAnnotationController::finishOptimization(const std::string& surfaceName
                        session.optimizationReport.ceresSolveMs,
                        session.optimizationReport.totalMs,
                        session.optimizedLine.points.size());
+        auto callback = session.optimizationSucceededCallback;
+        if (callback) {
+            callback(session);
+        }
         return;
     }
 
@@ -1955,6 +3694,7 @@ void LineAnnotationController::loadFibersForCurrentPackage()
         return;
     }
 
+    std::vector<fs::path> fiberFiles;
     for (const auto& entry : fs::directory_iterator(dir, ec)) {
         if (ec) {
             break;
@@ -1962,8 +3702,13 @@ void LineAnnotationController::loadFibersForCurrentPackage()
         if (!entry.is_regular_file() || entry.path().extension() != ".json") {
             continue;
         }
+        fiberFiles.push_back(entry.path());
+    }
+    std::sort(fiberFiles.begin(), fiberFiles.end());
+
+    for (const auto& path : fiberFiles) {
         try {
-            if (auto fiber = loadFiberFile(entry.path())) {
+            if (auto fiber = loadFiberFile(path)) {
                 if (fiber->needsSave) {
                     try {
                         fiber->needsSave = false;
@@ -1971,7 +3716,7 @@ void LineAnnotationController::loadFibersForCurrentPackage()
                     } catch (const std::exception& ex) {
                         fiber->needsSave = true;
                         Logger()->warn("Could not update VC3D fiber metadata {}: {}",
-                                       entry.path().string(),
+                                       path.string(),
                                        ex.what());
                     }
                 }
@@ -1979,13 +3724,18 @@ void LineAnnotationController::loadFibersForCurrentPackage()
             }
         } catch (const std::exception& ex) {
             Logger()->warn("Skipping invalid VC3D fiber file {}: {}",
-                           entry.path().string(),
+                           path.string(),
                            ex.what());
         }
     }
     std::sort(_fibers.begin(), _fibers.end(), [](const StoredFiber& a, const StoredFiber& b) {
-        return a.id < b.id;
+        return vc::atlas::atlasFiberPathKey(fs::path("fibers") / a.fileName) <
+               vc::atlas::atlasFiberPathKey(fs::path("fibers") / b.fileName);
     });
+    uint64_t runtimeId = 1;
+    for (auto& fiber : _fibers) {
+        fiber.id = runtimeId++;
+    }
     emitFiberSummaries();
 }
 
@@ -2080,9 +3830,6 @@ void LineAnnotationController::ensureSessionFiberIdentity(LineAnnotationSession&
         if (session.fiberUsername.empty()) {
             session.fiberUsername = "anon";
         }
-        if (session.fiberSequence == 0 && session.fiberId != 0) {
-            session.fiberSequence = session.fiberId;
-        }
         return;
     }
 
@@ -2147,12 +3894,113 @@ vc::lasagna::LineModel LineAnnotationController::lineModelFromPoints(
     return model;
 }
 
+vc::lasagna::LineModel LineAnnotationController::syntheticLineModelFromPoints(
+    const std::vector<cv::Vec3d>& points)
+{
+    if (points.empty()) {
+        throw std::runtime_error("Fiber has no line points");
+    }
+
+    vc::lasagna::LineModel model;
+    model.points.reserve(points.size());
+    for (const cv::Vec3d& point : points) {
+        vc::lasagna::LinePoint linePoint;
+        linePoint.position = point;
+        linePoint.sampledNormal = vc::lasagna::NormalSample{{0.0, 0.0, 1.0}, true, {}};
+        model.points.push_back(linePoint);
+    }
+    model.displayFrameAnchorIndex = static_cast<int>(points.size() / 2);
+    if (points.size() >= 2) {
+        model.segmentSamples.reserve(points.size() - 1);
+        for (size_t i = 1; i < points.size(); ++i) {
+            vc::lasagna::LineSegmentSamples segment;
+            segment.samples.push_back({0.0, points[i - 1], model.points[i - 1].sampledNormal});
+            segment.samples.push_back({1.0, points[i], model.points[i].sampledNormal});
+            model.segmentSamples.push_back(std::move(segment));
+        }
+    }
+    return model;
+}
+
+std::shared_ptr<LineAnnotationController::LineAnnotationSession>
+LineAnnotationController::makeIntersectionLineSession(
+    const StoredFiber& fiber,
+    double focusLinePosition,
+    const cv::Vec3d& sourceSliceNormal,
+    const std::string& surfaceName,
+    std::function<void()> onOptimizationSucceeded)
+{
+    auto session = std::make_shared<LineAnnotationSession>();
+    session->surfaceName = surfaceName;
+    session->sourceAnnotationSurfaceName = surfaceName;
+    session->fiberId = fiber.id;
+    session->fiberUsername = fiber.username;
+    session->fiberStartedAt = fiber.startedAt;
+    session->fiberSequence = fiber.sequence;
+    session->fiberFileName = fiber.fileName;
+    session->fiberManualHvTag = fiber.manualHvTag;
+    session->focusedLinePosition = std::clamp(
+        focusLinePosition,
+        0.0,
+        static_cast<double>(std::max<size_t>(1, fiber.linePoints.size()) - 1));
+    session->focusedControlPoint = interpolatedPointAtLinePosition(
+        fiber.linePoints,
+        session->focusedLinePosition);
+    session->sourceSliceNormal = finiteDirection(sourceSliceNormal)
+        ? normalizedOrZero(sourceSliceNormal)
+        : cv::Vec3d{0.0, 0.0, 1.0};
+    session->optimizedLine = syntheticLineModelFromPoints(fiber.linePoints);
+    session->taskState = LineAnnotationSession::TaskState::Succeeded;
+    session->suppressGeneratedViews = true;
+    session->optimizationSucceededCallback =
+        [callback = std::move(onOptimizationSucceeded)](LineAnnotationSession&) {
+            if (callback) {
+                callback();
+            }
+        };
+
+    session->controlPoints.reserve(fiber.controlPoints.size());
+    int seedControl = -1;
+    double seedDistance = std::numeric_limits<double>::infinity();
+    for (size_t i = 0; i < fiber.controlPoints.size(); ++i) {
+        const cv::Vec3d& controlPoint = fiber.controlPoints[i];
+        const int index = static_cast<int>(
+            vc3d::fiber_slice::nearestLinePointIndex(fiber.linePoints, controlPoint));
+        vc::lasagna::LineControlPoint control;
+        control.linePosition = static_cast<double>(index);
+        control.volumePoint = controlPoint;
+        control.optimizedIndex = index;
+        session->controlPoints.push_back(control);
+        const double distance = std::abs(control.linePosition - session->focusedLinePosition);
+        if (distance < seedDistance) {
+            seedDistance = distance;
+            seedControl = static_cast<int>(i);
+        }
+    }
+    if (session->controlPoints.empty()) {
+        vc::lasagna::LineControlPoint control;
+        control.linePosition = session->focusedLinePosition;
+        control.volumePoint = *session->focusedControlPoint;
+        control.optimizedIndex = static_cast<int>(std::llround(session->focusedLinePosition));
+        control.isSeed = true;
+        session->controlPoints.push_back(control);
+        seedControl = 0;
+    }
+    if (seedControl < 0) {
+        seedControl = 0;
+    }
+    session->controlPoints[static_cast<size_t>(seedControl)].isSeed = true;
+    session->seedPoint = session->controlPoints[static_cast<size_t>(seedControl)].volumePoint;
+    session->optimizedLine.displayFrameAnchorIndex =
+        session->controlPoints[static_cast<size_t>(seedControl)].optimizedIndex;
+    return session;
+}
+
 void LineAnnotationController::saveSessionAsFiber(LineAnnotationSession& session)
 {
     try {
         ensureSessionFiberIdentity(session);
         StoredFiber fiber;
-        fiber.id = session.fiberId == 0 ? nextFiberId() : session.fiberId;
         fiber.username = session.fiberUsername;
         fiber.startedAt = session.fiberStartedAt;
         fiber.sequence = session.fiberSequence;
@@ -2160,8 +4008,19 @@ void LineAnnotationController::saveSessionAsFiber(LineAnnotationSession& session
         auto existingIt = std::find_if(_fibers.begin(),
                                        _fibers.end(),
                                        [&fiber](const StoredFiber& existing) {
-                                           return existing.id == fiber.id;
+                                           return !fiber.fileName.empty() &&
+                                                  existing.fileName == fiber.fileName;
                                        });
+        if (existingIt == _fibers.end() && session.fiberId != 0) {
+            existingIt = std::find_if(_fibers.begin(),
+                                      _fibers.end(),
+                                      [&session](const StoredFiber& existing) {
+                                          return existing.id == session.fiberId;
+                                      });
+        }
+        fiber.id = existingIt == _fibers.end()
+            ? (session.fiberId == 0 ? nextFiberId() : session.fiberId)
+            : existingIt->id;
         fiber.generation = existingIt == _fibers.end()
             ? uint64_t{1}
             : std::max<uint64_t>(uint64_t{1}, existingIt->generation + 1);
@@ -2192,8 +4051,13 @@ void LineAnnotationController::saveSessionAsFiber(LineAnnotationSession& session
         const uint64_t savedGeneration = fiber.generation;
 
         auto it = std::find_if(_fibers.begin(), _fibers.end(), [&fiber](const StoredFiber& existing) {
-            return existing.id == fiber.id;
+            return !fiber.fileName.empty() && existing.fileName == fiber.fileName;
         });
+        if (it == _fibers.end()) {
+            it = std::find_if(_fibers.begin(), _fibers.end(), [&fiber](const StoredFiber& existing) {
+                return existing.id == fiber.id;
+            });
+        }
         if (it == _fibers.end()) {
             _fibers.push_back(std::move(fiber));
         } else {
@@ -2223,7 +4087,6 @@ void LineAnnotationController::saveFiber(const StoredFiber& fiber) const
     nlohmann::json root = nlohmann::json::object();
     root["type"] = "vc3d_fiber";
     root["version"] = 1;
-    root["id"] = fiber.id;
     root["username"] = fiber.username;
     root["started_at"] = fiber.startedAt;
     root["sequence"] = fiber.sequence;
@@ -2291,20 +4154,13 @@ std::optional<LineAnnotationController::StoredFiber> LineAnnotationController::l
 
     StoredFiber fiber;
     fiber.generation = std::max<uint64_t>(uint64_t{1}, root.value("generation", uint64_t{1}));
-    if (root.contains("id")) {
-        fiber.id = root.at("id").get<uint64_t>();
-    } else if (hasLegacyNumericStem) {
-        fiber.id = std::stoull(stem);
-    } else {
-        return std::nullopt;
-    }
     fiber.username = vc3d::line_annotation::normalizedFiberUsername(
         root.value("username", std::string{"anon"}));
     fiber.startedAt = root.value("started_at", std::string{});
     if (root.contains("sequence")) {
         fiber.sequence = root.at("sequence").get<uint64_t>();
     } else if (hasLegacyNumericStem) {
-        fiber.sequence = fiber.id;
+        fiber.sequence = std::stoull(stem);
     }
     fiber.fileName = path.filename().string();
     if (fiber.fileName.empty() && !fiber.startedAt.empty() && fiber.sequence > 0) {

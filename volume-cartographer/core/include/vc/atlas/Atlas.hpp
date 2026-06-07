@@ -3,7 +3,9 @@
 #include <filesystem>
 #include <memory>
 #include <optional>
+#include <cstdint>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include <opencv2/core/types.hpp>
@@ -20,7 +22,7 @@ namespace vc::atlas {
 
 struct AtlasMetadata {
     std::string type = "vc3d_atlas";
-    int version = 2;
+    int version = 3;
     std::string name;
     std::filesystem::path baseMeshPath;
     std::filesystem::path sourceBaseMeshPath;
@@ -40,13 +42,28 @@ struct AtlasAnchor {
 
 struct FiberMapping {
     std::filesystem::path fiberPath;
+    int windingOffset = 0;
     std::vector<AtlasAnchor> lineAnchors;
     std::vector<AtlasAnchor> controlAnchors;
 };
 
+struct AtlasLinkEndpoint {
+    std::filesystem::path fiberPath;
+    int sourceIndex = 0;
+    double arclength = 0.0;
+    double atlasU = 0.0;
+    double atlasV = 0.0;
+};
+
+struct AtlasLink {
+    AtlasLinkEndpoint first;
+    AtlasLinkEndpoint second;
+    int desiredWindingDelta = 0;
+};
+
 struct Atlas {
     AtlasMetadata metadata;
-    std::vector<std::string> links;
+    std::vector<AtlasLink> links;
     std::vector<FiberMapping> fibers;
 
     void save(const std::filesystem::path& atlasDir) const;
@@ -106,7 +123,30 @@ struct ProjectionHit {
     double distance = 0.0;
 };
 
+struct FiberRuntimeIdentityMap {
+    std::vector<std::filesystem::path> canonicalPaths;
+    std::unordered_map<std::string, uint64_t> idByPathKey;
+    std::unordered_map<uint64_t, std::filesystem::path> pathById;
+
+    [[nodiscard]] uint64_t idForPath(const std::filesystem::path& path) const;
+    [[nodiscard]] std::filesystem::path pathForId(uint64_t id) const;
+};
+
+struct AtlasFiberSearchSets {
+    std::vector<uint64_t> sourceFiberIds;
+    std::vector<uint64_t> targetFiberIds;
+    std::vector<std::filesystem::path> sourceFiberPaths;
+    std::vector<std::filesystem::path> targetFiberPaths;
+};
+
 std::string sanitizeAtlasName(std::string name);
+std::string atlasFiberPathKey(const std::filesystem::path& path);
+std::vector<std::string> atlasMappedFiberPathKeys(const Atlas& atlas);
+FiberRuntimeIdentityMap makeFiberRuntimeIdentityMap(
+    const std::vector<std::filesystem::path>& orderedCanonicalFiberPaths);
+AtlasFiberSearchSets atlasFiberSearchSets(
+    const Atlas& atlas,
+    const FiberRuntimeIdentityMap& runtimeIds);
 std::filesystem::path uniqueAtlasDirectory(const std::filesystem::path& volpkgRoot,
                                            const std::string& baseName);
 std::filesystem::path initShellDirectoryFromManifest(
@@ -132,10 +172,15 @@ void saveAtlasBaseMeshCopy(const QuadSurface& surface,
                            const std::filesystem::path& targetDir);
 AtlasCoveredSize mappedObjectCoveredAtlasSize(
     const Atlas& atlas,
-    cv::Vec2f atlasScale = cv::Vec2f(1.0f, 1.0f));
+    cv::Vec2f atlasScale = cv::Vec2f(1.0f, 1.0f),
+    int periodColumns = 0);
 int atlasHorizontalPeriodColumns(const QuadSurface& surface);
 int atlasWindingForColumn(double atlasU, int periodColumns, int zeroWindingColumn);
+double actualAtlasU(const AtlasAnchor& anchor,
+                    const FiberMapping& fiber,
+                    int periodColumns);
 AtlasDisplayRange atlasDisplayRange(const Atlas& atlas, int baseColumns);
+void layoutAtlasObjects(Atlas& atlas, int periodColumns);
 cv::Vec2f atlasGridToSurfaceCoords(double atlasU,
                                    double atlasV,
                                    const QuadSurface& displaySurface,

@@ -25,10 +25,14 @@ set(srcs
     AxisAlignedSliceController.cpp
     AxisAlignedSliceController.hpp
     LineAnnotationFiberClassification.hpp
+    FiberSliceGeometry.cpp
+    FiberSliceGeometry.hpp
     LineAnnotationController.cpp
     LineAnnotationController.hpp
     LineAnnotationDialog.cpp
     LineAnnotationDialog.hpp
+    LineAnnotationGeneratedViews.cpp
+    LineAnnotationGeneratedViews.hpp
     SurfaceAffineTransformController.cpp
     SurfaceAffineTransformController.hpp
     SurfaceAreaCalculator.cpp
@@ -123,6 +127,8 @@ set(srcs
     overlays/SurfaceRotationOverlayController.hpp
     overlays/AtlasOverlayController.cpp
     overlays/AtlasOverlayController.hpp
+    overlays/FiberSliceOverlayController.cpp
+    overlays/FiberSliceOverlayController.hpp
     overlays/VolumeOverlayController.cpp
     overlays/VolumeOverlayController.hpp
     overlays/ViewerOverlayControllerBase.cpp

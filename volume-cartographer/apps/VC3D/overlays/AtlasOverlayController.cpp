@@ -31,6 +31,71 @@ ViewerOverlayControllerBase::OverlayStyle atlasAnchorStyle()
     style.z = 60.0;
     return style;
 }
+
+ViewerOverlayControllerBase::OverlayStyle searchCrossStyle(bool emphasized)
+{
+    ViewerOverlayControllerBase::OverlayStyle style;
+    style.penColor = emphasized ? QColor(80, 210, 255) : QColor(255, 255, 255);
+    style.brushColor = Qt::transparent;
+    style.penWidth = emphasized ? 2.2 : 1.4;
+    style.z = emphasized ? 86.0 : 84.0;
+    return style;
+}
+
+ViewerOverlayControllerBase::OverlayStyle searchPreviewLineStyle(bool emphasized)
+{
+    ViewerOverlayControllerBase::OverlayStyle style;
+    style.penColor = emphasized ? QColor(80, 210, 255) : QColor(255, 255, 255);
+    style.brushColor = Qt::transparent;
+    style.penWidth = emphasized ? 2.4 : 1.6;
+    style.penStyle = Qt::DashLine;
+    style.z = emphasized ? 82.0 : 80.0;
+    return style;
+}
+
+std::optional<std::pair<int, int>> controlAnchorSourceRange(
+    const vc::atlas::FiberMapping& fiber)
+{
+    if (fiber.lineAnchors.empty()) {
+        return std::nullopt;
+    }
+
+    int first = std::numeric_limits<int>::max();
+    int last = std::numeric_limits<int>::min();
+    int count = 0;
+    for (const auto& anchor : fiber.controlAnchors) {
+        const vc::atlas::AtlasAnchor* bestLineAnchor = nullptr;
+        double bestDistance2 = std::numeric_limits<double>::infinity();
+        for (const auto& lineAnchor : fiber.lineAnchors) {
+            const double du = lineAnchor.atlasU - anchor.atlasU;
+            const double dv = lineAnchor.atlasV - anchor.atlasV;
+            const double distance2 = du * du + dv * dv;
+            if (distance2 < bestDistance2) {
+                bestDistance2 = distance2;
+                bestLineAnchor = &lineAnchor;
+            }
+        }
+        if (!bestLineAnchor) {
+            continue;
+        }
+        first = std::min(first, bestLineAnchor->sourceIndex);
+        last = std::max(last, bestLineAnchor->sourceIndex);
+        ++count;
+    }
+    if (count < 2 || first > last) {
+        return std::nullopt;
+    }
+    return std::make_pair(first, last);
+}
+
+bool anchorInControlRange(const vc::atlas::AtlasAnchor& anchor,
+                          const std::optional<std::pair<int, int>>& range)
+{
+    if (!range) {
+        return true;
+    }
+    return anchor.sourceIndex >= range->first && anchor.sourceIndex <= range->second;
+}
 }
 
 AtlasOverlayController::AtlasOverlayController(QObject* parent)
@@ -45,6 +110,7 @@ void AtlasOverlayController::setAtlas(vc::atlas::Atlas atlas,
     _atlas = std::move(atlas);
     _displaySurface = std::move(displaySurface);
     _displayRange = displayRange;
+    clearSearchPreviews();
     refreshAll();
 }
 
@@ -53,17 +119,68 @@ void AtlasOverlayController::clearAtlas()
     _atlas.reset();
     _displaySurface.reset();
     _displayRange = {};
+    _searchPreviewCandidates.clear();
+    _searchPreviewFibers.clear();
+    _hoverSearchResult.reset();
+    _selectedSearchResults.clear();
+    refreshAll();
+}
+
+void AtlasOverlayController::clearSearchPreviews()
+{
+    _searchPreviewCandidates.clear();
+    _searchPreviewFibers.clear();
+    _hoverSearchResult.reset();
+    _selectedSearchResults.clear();
+    refreshAll();
+}
+
+void AtlasOverlayController::setSearchPreviewCandidates(std::vector<SearchPreviewCandidate> candidates)
+{
+    _searchPreviewCandidates = std::move(candidates);
+    _searchPreviewFibers.clear();
+    _hoverSearchResult.reset();
+    _selectedSearchResults.clear();
+    refreshAll();
+}
+
+void AtlasOverlayController::setSearchPreviewHover(std::optional<int> resultIndex)
+{
+    if (_hoverSearchResult == resultIndex) {
+        return;
+    }
+    _hoverSearchResult = resultIndex;
+    refreshAll();
+}
+
+void AtlasOverlayController::setSearchPreviewSelection(std::set<int> resultIndices)
+{
+    if (_selectedSearchResults == resultIndices) {
+        return;
+    }
+    _selectedSearchResults = std::move(resultIndices);
+    refreshAll();
+}
+
+void AtlasOverlayController::setSearchPreviewFiber(SearchPreviewFiber fiber)
+{
+    if (fiber.resultIndex < 0) {
+        return;
+    }
+    _searchPreviewFibers[fiber.resultIndex] = std::move(fiber.mapping);
     refreshAll();
 }
 
 std::optional<cv::Vec2f> AtlasOverlayController::atlasAnchorToSurface(
-    const vc::atlas::AtlasAnchor& anchor) const
+    const vc::atlas::AtlasAnchor& anchor,
+    const vc::atlas::FiberMapping& fiber) const
 {
     if (!_displaySurface || !std::isfinite(anchor.atlasU) || !std::isfinite(anchor.atlasV)) {
         return std::nullopt;
     }
+    const double atlasU = vc::atlas::actualAtlasU(anchor, fiber, _displayRange.baseColumns);
     const cv::Vec2f surfaceCoord =
-        vc::atlas::atlasGridToSurfaceCoords(anchor.atlasU,
+        vc::atlas::atlasGridToSurfaceCoords(atlasU,
                                             anchor.atlasV,
                                             *_displaySurface,
                                             _displayRange.atlasUOffset);
@@ -85,8 +202,12 @@ std::optional<QRectF> AtlasOverlayController::surfaceBounds() const
     float maxX = -std::numeric_limits<float>::infinity();
     float maxY = -std::numeric_limits<float>::infinity();
     for (const auto& fiber : _atlas->fibers) {
+        const auto sourceRange = controlAnchorSourceRange(fiber);
         for (const auto& anchor : fiber.lineAnchors) {
-            const auto surfaceCoord = atlasAnchorToSurface(anchor);
+            if (!anchorInControlRange(anchor, sourceRange)) {
+                continue;
+            }
+            const auto surfaceCoord = atlasAnchorToSurface(anchor, fiber);
             if (!surfaceCoord) {
                 continue;
             }
@@ -118,10 +239,14 @@ void AtlasOverlayController::collectPrimitives(VolumeViewerBase* viewer,
     const auto lineStyle = atlasLineStyle();
     const auto anchorStyle = atlasAnchorStyle();
     for (const auto& fiber : _atlas->fibers) {
+        const auto sourceRange = controlAnchorSourceRange(fiber);
         std::vector<cv::Vec2f> linePoints;
         linePoints.reserve(fiber.lineAnchors.size());
         for (const auto& anchor : fiber.lineAnchors) {
-            const auto surfaceCoord = atlasAnchorToSurface(anchor);
+            if (!anchorInControlRange(anchor, sourceRange)) {
+                continue;
+            }
+            const auto surfaceCoord = atlasAnchorToSurface(anchor, fiber);
             if (!surfaceCoord) {
                 continue;
             }
@@ -131,11 +256,60 @@ void AtlasOverlayController::collectPrimitives(VolumeViewerBase* viewer,
             builder.addSurfaceLineStrip(linePoints, false, lineStyle);
         }
         for (const auto& anchor : fiber.controlAnchors) {
-            const auto surfaceCoord = atlasAnchorToSurface(anchor);
+            const auto surfaceCoord = atlasAnchorToSurface(anchor, fiber);
             if (!surfaceCoord) {
                 continue;
             }
             builder.addSurfacePoint(*surfaceCoord, 4.0, anchorStyle);
+        }
+    }
+
+    auto isEmphasized = [this](int resultIndex) {
+        return _hoverSearchResult == resultIndex ||
+               _selectedSearchResults.find(resultIndex) != _selectedSearchResults.end();
+    };
+
+    constexpr float crossHalfSize = 4.0f;
+    for (const auto& candidate : _searchPreviewCandidates) {
+        if (candidate.resultIndex < 0 ||
+            !std::isfinite(candidate.surfaceCoord[0]) ||
+            !std::isfinite(candidate.surfaceCoord[1])) {
+            continue;
+        }
+        const auto style = searchCrossStyle(isEmphasized(candidate.resultIndex));
+        builder.addSurfaceLineStrip({
+            cv::Vec2f(candidate.surfaceCoord[0] - crossHalfSize, candidate.surfaceCoord[1]),
+            cv::Vec2f(candidate.surfaceCoord[0] + crossHalfSize, candidate.surfaceCoord[1]),
+        }, false, style);
+        builder.addSurfaceLineStrip({
+            cv::Vec2f(candidate.surfaceCoord[0], candidate.surfaceCoord[1] - crossHalfSize),
+            cv::Vec2f(candidate.surfaceCoord[0], candidate.surfaceCoord[1] + crossHalfSize),
+        }, false, style);
+    }
+
+    std::set<int> visiblePreviewResults = _selectedSearchResults;
+    if (_hoverSearchResult) {
+        visiblePreviewResults.insert(*_hoverSearchResult);
+    }
+    for (const int resultIndex : visiblePreviewResults) {
+        const auto it = _searchPreviewFibers.find(resultIndex);
+        if (it == _searchPreviewFibers.end()) {
+            continue;
+        }
+        const auto& mapping = it->second;
+        std::vector<cv::Vec2f> linePoints;
+        linePoints.reserve(mapping.lineAnchors.size());
+        for (const auto& anchor : mapping.lineAnchors) {
+            const auto surfaceCoord = atlasAnchorToSurface(anchor, mapping);
+            if (!surfaceCoord) {
+                continue;
+            }
+            linePoints.push_back(*surfaceCoord);
+        }
+        if (linePoints.size() >= 2) {
+            builder.addSurfaceLineStrip(linePoints,
+                                        false,
+                                        searchPreviewLineStyle(isEmphasized(resultIndex)));
         }
     }
 }

@@ -13,6 +13,7 @@
 
 class QLabel;
 class QButtonGroup;
+class QAction;
 
 class CFiberWidget : public QDockWidget
 {
@@ -21,6 +22,7 @@ class CFiberWidget : public QDockWidget
 public:
     struct FiberEntry {
         uint64_t id = 0;
+        std::string fileName;
         int controlPointCount = 0;
         int linePointCount = 0;
         double lengthVx = 0.0;
@@ -40,6 +42,8 @@ public:
     std::vector<uint64_t> selectedFiberIds() const;
     bool canDeleteSelection() const;
     bool canCreateAtlasFromSelection() const;
+    bool canShowFiberSlice() const;
+    QAction* createShowFiberSliceAction(QObject* parent);
     void setFibers(const std::vector<FiberEntry>& fibers);
     void selectFiber(uint64_t fiberId);
     void selectFibers(const std::vector<uint64_t>& fiberIds);
@@ -51,6 +55,7 @@ signals:
     void manualHvTagChanged(uint64_t fiberId, QString tag);
     void hvScoreRecalculationRequested(uint64_t fiberId);
     void newAtlasFromFiberRequested(uint64_t fiberId);
+    void fiberSliceRequested(uint64_t fiberId);
 
 private slots:
     void onSelectionChanged();
@@ -67,6 +72,7 @@ private:
     const FiberEntry* selectedFiber() const;
     void updateClassificationUi();
     void requestDeleteSelectedFibers();
+    void requestShowFiberSlice();
     bool confirmDeleteFibers(const std::vector<uint64_t>& fiberIds);
     static QString labelForFiber(const FiberEntry& fiber);
 
