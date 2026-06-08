@@ -423,8 +423,14 @@ __attribute__((noinline)) ChunkedPlaneSampler::Stats renderTileRange(
         if constexpr (kConcrete) return pin.lookupChecked(lv, z, y, x);
         else return pin->lookup(lv, z, y, x);
     };
-    std::vector<ChunkKey> missedVec;   // unique missed chunks (deduped via missedSeen)
-    std::unordered_set<std::uint64_t> missedSeen;
+    // thread_local: keep these container HEADERS out of the kernel's stack frame
+    // (their inline storage was ~80B of frame). Reused across tile-range calls on a
+    // worker -- cleared on entry -- so their capacity is also retained (no realloc
+    // churn). missedVec is moved into stats at the end (which empties it for reuse).
+    static thread_local std::vector<ChunkKey> missedVec;
+    static thread_local std::unordered_set<std::uint64_t> missedSeen;
+    missedVec.clear();
+    missedSeen.clear();
     missedVec.reserve(std::max<std::size_t>(16, (end - begin) * 4));
     missedSeen.reserve(std::max<std::size_t>(16, (end - begin) * 4));
 
