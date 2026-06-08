@@ -298,6 +298,29 @@ struct CoarseLevel {
     bool pow2;
 };
 
+// Build the coarser-LOD fallback table. noinline so the vector construction +
+// push_back grow machinery (operator new/delete, throw_length_error, memcpy)
+// lives HERE, not inlined into the hot kernel where it bloated the function and
+// its frame. Built once per kernel call (cold).
+__attribute__((noinline))
+std::vector<CoarseLevel> buildCoarseTable(IChunkedArray& array, int level)
+{
+    std::vector<CoarseLevel> coarse;
+    const int n = array.numLevels();
+    auto log2pos = [](int v) { return (v > 0 && (v & (v - 1)) == 0)
+                                      ? __builtin_ctz(unsigned(v)) : -1; };
+    for (int L2 = level + 1; L2 < n; ++L2) {
+        const auto cs = array.chunkShape(L2);
+        const auto ls = array.shape(L2);
+        if (cs[0] <= 0) break;
+        const int lg = log2pos(cs[0]), lgY = log2pos(cs[1]), lgX = log2pos(cs[2]);
+        coarse.push_back(CoarseLevel{L2 - level, cs[0], cs[1], cs[2],
+                                     ls[0], ls[1], ls[2], lg, lgY, lgX,
+                                     (lg >= 0 && lgY >= 0 && lgX >= 0)});
+    }
+    return coarse;
+}
+
 // LOD miss-fallback: a fine chunk missed at `level`, so sample the same point
 // from the nearest COARSER level that IS resident (blurry but present, no hole,
 // while fine chunks stream in). noinline + cold: this is the RARE path (most
@@ -476,22 +499,7 @@ __attribute__((noinline)) ChunkedPlaneSampler::Stats renderTileRange(
     // Precompute the coarser-level table once (cold miss-fallback uses it). See
     // coarseFallbackImpl -- that function is noinline/cold and kept OUT of this
     // frame so the hot depth loop doesn't pay its register footprint.
-    std::vector<CoarseLevel> coarse;
-    {
-        const int n = array.numLevels();
-        auto log2pos = [](int v) { return (v > 0 && (v & (v - 1)) == 0)
-                                          ? __builtin_ctz(unsigned(v)) : -1; };
-        for (int L2 = level + 1; L2 < n; ++L2) {
-            const auto cs = array.chunkShape(L2);
-            const auto ls = array.shape(L2);
-            if (cs[0] <= 0) break;
-            const int lg = log2pos(cs[0]), lgY = log2pos(cs[1]), lgX = log2pos(cs[2]);
-            coarse.push_back(CoarseLevel{L2 - level, cs[0], cs[1], cs[2],
-                                         ls[0], ls[1], ls[2],
-                                         lg, lgY, lgX,
-                                         /*pow2=*/(lg >= 0 && lgY >= 0 && lgX >= 0)});
-        }
-    }
+    const std::vector<CoarseLevel> coarse = buildCoarseTable(array, level);
 
     // Chunk-major lookup cache (cross-pixel dedup). The per-pixel depth walk only
     // probes the resident map on a chunk CHANGE, but ADJACENT pixels re-probe the
