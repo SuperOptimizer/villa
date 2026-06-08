@@ -578,6 +578,9 @@ __attribute__((noinline)) ChunkedPlaneSampler::Stats renderTileRange(
                 // (~5% of the kernel); the XOR test stays scalar. pPrev seeds to -1 so
                 // the first in-bounds layer forces the lookup. DYNAMIC path: packed key.
                 int pz = -1, py = -1, px = -1;
+                // Previous SAMPLED voxel (composite no-double-sample guard). -2 so
+                // the first valid layer (coords >= 0) never matches.
+                int pvz = -2, pvy = -2, pvx = -2;
                 std::uint64_t lastChunk = ~std::uint64_t(0);
                 // Chunk-resident state cached across the depth loop. The previous
                 // code held a `const std::vector<std::byte>*` and dereferenced its
@@ -663,6 +666,18 @@ __attribute__((noinline)) ChunkedPlaneSampler::Stats renderTileRange(
                     if (unsigned(iz) >= unsigned(shp0) || unsigned(iy) >= unsigned(shp1) ||
                         unsigned(ix) >= unsigned(shp2))
                         continue;
+
+                    // STRICT no-double-sample guard (composite): if this layer rounds
+                    // to the SAME voxel as the previous one, skip the load+reduce --
+                    // max(x,x)=x, so re-reading the identical byte is pure waste. The
+                    // depth-decimation upstream already thins most duplicates; this
+                    // catches the residual (endpoints / sub-voxel steps) so NO voxel
+                    // is ever sampled twice in a column. Reuses pv* (prev voxel).
+                    if constexpr (Composite) {
+                        if (iz == pvz && iy == pvy && ix == pvx)
+                            continue;
+                        pvz = iz; pvy = iy; pvx = ix;
+                    }
 
                     // In-chunk offset (needed every layer for the byte load).
                     int lz, ly, lx;

@@ -1289,6 +1289,10 @@ CChunkedVolumeViewer::RenderResult CChunkedVolumeViewer::renderFrame(RenderConte
         // depths per pixel and reduces to the max inline, sharing the chunk
         // lookup across a pixel's depths instead of N separate full-frame passes.
         if (ctx.compositeSettings.params.method == "max") {
+            // Composite at the REQUESTED render resolution (ctx.startLevel). The
+            // kernel's lossless depth-decimation still collapses layers that round
+            // to the same voxel at coarse zoom, but the sampling LOD is exactly the
+            // one the render asked for -- no coarser-LOD bias.
             collectMissed(vc::render::ChunkedPlaneSampler::sampleCoordsMaxComposite(
                 array, ctx.startLevel, coords, normals,
                 zStart, numLayers, zStep,
