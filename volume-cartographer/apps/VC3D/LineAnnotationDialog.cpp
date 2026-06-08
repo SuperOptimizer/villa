@@ -34,6 +34,16 @@ namespace {
 constexpr int kBottomCrossSliceCount = 7;
 constexpr float kCurrentCutRotationStepRadians = 3.14159265358979323846f / 36.0f;
 
+std::string staticStripOverlayKey(const std::string& surfaceName)
+{
+    return surfaceName + "_static";
+}
+
+std::string dynamicStripOverlayKey(const std::string& surfaceName)
+{
+    return surfaceName + "_dynamic";
+}
+
 CChunkedVolumeViewer::CameraState generatedPaneCamera(CChunkedVolumeViewer* viewer,
                                                       const CChunkedVolumeViewer::CameraState& fallback)
 {
@@ -235,6 +245,7 @@ bool LineAnnotationDialog::setGeneratedRows(
     _hasGeneratedViews = false;
     _currentCutManualRotation = cv::Matx33f::eye();
     _currentCutManualRotationActive = false;
+    _generatedControlIndex = {};
     _haveInitialCurrentCutCamera = false;
     _initialStripCameras.clear();
     _initialBottomSliceCameras.clear();
@@ -418,6 +429,9 @@ bool LineAnnotationDialog::setGeneratedLineViews(
     _currentCutViewer = nullptr;
 
     _generatedViews = views;
+    _generatedControlIndex =
+        vc3d::line_annotation::buildGeneratedControlPointLinePositionIndex(
+            _generatedViews.controlPoints);
     _hasGeneratedViews = true;
     _currentCutFollowsStripMouse = true;
     if (!replacingGeneratedViews) {
@@ -731,16 +745,20 @@ void LineAnnotationDialog::setCurrentLinePosition(double position)
     if (!currentChanged && !bottomChanged) {
         return;
     }
-    _currentLinePosition = position;
     if (currentChanged && _generatedViews.currentCutSurface) {
+        _currentLinePosition = position;
         (void)updatePlaneSurface(_generatedViews.currentCutSurface.get(), _currentLinePosition);
+    } else {
+        _currentLinePosition = position;
     }
     if (currentChanged && _currentCutViewer) {
         _currentCutViewer->renderVisible(true, "line annotation current cut");
     }
-    _bottomCenterPosition = position;
-    renderBottomSlicePlanes("line annotation bottom cuts follow current");
-    rebuildGeneratedOverlays();
+    if (bottomChanged) {
+        _bottomCenterPosition = position;
+        renderBottomSlicePlanes("line annotation bottom cuts follow current");
+    }
+    rebuildGeneratedDynamicOverlays();
 }
 
 void LineAnnotationDialog::cancelControlPointPreviewAnimation()
@@ -805,8 +823,15 @@ void LineAnnotationDialog::previewClosestControlPoint()
 
     auto* animation = new QVariantAnimation(this);
     _controlPointPreviewAnimation = animation;
-    animation->setDuration(1000);
+    constexpr int kClosestControlPointHoldMs = 500;
+    constexpr int kClosestControlPointReturnMs = 2000;
+    constexpr int kClosestControlPointTotalMs =
+        kClosestControlPointHoldMs + kClosestControlPointReturnMs;
+    animation->setDuration(kClosestControlPointTotalMs);
     animation->setStartValue(*closest);
+    animation->setKeyValueAt(static_cast<double>(kClosestControlPointHoldMs) /
+                                 static_cast<double>(kClosestControlPointTotalMs),
+                             *closest);
     animation->setEndValue(originalPosition);
     connect(animation, &QVariantAnimation::valueChanged, this, [this, animation](const QVariant& value) {
         if (_controlPointPreviewAnimation == animation) {
@@ -873,7 +898,7 @@ bool LineAnnotationDialog::scaleBottomSliceLineStepByScrollSteps(int steps)
     _bottomSliceLineStep = lineStep;
     updateBottomSliceStepLabel();
     renderBottomSlicePlanes("line annotation bottom cut spacing");
-    rebuildGeneratedOverlays();
+    rebuildGeneratedDynamicOverlays();
     return true;
 }
 
@@ -975,7 +1000,7 @@ bool LineAnnotationDialog::rotateCurrentCut(vc3d::line_annotation::GeneratedCutR
         _currentCutViewer->centerOnVolumePoint(centerVolumePoint, false);
     }
     _currentCutViewer->renderVisible(true, "line annotation current cut rotation");
-    rebuildGeneratedOverlays();
+    rebuildGeneratedDynamicOverlays();
     return true;
 }
 
@@ -1112,6 +1137,25 @@ LineAnnotationDialog::GeneratedOverlay LineAnnotationDialog::stripOverlay() cons
                                                             markerLinePositions);
 }
 
+LineAnnotationDialog::GeneratedOverlay LineAnnotationDialog::staticStripOverlay() const
+{
+    return vc3d::line_annotation::makeGeneratedStaticStripOverlay(_generatedViews);
+}
+
+LineAnnotationDialog::GeneratedOverlay LineAnnotationDialog::dynamicStripOverlay() const
+{
+    const int count = static_cast<int>(_generatedViews.linePoints.size());
+    const int visibleCount = std::min(kBottomCrossSliceCount, count);
+    std::vector<double> markerLinePositions;
+    markerLinePositions.reserve(static_cast<size_t>(visibleCount + 1));
+    for (int i = 0; i < visibleCount; ++i) {
+        markerLinePositions.push_back(bottomSliceLinePosition(i, visibleCount));
+    }
+    return vc3d::line_annotation::makeGeneratedDynamicStripOverlay(_generatedViews,
+                                                                   _currentLinePosition,
+                                                                   markerLinePositions);
+}
+
 LineAnnotationDialog::GeneratedOverlay LineAnnotationDialog::zSliceOverlay(double linePosition,
                                                                            bool emphasized,
                                                                            CChunkedVolumeViewer* viewer,
@@ -1121,16 +1165,17 @@ LineAnnotationDialog::GeneratedOverlay LineAnnotationDialog::zSliceOverlay(doubl
                                                                          linePosition,
                                                                          emphasized,
                                                                          viewer,
-                                                                         plane);
+                                                                         plane,
+                                                                         &_generatedControlIndex);
 }
 
-void LineAnnotationDialog::rebuildGeneratedOverlays()
+void LineAnnotationDialog::rebuildGeneratedStaticStripOverlays()
 {
     if (!_hasGeneratedViews) {
         return;
     }
 
-    const GeneratedOverlay strip = stripOverlay();
+    const GeneratedOverlay strip = staticStripOverlay();
     for (size_t i = 0; i < _stripViewers.size(); ++i) {
         auto* viewer = _stripViewers[i].data();
         if (!viewer) {
@@ -1138,7 +1183,25 @@ void LineAnnotationDialog::rebuildGeneratedOverlays()
         }
         const std::string key = i == 0 ? _generatedViews.lineSurfaceName
                                        : _generatedViews.lineSideSliceName;
-        applyOverlayForViewer(key, viewer, strip);
+        applyOverlayForViewer(staticStripOverlayKey(key), viewer, strip);
+    }
+}
+
+void LineAnnotationDialog::rebuildGeneratedDynamicOverlays()
+{
+    if (!_hasGeneratedViews) {
+        return;
+    }
+
+    const GeneratedOverlay strip = dynamicStripOverlay();
+    for (size_t i = 0; i < _stripViewers.size(); ++i) {
+        auto* viewer = _stripViewers[i].data();
+        if (!viewer) {
+            continue;
+        }
+        const std::string key = i == 0 ? _generatedViews.lineSurfaceName
+                                       : _generatedViews.lineSideSliceName;
+        applyOverlayForViewer(dynamicStripOverlayKey(key), viewer, strip);
     }
 
     if (_currentCutViewer) {
@@ -1165,6 +1228,12 @@ void LineAnnotationDialog::rebuildGeneratedOverlays()
                               viewer,
                               zSliceOverlay(position, false, viewer, plane.get()));
     }
+}
+
+void LineAnnotationDialog::rebuildGeneratedOverlays()
+{
+    rebuildGeneratedStaticStripOverlays();
+    rebuildGeneratedDynamicOverlays();
 }
 
 cv::Vec3f LineAnnotationDialog::interpolatedLinePoint(double linePosition) const
