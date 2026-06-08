@@ -25,6 +25,15 @@ public:
 
         vc::Sampling sampling;
         int tileSize;
+        // Composite MAX early-out ceiling. The composite kernel maxes raw voxel
+        // bytes; the viewer later windows the result through a LUT, so ANY voxel
+        // >= the window's high end maps to the same (clamped) output pixel. Once the
+        // running max reaches this, no later layer can change the result -> stop the
+        // depth walk. 255 = no early-out (default; safe for any LUT). Set to the
+        // active windowHigh (rounded up) to skip the rest of a column the instant it
+        // saturates -- lossless, and on bright/dense material it skips most of 64
+        // layers. Only consulted on the Composite path.
+        int compositeSaturationValue = 255;
     };
 
     struct Stats {

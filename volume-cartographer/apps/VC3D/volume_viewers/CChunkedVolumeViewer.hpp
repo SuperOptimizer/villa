@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <set>
 #include <source_location>
@@ -75,6 +76,7 @@ public:
         std::source_location caller = std::source_location::current()) override;
     void invalidateVis() override;
     void invalidateVisRegion(const std::string& name, const cv::Rect& changedCells) override;
+    void invalidateGenCache();   // drop cached gen() warp coords (surface geometry changed)
     void centerOnVolumePoint(const cv::Vec3f& point, bool forceRender = false) override;
     void centerOnSurfacePoint(const cv::Vec2f& point, bool forceRender = false) override;
     void adjustSurfaceOffset(float delta) override;
@@ -304,6 +306,29 @@ private:
     bool _closing = false;
     bool _renderPending = false;
     bool _dirty = false;   // global-clock: this viewer needs a render next tick
+
+    // GEN CACHE: Surface::gen()/genLod() warps the visible window's coords (+normals)
+    // from the control grid EVERY frame -- ~1M-pixel bilinear warp, 70-231ms when
+    // zoomed in at LOD0. The output depends ONLY on (surface, geometry LOD, fb size,
+    // scale, offset, zOff, needNormals); when the camera holds still those are
+    // identical and the warp is pure waste. Memoize the last result keyed on those
+    // inputs and reuse on a hit. renderFrame runs on QtConcurrent workers so the
+    // cache is mutex-guarded (the check/copy is trivial vs the warp it skips).
+    struct GenCache {
+        std::mutex mutex;
+        bool valid = false;
+        // key
+        const void* surf = nullptr;     // raw Surface* identity (compared, not owned)
+        std::uint64_t surfGen = 0;      // bumped when the surface geometry changes
+        int glod = -1, fbW = 0, fbH = 0;
+        float scale = 0.f, offX = 0.f, offY = 0.f, zOff = 0.f;
+        bool hasNormals = false;
+        // payload
+        cv::Mat_<cv::Vec3f> coords;
+        cv::Mat_<cv::Vec3f> normals;
+    };
+    GenCache _genCache;
+    std::uint64_t _genSurfaceGeneration = 0;   // bump to invalidate (surface edited)
     bool _segmentationEditActive = false;
     bool _deferSegmentationIntersections = false;
     bool _deferredSegmentationIntersectionsDirty = false;

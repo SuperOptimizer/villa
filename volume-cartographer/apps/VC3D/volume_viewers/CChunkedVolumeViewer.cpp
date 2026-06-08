@@ -759,9 +759,19 @@ void CChunkedVolumeViewer::invalidateVis()
 void CChunkedVolumeViewer::invalidateVisRegion(const std::string& name, const cv::Rect& changedCells)
 {
     // Chunks are fetched on demand by the render path, so there is no
-    // per-region prefetch cache to invalidate here; just mark the gen cache dirty.
+    // per-region prefetch cache to invalidate here; just mark the gen cache dirty:
+    // the surface geometry moved, so cached warp coords are stale.
     (void)name;
     (void)changedCells;
+    invalidateGenCache();
+}
+
+void CChunkedVolumeViewer::invalidateGenCache()
+{
+    // Bump the generation counter so the next renderFrame's cache-key compare misses
+    // and the warp re-runs. Cheap (an int store); the heavy coords Mat is dropped
+    // lazily on the next store, not here.
+    ++_genSurfaceGeneration;
 }
 
 void CChunkedVolumeViewer::onSurfaceChanged(const std::string& name,
@@ -806,6 +816,10 @@ void CChunkedVolumeViewer::onSurfaceChanged(const std::string& name,
     }
 
     _surfWeak = surf;
+    // The current surface changed (swap OR in-place edit) -> any cached gen() warp
+    // coords are stale. A swap also changes the surf pointer (the key would miss
+    // anyway), but an in-place edit keeps the pointer, so bump the generation here.
+    invalidateGenCache();
     // Edit of the current surface is the cheap path even if the object pointer changed.
     if (isCurrentSurface && isEditUpdate && surf) {
         _zOffWorldDir = {0, 0, 0};
@@ -1123,6 +1137,10 @@ struct CChunkedVolumeViewer::RenderContext {
     float overlayWindowHigh = 255.0f;
     std::string profileReason;
     std::string profileCaller;
+    // Gen cache (owned by the viewer; renderFrame is static so it's passed in here).
+    // null disables caching for this frame.
+    GenCache* genCache = nullptr;
+    std::uint64_t genSurfaceGeneration = 0;
 };
 
 struct CChunkedVolumeViewer::RenderResult {
@@ -1164,12 +1182,13 @@ CChunkedVolumeViewer::RenderResult CChunkedVolumeViewer::renderFrame(RenderConte
     result.framebuffer = QImage(std::max(1, ctx.fbW), std::max(1, ctx.fbH), QImage::Format_RGB32);
     result.framebuffer.fill(QColor(64, 64, 64));
 
+    bool genCachedFlag = false;   // set by the gen block; reported in the profile log
     auto finishRenderFrameProfile = [&]() {
         if (!ProfileLoggingEnabled() || !renderTimer.isValid())
             return;
         result.renderFrameElapsedMs = renderTimer.elapsed();
         Logger()->info("[vc3d-profile] renderFrame end elapsed_ms={} gen_ms={} genCached={} sample_ms={} blit_ms={} reason='{}' caller='{}' serial={} framebuffer={}x{}",
-                       result.renderFrameElapsedMs, phaseGenMs, false,
+                       result.renderFrameElapsedMs, phaseGenMs, genCachedFlag,
                        phaseSampleMs, phaseBlitMs, ctx.profileReason, ctx.profileCaller,
                        result.serial, result.framebuffer.width(), result.framebuffer.height());
     };
@@ -1283,7 +1302,14 @@ CChunkedVolumeViewer::RenderResult CChunkedVolumeViewer::renderFrame(RenderConte
         const int numLayers = front + behind + 1;
         const int zStart = -behind;
         const float zStep = ctx.compositeSettings.reverseDirection ? -1.0f : 1.0f;
-        const auto compositeOptions = vc::render::ChunkedPlaneSampler::Options(vc::Sampling::Nearest, options.tileSize);
+        auto compositeOptions = vc::render::ChunkedPlaneSampler::Options(vc::Sampling::Nearest, options.tileSize);
+        // MAX-composite saturation early-out: the result is windowed through the LUT
+        // afterward, so any voxel >= windowHigh produces the same output pixel. Tell
+        // the kernel to stop a column's depth walk once its running max reaches that
+        // ceiling -- lossless, and it skips the rest of the column on bright material.
+        // Round UP so we never cut a value the window would still distinguish.
+        compositeOptions.compositeSaturationValue =
+            std::clamp(int(std::ceil(ctx.windowHigh)), 1, 255);
 
         // Fast path for the common "max" method: one fused pass that samples all
         // depths per pixel and reduces to the max inline, sharing the chunk
@@ -1373,15 +1399,64 @@ CChunkedVolumeViewer::RenderResult CChunkedVolumeViewer::renderFrame(RenderConte
         // than the screen, and it slashes gen()'s warp cost + the prefetch walk. The
         // predictor (predictAndPrefetch) picks the SAME LOD so the prefetched chunks
         // match what this render samples. Planes have no LOD (genLod falls through).
-        if (auto* quadS = dynamic_cast<QuadSurface*>(ctx.surf.get())) {
-            const int glod = quadS->geometryLodForScale(ctx.scale);
-            quadS->genLod(glod, &coords, needSurfaceNormals ? &normals : nullptr,
-                          cv::Size(ctx.fbW, ctx.fbH), {0, 0, 0}, ctx.scale, offset);
-        } else {
-            ctx.surf->gen(&coords, needSurfaceNormals ? &normals : nullptr,
-                          cv::Size(ctx.fbW, ctx.fbH), {0, 0, 0}, ctx.scale, offset);
+        const int genGlod = [&]{
+            if (auto* quadS = dynamic_cast<QuadSurface*>(ctx.surf.get()))
+                return quadS->geometryLodForScale(ctx.scale);
+            return -1;   // plane: no geometry LOD
+        }();
+
+        // GEN CACHE: the warp output depends only on these inputs. If they match the
+        // last frame's, the coords/normals are bit-identical -- reuse them and skip
+        // the ~1M-pixel warp entirely (the win on a held camera, esp. LOD0 zoomed in).
+        // The cache is owned by the viewer and passed in via ctx (renderFrame is
+        // static, running on a QtConcurrent worker), mutex-guarded for concurrent
+        // workers.
+        GenCache* gc = ctx.genCache;
+        bool genCacheHit = false;
+        if (gc) {
+            std::lock_guard<std::mutex> lk(gc->mutex);
+            if (gc->valid &&
+                gc->surf == ctx.surf.get() &&
+                gc->surfGen == ctx.genSurfaceGeneration &&
+                gc->glod == genGlod &&
+                gc->fbW == ctx.fbW && gc->fbH == ctx.fbH &&
+                gc->scale == ctx.scale &&
+                gc->offX == offset[0] && gc->offY == offset[1] &&
+                gc->zOff == ctx.zOff &&
+                gc->hasNormals == needSurfaceNormals) {
+                // Reuse: clone so the sampler's downstream writes don't alias the cache.
+                coords = gc->coords.clone();
+                if (needSurfaceNormals) normals = gc->normals.clone();
+                genCacheHit = true;
+            }
         }
-        applyPerPixelNormalOffset(coords, normals, ctx.zOff);
+        genCachedFlag = genCacheHit;
+
+        if (!genCacheHit) {
+            if (auto* quadS = dynamic_cast<QuadSurface*>(ctx.surf.get())) {
+                quadS->genLod(genGlod, &coords, needSurfaceNormals ? &normals : nullptr,
+                              cv::Size(ctx.fbW, ctx.fbH), {0, 0, 0}, ctx.scale, offset);
+            } else {
+                ctx.surf->gen(&coords, needSurfaceNormals ? &normals : nullptr,
+                              cv::Size(ctx.fbW, ctx.fbH), {0, 0, 0}, ctx.scale, offset);
+            }
+            applyPerPixelNormalOffset(coords, normals, ctx.zOff);
+            // Store into the cache (clone so later in-place sampler writes don't corrupt it).
+            if (gc) {
+                std::lock_guard<std::mutex> lk(gc->mutex);
+                gc->valid = true;
+                gc->surf = ctx.surf.get();
+                gc->surfGen = ctx.genSurfaceGeneration;
+                gc->glod = genGlod;
+                gc->fbW = ctx.fbW; gc->fbH = ctx.fbH;
+                gc->scale = ctx.scale;
+                gc->offX = offset[0]; gc->offY = offset[1];
+                gc->zOff = ctx.zOff;
+                gc->hasNormals = needSurfaceNormals;
+                gc->coords = coords.clone();
+                gc->normals = needSurfaceNormals ? normals.clone() : cv::Mat_<cv::Vec3f>();
+            }
+        }
         if (profilePhases) phaseGenMs = phaseTimer.elapsed();
         if (!coords.empty()) {
             if (profilePhases) phaseTimer.restart();
@@ -1722,6 +1797,11 @@ void CChunkedVolumeViewer::submitRender(const char* reason, std::source_location
     ctx.overlayColormapId = _overlayColormapId;
     ctx.overlayWindowLow = _overlayWindowLow;
     ctx.overlayWindowHigh = _overlayWindowHigh;
+    // Gen cache: hand the worker a pointer to the viewer-owned cache + the current
+    // surface generation (snapshotted now; an edit between here and the worker's
+    // read just bumps it and forces a miss -- the safe direction).
+    ctx.genCache = &_genCache;
+    ctx.genSurfaceGeneration = _genSurfaceGeneration;
     if (ProfileLoggingEnabled()) {
         ctx.profileReason = reason ? reason : "";
         ctx.profileCaller = profileCaller(caller);

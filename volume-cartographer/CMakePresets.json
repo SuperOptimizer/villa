@@ -119,6 +119,18 @@
       }
     },
     {
+      "name": "dev-unsafe-profiling",
+      "displayName": "Unsafe + profiling (clang, -fno-omit-frame-pointer -fno-inline for honest perf attribution; SLOWER)",
+      "inherits": [
+        "_dev-base",
+        "_clang"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Unsafe",
+        "VC_PROFILE_NOINLINE": "ON"
+      }
+    },
+    {
       "name": "ci-debug-gcc",
       "displayName": "CI Debug (gcc)",
       "inherits": [
@@ -441,6 +453,10 @@
     {
       "name": "dev-unsafe-clang",
       "configurePreset": "dev-unsafe-clang"
+    },
+    {
+      "name": "dev-unsafe-profiling",
+      "configurePreset": "dev-unsafe-profiling"
     },
     {
       "name": "ci-debug-gcc",

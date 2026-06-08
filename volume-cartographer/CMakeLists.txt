@@ -260,23 +260,32 @@ elseif(CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
 elseif(CMAKE_BUILD_TYPE STREQUAL "MinSizeRel")
     add_compile_options(-Os)
 elseif(CMAKE_BUILD_TYPE STREQUAL "Unsafe")
-    # Unsafe: maximum-speed profiling build. -Ofast (= -O3 + -ffast-math, so
+    # Unsafe: maximum-speed build. -Ofast (= -O3 + -ffast-math, so
     # reassociation/FMA/no-errno/finite-math) + aggressive unrolling.
     #   -fno-semantic-interposition: let the inliner assume our shared-lib symbols
     #     aren't interposed, so it inlines across TUs and skips GOT-indirect calls.
-    #   -fno-omit-frame-pointer + -g3: KEEP frame pointers and rich debug info so
-    #     perf back-traces are exact and annotate maps samples to source -- this is
-    #     a profiling/debugging build, speed must not cost observability.
     # NOTE: -ffast-math implies -ffinite-math-only, so the compiler may assume no
     # NaN/Inf and DROP the kernel's NaN-coord guards. Verify rendering correctness
-    # (replay: 0 gray frames, no garbage) before trusting an Unsafe profile.
+    # (0 gray frames, no garbage) before trusting an Unsafe build.
     add_compile_options(-Ofast -ffast-math -funroll-loops
-                        -fno-semantic-interposition -fno-omit-frame-pointer -g3)
-    if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
-        add_compile_options(-mllvm -inline-threshold=1000)
+                        -fno-semantic-interposition -g3)
+    # VC_PROFILE_NOINLINE (set by the dev-unsafe-profiling preset): trade speed for
+    # HONEST perf attribution. The default max-speed path below omits frame pointers
+    # and inlines aggressively -- great for speed, but the optimizer fuses helpers
+    # into giant blobs and drops the frame chain, so perf smears samples across the
+    # wrong symbols (phantom hotspots, broken back-traces). The profiling variant
+    # instead KEEPS frame pointers and DISABLES inlining, so each function is its own
+    # symbol+frame and perf maps time to what actually spent it. This build is
+    # SLOWER -- use it to LOCATE cost, never to MEASURE speed.
+    # Plain Unsafe adds NEITHER frame-pointer nor inline overrides -- it takes the
+    # compiler's -O3 defaults (frame pointers omitted, normal inlining). Only the
+    # profiling variant flips both for observability.
+    if(VC_PROFILE_NOINLINE)
+        add_compile_options(-fno-omit-frame-pointer -fno-inline -fno-inline-functions)
+        message(STATUS "Unsafe+PROFILE: -fno-omit-frame-pointer -fno-inline for honest perf attribution (SLOWER; do not benchmark)")
     endif()
     message(STATUS "Unsafe: -Ofast -ffast-math -funroll-loops -fno-semantic-interposition -g3 "
-                   "(fast-math is NOT IEEE-correct; frame pointers kept for perf)")
+                   "(fast-math is NOT IEEE-correct)")
 endif()
 if(NOT _san AND NOT CMAKE_BUILD_TYPE STREQUAL "Debug" AND NOT CMAKE_BUILD_TYPE STREQUAL "QuickBuild")
     add_compile_options(${_lto})

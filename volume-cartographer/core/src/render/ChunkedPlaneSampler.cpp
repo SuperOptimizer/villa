@@ -143,7 +143,7 @@ ChunkedPlaneSampler::Stats runRenderDriver(
     IChunkedArray& array, const LevelAccess& access, int level,
     const cv::Mat_<cv::Vec3f>& coords, const cv::Mat_<cv::Vec3f>& normals,
     cv::Mat_<uint8_t>& out, cv::Mat_<uint8_t>& coverage,
-    int layerStart, int numLayers, float layerStep, int tileSize)
+    int layerStart, int numLayers, float layerStep, int tileSize, int satValue = 255)
 {
     ChunkedPlaneSampler::Stats stats;
     const int tile = std::max(1, tileSize);
@@ -184,9 +184,9 @@ ChunkedPlaneSampler::Stats runRenderDriver(
             // to the generic dynamic-dims path (a few divides instead of shifts).
             if (chunkLog == 5)
                 return renderTileRange<Composite, Trilinear, 5>(arr, access, level, coords, normals,
-                    out, coverage, tiles, begin, end, layerStart, numLayers, layerStep, coarse);
+                    out, coverage, tiles, begin, end, layerStart, numLayers, layerStep, coarse, satValue);
             return renderTileRange<Composite, Trilinear, -1>(arr, access, level, coords, normals,
-                out, coverage, tiles, begin, end, layerStart, numLayers, layerStep, coarse);
+                out, coverage, tiles, begin, end, layerStart, numLayers, layerStep, coarse, satValue);
         };
         return cc ? dispatch(*cc) : dispatch(array);
     };
@@ -490,7 +490,8 @@ __attribute__((noinline)) ChunkedPlaneSampler::Stats renderTileRange(
     int layerStart,
     int numLayers,
     float layerStep,
-    const std::vector<CoarseLevel>& coarse)   // built once by the caller, not per-worker
+    const std::vector<CoarseLevel>& coarse,   // built once by the caller, not per-worker
+    int satValue = 255)                        // composite MAX early-out ceiling
 {
     constexpr bool kStatic = (CHUNK_LOG2 >= 0);
     // For the static path everything is a compile-time constant; for the generic
@@ -849,6 +850,13 @@ __attribute__((noinline)) ChunkedPlaneSampler::Stats renderTileRange(
                         // after the loop.
                         const int vi = value;
                         if (vi > bestI) bestI = vi;
+                        // SATURATION EARLY-OUT: the result is windowed through a LUT
+                        // downstream, so any value >= satValue (the window high end)
+                        // maps to the same output pixel. Once the running max reaches
+                        // it, no later layer can change the result -> stop the walk.
+                        // Lossless; on bright/dense material it skips most of the column.
+                        if (bestI >= satValue)
+                            break;
                     } else {
                         // Single plane sample: take this value and stop.
                         best = float(value);
@@ -1167,7 +1175,8 @@ ChunkedPlaneSampler::Stats ChunkedPlaneSampler::sampleCoordsMaxComposite(
     // driver + kernel as the plain plane/quad path (Composite=false there).
     return runRenderDriver<true, false>(array, access, level, coords, normals,
                                         out, coverage, effLayerStart, effNumLayers,
-                                        effLayerStep, options.tileSize);
+                                        effLayerStep, options.tileSize,
+                                        options.compositeSaturationValue);
 }
 
 
