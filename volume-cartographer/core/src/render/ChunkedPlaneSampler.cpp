@@ -400,6 +400,52 @@ int coarseFallbackImpl(PinT& pin, int level, uint8_t fillVal,
     return -1;
 }
 
+// Cross-pixel chunk-resolution cache for the depth loop. A 32x32 tile touches only
+// a handful of distinct chunks but each of its ~1000 pixels would re-probe the
+// resident map for them; this 16-entry MRU table makes each distinct chunk hit the
+// map ONCE per tile-range. The whole resolve body (the linear scan + resident probe
+// + miss record + MRU insert) lives in the noinline resolve() method, OUT of the
+// hot kernel -- it only runs on a chunk CHANGE (not every layer), so the call is
+// cheap and the kernel body shrinks. The 384B table is a thread_local member so it
+// also stays out of the kernel's stack frame.
+struct TileChunkCache {
+    struct Entry { std::uint64_t key; const std::byte* data; std::size_t size; bool fill; };
+    static constexpr int N = 16;
+    Entry e[N];
+    int head;
+    void reset() {
+        for (auto& x : e) { x.key = ~std::uint64_t(0); x.data = nullptr; x.size = 0; x.fill = false; }
+        head = 0;
+    }
+    // doLookup: (level,cz,cy,cx) -> ResidentView. miss/errCount handle a fine miss.
+    template <typename LookupFn>
+    __attribute__((noinline))
+    void resolve(LookupFn&& doLookup, int level, std::uint64_t ckey, int cz, int cy, int cx,
+                 MissCollector& miss, int& errCount,
+                 const std::byte*& curData, std::size_t& curSize, bool& curFill) {
+        for (int k = 0; k < N; ++k) {
+            if (e[k].key == ckey) {
+                curData = e[k].data; curSize = e[k].size; curFill = e[k].fill;
+                return;
+            }
+        }
+        const auto rv = doLookup(level, cz, cy, cx);
+        curFill = false; curData = nullptr; curSize = 0;
+        if (rv.status == ChunkStatus::AllFill) {
+            curFill = true;
+        } else if (rv.status == ChunkStatus::Data && rv.bytes) {
+            curData = rv.bytes->data(); curSize = rv.bytes->size();
+        } else {
+            if (rv.status == ChunkStatus::MissQueued)
+                miss.record({level, cz, cy, cx});
+            else if (rv.status == ChunkStatus::Error)
+                ++errCount;
+        }
+        e[head] = Entry{ckey, curData, curSize, curFill};
+        head = (head + 1) % N;
+    }
+};
+
 // here; the Trilinear template path handles 8-corner interpolation.
 //
 // noinline: each <Composite,Trilinear,CHUNK_LOG2,ArrayT> instantiation must be its
@@ -536,45 +582,10 @@ __attribute__((noinline)) ChunkedPlaneSampler::Stats renderTileRange(
     // instead of once per pixel. Valid for the whole SETTLE phase (the resident map
     // is frozen). This is the first, least-invasive step of chunk-major traversal:
     // it removes the cross-pixel lookup duplication without reordering the loops.
-    struct ChunkCacheEntry { std::uint64_t key; const std::byte* data; std::size_t size; bool fill; };
-    constexpr int kTileCacheN = 16;   // distinct chunks per neighborhood is small
-    // thread_local so the 16-entry table lives in TLS, NOT this kernel's stack
-    // frame -- it was ~384 bytes of frame that pushed the hot loop's working set
-    // into spills. Persists across tile-range calls on a worker; cleared here each
-    // call (the resident map is frozen per SETTLE, so stale entries must not leak).
-    static thread_local ChunkCacheEntry tcache[kTileCacheN];
-    for (auto& e : tcache) { e.key = ~std::uint64_t(0); e.data = nullptr; e.size = 0; e.fill = false; }
-    int tcacheHead = 0;
-    // Resolve a chunk via the cache; on miss, probe the resident map + record a fine
-    // miss. Returns by setting curData/curSize/curFill (matches the inline path).
-    auto resolveChunk = [&](std::uint64_t ckey, int cz, int cy, int cx,
-                            const std::byte*& curData, std::size_t& curSize, bool& curFill) {
-        for (int k = 0; k < kTileCacheN; ++k) {
-            if (tcache[k].key == ckey) {
-                curData = tcache[k].data; curSize = tcache[k].size; curFill = tcache[k].fill;
-                return;
-            }
-        }
-        // Miss in the tile cache -> probe the resident map.
-        const auto rv = doLookup(level, cz, cy, cx);
-        curFill = false; curData = nullptr; curSize = 0;
-        if (rv.status == ChunkStatus::AllFill) {
-            curFill = true;
-        } else if (rv.status == ChunkStatus::Data && rv.bytes) {
-            curData = rv.bytes->data(); curSize = rv.bytes->size();
-        } else {
-            // Record the miss ONCE (the resident map is frozen for the whole SETTLE
-            // phase, so this chunk stays missing) then cache the miss result, so later
-            // pixels over the same missing chunk neither re-probe the map NOR re-record.
-            if (rv.status == ChunkStatus::MissQueued)
-                miss.record({level, cz, cy, cx});
-            else if (rv.status == ChunkStatus::Error)
-                ++localStats.errorChunks;
-        }
-        // Insert the result (resident OR miss) into the MRU ring.
-        tcache[tcacheHead] = ChunkCacheEntry{ckey, curData, curSize, curFill};
-        tcacheHead = (tcacheHead + 1) % kTileCacheN;
-    };
+    // Tile chunk-resolution cache (its 384B table + the resolve body live in the
+    // TileChunkCache struct's TLS member + noinline method, out of this frame).
+    static thread_local TileChunkCache tcache;
+    tcache.reset();
 
 
     for (std::size_t i = begin; i < end; ++i) {
@@ -757,7 +768,9 @@ __attribute__((noinline)) ChunkedPlaneSampler::Stats renderTileRange(
                         // Tile-cached resolve: hits the resident map only on the first
                         // pixel to touch this chunk in the tile-range; later pixels
                         // reuse the cached data ptr/size (cross-pixel lookup dedup).
-                        resolveChunk(ckey, cz, cy, cx, curData, curSize, curFill);
+                        tcache.resolve(doLookup, level, ckey, cz, cy, cx,
+                                       miss, localStats.errorChunks,
+                                       curData, curSize, curFill);
                     }
 
                     // Resolve the sample value. The two HOT branches (resident data
