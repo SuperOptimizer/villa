@@ -400,6 +400,50 @@ int coarseFallbackImpl(PinT& pin, int level, uint8_t fillVal,
     return -1;
 }
 
+// Read ONE voxel at level-L integer coords, resolving its chunk via the resident
+// map. The TRILINEAR path calls this 8x per sample (one per corner); inlining its
+// body 8x into the kernel bloated it (~5KB) -- noinline gives 1 shared copy + 8
+// calls. Returns the byte value, fillVal for all-fill, or -1 (miss/oob), recording
+// a fine miss. Templated on CHUNK_LOG2 (kStatic -> shift/mask) + the lookup fn.
+template <int CHUNK_LOG2, typename LookupFn>
+__attribute__((noinline))
+int readVoxelImpl(LookupFn&& doLookup, int level, int iz, int iy, int ix,
+                  int shp0, int shp1, int shp2, int csh, int cshY, int cshX,
+                  uint8_t fillVal, MissCollector& miss, int& errCount)
+{
+    constexpr bool kStatic = (CHUNK_LOG2 >= 0);
+    if (unsigned(iz) >= unsigned(shp0) || unsigned(iy) >= unsigned(shp1) ||
+        unsigned(ix) >= unsigned(shp2))
+        return -1;
+    int cz, cy, cx, lz, ly, lx;
+    if constexpr (kStatic) {
+        constexpr int kLog = CHUNK_LOG2, kMask = (1 << CHUNK_LOG2) - 1;
+        cz = iz >> kLog; cy = iy >> kLog; cx = ix >> kLog;
+        lz = iz & kMask; ly = iy & kMask; lx = ix & kMask;
+    } else {
+        cz = iz / csh; cy = iy / cshY; cx = ix / cshX;
+        lz = iz - cz * csh; ly = iy - cy * cshY; lx = ix - cx * cshX;
+    }
+    const auto rv = doLookup(level, cz, cy, cx);
+    if (rv.status == ChunkStatus::AllFill)
+        return fillVal;
+    if (rv.status == ChunkStatus::Data && rv.bytes) {
+        std::size_t o;
+        if constexpr (kStatic)
+            o = ((std::size_t(lz) << CHUNK_LOG2) + std::size_t(ly))
+                    * (std::size_t(1) << CHUNK_LOG2) + std::size_t(lx);
+        else
+            o = (std::size_t(lz) * std::size_t(cshY) + std::size_t(ly))
+                    * std::size_t(cshX) + std::size_t(lx);
+        return (o < rv.bytes->size()) ? std::to_integer<uint8_t>((*rv.bytes)[o]) : -1;
+    }
+    if (rv.status == ChunkStatus::MissQueued)
+        miss.record({level, cz, cy, cx});
+    else if (rv.status == ChunkStatus::Error)
+        ++errCount;
+    return -1;
+}
+
 // Cross-pixel chunk-resolution cache for the depth loop. A 32x32 tile touches only
 // a handful of distinct chunks but each of its ~1000 pixels would re-probe the
 // resident map for them; this 16-entry MRU table makes each distinct chunk hit the
@@ -528,39 +572,12 @@ __attribute__((noinline)) ChunkedPlaneSampler::Stats renderTileRange(
     // on a miss (records the missed chunk). Used by the trilinear path, whose 8
     // corners can each fall in a different chunk. Nearest sampling uses the inlined
     // run-cache in the loop body instead (this is only the per-corner trilinear read).
+    // Per-corner voxel read (trilinear). Delegates to the noinline readVoxelImpl so
+    // its body is one shared copy, not inlined 8x per sample into the kernel.
     auto readVoxelAt = [&](int iz, int iy, int ix) -> int {
-        if (unsigned(iz) >= unsigned(shp0) || unsigned(iy) >= unsigned(shp1) ||
-            unsigned(ix) >= unsigned(shp2))
-            return -1;
-        int cz, cy, cx, lz, ly, lx;
-        if constexpr (kStatic) {
-            constexpr int kLog = CHUNK_LOG2, kMask = (1 << CHUNK_LOG2) - 1;
-            cz = iz >> kLog; cy = iy >> kLog; cx = ix >> kLog;
-            lz = iz & kMask; ly = iy & kMask; lx = ix & kMask;
-        } else {
-            cz = iz / csh; cy = iy / cshY; cx = ix / cshX;
-            lz = iz - cz * csh; ly = iy - cy * cshY; lx = ix - cx * cshX;
-        }
-        const auto rv = doLookup(level, cz, cy, cx);
-        if (rv.status == ChunkStatus::AllFill)
-            return fillVal;
-        if (rv.status == ChunkStatus::Data && rv.bytes) {
-            std::size_t o;
-            if constexpr (kStatic)
-                o = ((std::size_t(lz) << CHUNK_LOG2) + std::size_t(ly))
-                        * (std::size_t(1) << CHUNK_LOG2) + std::size_t(lx);
-            else
-                o = (std::size_t(lz) * std::size_t(cshY) + std::size_t(ly))
-                        * std::size_t(cshX) + std::size_t(lx);
-            if (o < rv.bytes->size())
-                return std::to_integer<uint8_t>((*rv.bytes)[o]);
-            return -1;
-        }
-        if (rv.status == ChunkStatus::MissQueued)
-            miss.record({level, cz, cy, cx});
-        else if (rv.status == ChunkStatus::Error)
-            ++localStats.errorChunks;
-        return -1;
+        return readVoxelImpl<CHUNK_LOG2>(doLookup, level, iz, iy, ix,
+                                         shp0, shp1, shp2, csh, cshY, cshX,
+                                         fillVal, miss, localStats.errorChunks);
     };
 
     // LOD fallback: when a chunk misses at `level`, sample the same point from the
