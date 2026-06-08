@@ -288,6 +288,27 @@ void recordMiss(std::vector<ChunkKey>& missedVec,
         missedVec.push_back(key);
 }
 
+// Owns the miss dedup set + vector. Its ctor (reserve), dtor (free), and flush
+// (move into stats) are all noinline -- so the container new/delete/grow/rehash
+// machinery stays OUT of the hot kernel body where it was being inlined and
+// bloating the function. The kernel just holds one of these and calls record().
+struct MissCollector {
+    std::vector<ChunkKey> vec;
+    std::unordered_set<std::uint64_t> seen;
+    __attribute__((noinline)) explicit MissCollector(std::size_t hint) {
+        vec.reserve(hint); seen.reserve(hint);
+    }
+    __attribute__((noinline)) ~MissCollector() = default;
+    __attribute__((noinline, cold)) void record(ChunkKey key) {
+        if (seen.insert(key.word()).second) vec.push_back(key);
+    }
+    __attribute__((noinline)) void flush(ChunkedPlaneSampler::Stats& stats) {
+        stats.requestedChunks += static_cast<int>(vec.size());
+        stats.missedKeys.insert(stats.missedKeys.end(),
+            std::make_move_iterator(vec.begin()), std::make_move_iterator(vec.end()));
+    }
+};
+
 // One coarser LOD level for the miss-fallback (precomputed per render call).
 // pow2 + the cshLog* fields let the per-sample chunk math use shifts/masks
 // instead of runtime integer divides (idivl was ~6% of the kernel during
@@ -446,10 +467,9 @@ __attribute__((noinline)) ChunkedPlaneSampler::Stats renderTileRange(
         if constexpr (kConcrete) return pin.lookupChecked(lv, z, y, x);
         else return pin->lookup(lv, z, y, x);
     };
-    std::vector<ChunkKey> missedVec;   // unique missed chunks (deduped via missedSeen)
-    std::unordered_set<std::uint64_t> missedSeen;
-    missedVec.reserve(std::max<std::size_t>(16, (end - begin) * 4));
-    missedSeen.reserve(std::max<std::size_t>(16, (end - begin) * 4));
+    // Miss dedup state; its container new/delete/grow lives in MissCollector's
+    // noinline ctor/dtor/record, not inlined into this hot function.
+    MissCollector miss(std::max<std::size_t>(16, (end - begin) * 4));
 
     // Read ONE voxel at level-L integer coords (iz,iy,ix). Returns the value, or -1
     // on a miss (records the missed chunk). Used by the trilinear path, whose 8
@@ -484,7 +504,7 @@ __attribute__((noinline)) ChunkedPlaneSampler::Stats renderTileRange(
             return -1;
         }
         if (rv.status == ChunkStatus::MissQueued)
-            recordMiss(missedVec, missedSeen, {level, cz, cy, cx});
+            miss.record({level, cz, cy, cx});
         else if (rv.status == ChunkStatus::Error)
             ++localStats.errorChunks;
         return -1;
@@ -541,7 +561,7 @@ __attribute__((noinline)) ChunkedPlaneSampler::Stats renderTileRange(
             // phase, so this chunk stays missing) then cache the miss result, so later
             // pixels over the same missing chunk neither re-probe the map NOR re-record.
             if (rv.status == ChunkStatus::MissQueued)
-                recordMiss(missedVec, missedSeen, {level, cz, cy, cx});
+                miss.record({level, cz, cy, cx});
             else if (rv.status == ChunkStatus::Error)
                 ++localStats.errorChunks;
         }
@@ -802,10 +822,7 @@ __attribute__((noinline)) ChunkedPlaneSampler::Stats renderTileRange(
     // lastChunk gate already collapses a pixel's same-chunk run to one push, so the
     // only dups are different pixels hitting the same missing chunk -- bounded.
     // requestedChunks is then a slight overcount (a HUD stat only).
-    localStats.requestedChunks += static_cast<int>(missedVec.size());
-    localStats.missedKeys.insert(localStats.missedKeys.end(),
-        std::make_move_iterator(missedVec.begin()),
-        std::make_move_iterator(missedVec.end()));
+    miss.flush(localStats);
     return localStats;
 }
 
