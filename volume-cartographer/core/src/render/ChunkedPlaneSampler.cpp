@@ -493,31 +493,14 @@ __attribute__((noinline)) ChunkedPlaneSampler::Stats renderTileRange(
         }
     }
 
-    // Chunk-major lookup cache (cross-pixel dedup). The per-pixel depth walk only
-    // probes the resident map on a chunk CHANGE, but ADJACENT pixels re-probe the
-    // SAME chunks -- a 32x32 tile touches only a handful of distinct chunks, yet
-    // each of its ~1000 pixels independently hash-looks-up those chunks. Cache the
-    // resolved (data ptr/size/fill) by chunk key in a tiny MRU table checked before
-    // doLookup, so each distinct chunk hits the resident map ONCE per tile-range
-    // instead of once per pixel. Valid for the whole SETTLE phase (the resident map
-    // is frozen). This is the first, least-invasive step of chunk-major traversal:
-    // it removes the cross-pixel lookup duplication without reordering the loops.
-    struct ChunkCacheEntry { std::uint64_t key; const std::byte* data; std::size_t size; bool fill; };
-    constexpr int kTileCacheN = 16;   // distinct chunks per neighborhood is small
-    ChunkCacheEntry tcache[kTileCacheN];
-    for (auto& e : tcache) { e.key = ~std::uint64_t(0); e.data = nullptr; e.size = 0; e.fill = false; }
-    int tcacheHead = 0;
-    // Resolve a chunk via the cache; on miss, probe the resident map + record a fine
-    // miss. Returns by setting curData/curSize/curFill (matches the inline path).
-    auto resolveChunk = [&](std::uint64_t ckey, int cz, int cy, int cx,
+    // Resolve a chunk on a chunk-CHANGE within a pixel's depth walk: probe the
+    // resident map and cache the raw data ptr/size (or all-fill / miss) for the
+    // depth layers that stay in it. Sets curData/curSize/curFill. (The old tile
+    // cache that deduped this across pixels was removed -- its 16-entry stack table
+    // bloated the kernel frame ~384B and forced heavy spilling for only ~5%; the
+    // simpler frame lets the allocator keep the hot loop in registers.)
+    auto resolveChunk = [&](int cz, int cy, int cx,
                             const std::byte*& curData, std::size_t& curSize, bool& curFill) {
-        for (int k = 0; k < kTileCacheN; ++k) {
-            if (tcache[k].key == ckey) {
-                curData = tcache[k].data; curSize = tcache[k].size; curFill = tcache[k].fill;
-                return;
-            }
-        }
-        // Miss in the tile cache -> probe the resident map.
         const auto rv = doLookup(level, cz, cy, cx);
         curFill = false; curData = nullptr; curSize = 0;
         if (rv.status == ChunkStatus::AllFill) {
@@ -525,17 +508,11 @@ __attribute__((noinline)) ChunkedPlaneSampler::Stats renderTileRange(
         } else if (rv.status == ChunkStatus::Data && rv.bytes) {
             curData = rv.bytes->data(); curSize = rv.bytes->size();
         } else {
-            // Record the miss ONCE (the resident map is frozen for the whole SETTLE
-            // phase, so this chunk stays missing) then cache the miss result, so later
-            // pixels over the same missing chunk neither re-probe the map NOR re-record.
             if (rv.status == ChunkStatus::MissQueued)
                 recordMiss(missedVec, missedSeen, {level, cz, cy, cx});
             else if (rv.status == ChunkStatus::Error)
                 ++localStats.errorChunks;
         }
-        // Insert the result (resident OR miss) into the MRU ring.
-        tcache[tcacheHead] = ChunkCacheEntry{ckey, curData, curSize, curFill};
-        tcacheHead = (tcacheHead + 1) % kTileCacheN;
     };
 
 
@@ -708,18 +685,10 @@ __attribute__((noinline)) ChunkedPlaneSampler::Stats renderTileRange(
                     if (chunkChanged) {
                         // Resolve chunk coords (static path defers these to here --
                         // only needed on an actual chunk crossing, not every layer).
-                        std::uint64_t ckey;
                         if constexpr (kStatic) {
                             cz = iz >> CHUNK_LOG2; cy = iy >> CHUNK_LOG2; cx = ix >> CHUNK_LOG2;
-                            ckey = (std::uint64_t(unsigned(cz)) << 42)
-                                 | (std::uint64_t(unsigned(cy)) << 21) | std::uint64_t(unsigned(cx));
-                        } else {
-                            ckey = lastChunk;   // dynamic path already packed it above
                         }
-                        // Tile-cached resolve: hits the resident map only on the first
-                        // pixel to touch this chunk in the tile-range; later pixels
-                        // reuse the cached data ptr/size (cross-pixel lookup dedup).
-                        resolveChunk(ckey, cz, cy, cx, curData, curSize, curFill);
+                        resolveChunk(cz, cy, cx, curData, curSize, curFill);
                     }
 
                     // Resolve the sample value. The two HOT branches (resident data
