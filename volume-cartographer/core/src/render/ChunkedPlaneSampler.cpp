@@ -7,6 +7,7 @@
 #include <climits>
 #include <cmath>
 #include <cstddef>
+#include <atomic>
 #include <future>
 #include <limits>
 #include <thread>
@@ -195,15 +196,36 @@ ChunkedPlaneSampler::Stats runRenderDriver(
 
     const std::size_t workerCount = std::min<std::size_t>(
         renderSamplerPool().worker_count(), tiles.size());
-    const std::size_t tilesPerWorker = (tiles.size() + workerCount - 1) / workerCount;
+
+    // DYNAMIC tile dispatch. Per-tile cost is wildly uneven -- especially for
+    // QuadSurface (a folded sheet: some tiles trace many chunks / the coarse
+    // fallback, others are empty space). A static block partition makes the frame
+    // wait on whichever worker drew the heavy block while the rest idle at the join.
+    // Instead every worker pulls small grain-sized tile ranges from a shared atomic
+    // cursor, so heavy tiles are absorbed by whoever is free -- the slow tail is
+    // spread across all workers, not stuck on one. Grain > 1 keeps the atomic churn
+    // negligible vs the per-tile render cost.
+    constexpr std::size_t kGrain = 4;
+    std::atomic<std::size_t> cursor{0};
+    const std::size_t nTiles = tiles.size();
+    auto worker = [&]() -> ChunkedPlaneSampler::Stats {
+        ChunkedPlaneSampler::Stats acc;
+        for (;;) {
+            const std::size_t begin = cursor.fetch_add(kGrain, std::memory_order_relaxed);
+            if (begin >= nTiles) break;
+            const std::size_t end = std::min(begin + kGrain, nTiles);
+            auto s = runRange(begin, end);
+            addStats(acc, s);
+        }
+        return acc;
+    };
+
     std::vector<std::future<ChunkedPlaneSampler::Stats>> futures;
-    futures.reserve(workerCount);
-    for (std::size_t worker = 0; worker < workerCount; ++worker) {
-        const std::size_t begin = worker * tilesPerWorker;
-        const std::size_t end = std::min(begin + tilesPerWorker, tiles.size());
-        if (begin >= end) break;
-        futures.push_back(renderSamplerPool().submit([&, begin, end] { return runRange(begin, end); }));
-    }
+    futures.reserve(workerCount - 1);
+    for (std::size_t i = 1; i < workerCount; ++i)
+        futures.push_back(renderSamplerPool().submit(worker));
+    // The calling thread participates too (it would otherwise just block on get()).
+    stats = worker();
     for (auto& future : futures) {
         auto fstats = future.get();
         addStats(stats, fstats);
@@ -444,52 +466,6 @@ int readVoxelImpl(LookupFn&& doLookup, int level, int iz, int iy, int ix,
     return -1;
 }
 
-// Cross-pixel chunk-resolution cache for the depth loop. A 32x32 tile touches only
-// a handful of distinct chunks but each of its ~1000 pixels would re-probe the
-// resident map for them; this 16-entry MRU table makes each distinct chunk hit the
-// map ONCE per tile-range. The whole resolve body (the linear scan + resident probe
-// + miss record + MRU insert) lives in the noinline resolve() method, OUT of the
-// hot kernel -- it only runs on a chunk CHANGE (not every layer), so the call is
-// cheap and the kernel body shrinks. The 384B table is a thread_local member so it
-// also stays out of the kernel's stack frame.
-struct TileChunkCache {
-    struct Entry { std::uint64_t key; const std::byte* data; std::size_t size; bool fill; };
-    static constexpr int N = 16;
-    Entry e[N];
-    int head;
-    void reset() {
-        for (auto& x : e) { x.key = ~std::uint64_t(0); x.data = nullptr; x.size = 0; x.fill = false; }
-        head = 0;
-    }
-    // doLookup: (level,cz,cy,cx) -> ResidentView. miss/errCount handle a fine miss.
-    template <typename LookupFn>
-    __attribute__((noinline))
-    void resolve(LookupFn&& doLookup, int level, std::uint64_t ckey, int cz, int cy, int cx,
-                 MissCollector& miss, int& errCount,
-                 const std::byte*& curData, std::size_t& curSize, bool& curFill) {
-        for (int k = 0; k < N; ++k) {
-            if (e[k].key == ckey) {
-                curData = e[k].data; curSize = e[k].size; curFill = e[k].fill;
-                return;
-            }
-        }
-        const auto rv = doLookup(level, cz, cy, cx);
-        curFill = false; curData = nullptr; curSize = 0;
-        if (rv.status == ChunkStatus::AllFill) {
-            curFill = true;
-        } else if (rv.status == ChunkStatus::Data && rv.bytes) {
-            curData = rv.bytes->data(); curSize = rv.bytes->size();
-        } else {
-            if (rv.status == ChunkStatus::MissQueued)
-                miss.record({level, cz, cy, cx});
-            else if (rv.status == ChunkStatus::Error)
-                ++errCount;
-        }
-        e[head] = Entry{ckey, curData, curSize, curFill};
-        head = (head + 1) % N;
-    }
-};
-
 // here; the Trilinear template path handles 8-corner interpolation.
 //
 // noinline: each <Composite,Trilinear,CHUNK_LOG2,ArrayT> instantiation must be its
@@ -600,9 +576,7 @@ __attribute__((noinline)) ChunkedPlaneSampler::Stats renderTileRange(
     // is frozen). This is the first, least-invasive step of chunk-major traversal:
     // it removes the cross-pixel lookup duplication without reordering the loops.
     // Tile chunk-resolution cache (its 384B table + the resolve body live in the
-    // TileChunkCache struct's TLS member + noinline method, out of this frame).
-    static thread_local TileChunkCache tcache;
-    tcache.reset();
+    // one chunk-cache lookup per chunk crossing, stashed for the layer loop).
 
 
     for (std::size_t i = begin; i < end; ++i) {
@@ -708,14 +682,52 @@ __attribute__((noinline)) ChunkedPlaneSampler::Stats renderTileRange(
                         if (iz + 1 >= shp0 || iy + 1 >= shp1 || ix + 1 >= shp2)
                             continue;
                         const float dx = fx - float(ix), dy = fy - float(iy), dz = fz - float(iz);
-                        const int v000 = readVoxelAt(iz,   iy,   ix);
-                        const int v001 = readVoxelAt(iz,   iy,   ix+1);
-                        const int v010 = readVoxelAt(iz,   iy+1, ix);
-                        const int v011 = readVoxelAt(iz,   iy+1, ix+1);
-                        const int v100 = readVoxelAt(iz+1, iy,   ix);
-                        const int v101 = readVoxelAt(iz+1, iy,   ix+1);
-                        const int v110 = readVoxelAt(iz+1, iy+1, ix);
-                        const int v111 = readVoxelAt(iz+1, iy+1, ix+1);
+                        int v000, v001, v010, v011, v100, v101, v110, v111;
+                        // FAST PATH: all 8 corners span at most a 2x2x2 voxel cube, so
+                        // they live in ONE chunk unless the base voxel sits on a chunk's
+                        // last index along some axis (1-in-CHUNK plane). When they don't
+                        // straddle, resolve the chunk ONCE and read 8 bytes by direct
+                        // offset -- instead of 8 noinline readVoxelImpl calls (8 chunk
+                        // resolves + 8 call prologues per sample, the trilinear hot cost).
+                        bool fast = false;
+                        if constexpr (kStatic) {
+                            constexpr int kMask = (1 << CHUNK_LOG2) - 1;
+                            if ((iz & kMask) != kMask && (iy & kMask) != kMask && (ix & kMask) != kMask) {
+                                const int cz = iz >> CHUNK_LOG2, cy = iy >> CHUNK_LOG2, cx = ix >> CHUNK_LOG2;
+                                const auto rv = doLookup(level, cz, cy, cx);
+                                if (rv.status == ChunkStatus::Data && rv.bytes) {
+                                    const std::byte* d = rv.bytes->data();
+                                    const std::size_t n = rv.bytes->size();
+                                    constexpr int kDim = 1 << CHUNK_LOG2;
+                                    const int lz = iz & kMask, ly = iy & kMask, lx = ix & kMask;
+                                    // base offset of corner (lz,ly,lx); neighbors are +1
+                                    // along x (stride 1), y (stride kDim), z (stride kDim^2).
+                                    const std::size_t o = (std::size_t(lz) * kDim + ly) * kDim + lx;
+                                    if (o + kDim * kDim + kDim + 1 < n) {  // furthest corner in-bounds
+                                        constexpr std::size_t sZ = std::size_t(kDim) * kDim, sY = kDim;
+                                        auto B = [&](std::size_t off){ return int(std::to_integer<uint8_t>(d[off])); };
+                                        v000 = B(o);              v001 = B(o + 1);
+                                        v010 = B(o + sY);         v011 = B(o + sY + 1);
+                                        v100 = B(o + sZ);         v101 = B(o + sZ + 1);
+                                        v110 = B(o + sZ + sY);    v111 = B(o + sZ + sY + 1);
+                                        fast = true;
+                                    }
+                                } else if (rv.status == ChunkStatus::AllFill) {
+                                    v000 = v001 = v010 = v011 = v100 = v101 = v110 = v111 = int(fillVal);
+                                    fast = true;
+                                }
+                            }
+                        }
+                        if (!fast) {
+                            v000 = readVoxelAt(iz,   iy,   ix);
+                            v001 = readVoxelAt(iz,   iy,   ix+1);
+                            v010 = readVoxelAt(iz,   iy+1, ix);
+                            v011 = readVoxelAt(iz,   iy+1, ix+1);
+                            v100 = readVoxelAt(iz+1, iy,   ix);
+                            v101 = readVoxelAt(iz+1, iy,   ix+1);
+                            v110 = readVoxelAt(iz+1, iy+1, ix);
+                            v111 = readVoxelAt(iz+1, iy+1, ix+1);
+                        }
                         if ((v000|v001|v010|v011|v100|v101|v110|v111) < 0)
                             continue;   // a corner missed
                         const float c00 = std::fma(dx, float(v001 - v000), float(v000));
@@ -772,22 +784,24 @@ __attribute__((noinline)) ChunkedPlaneSampler::Stats renderTileRange(
                         lastChunk = chunkKey;
                     }
                     if (chunkChanged) {
-                        // Resolve chunk coords (static path defers these to here --
-                        // only needed on an actual chunk crossing, not every layer).
-                        std::uint64_t ckey;
+                        // Crossed into a new chunk: hit the chunk cache ONCE and stash
+                        // the raw data ptr/size (invariant within the chunk; the
+                        // per-layer load below just indexes into it). Only on a chunk
+                        // crossing, not every layer.
                         if constexpr (kStatic) {
                             cz = iz >> CHUNK_LOG2; cy = iy >> CHUNK_LOG2; cx = ix >> CHUNK_LOG2;
-                            ckey = (std::uint64_t(unsigned(cz)) << 42)
-                                 | (std::uint64_t(unsigned(cy)) << 21) | std::uint64_t(unsigned(cx));
-                        } else {
-                            ckey = lastChunk;   // dynamic path already packed it above
                         }
-                        // Tile-cached resolve: hits the resident map only on the first
-                        // pixel to touch this chunk in the tile-range; later pixels
-                        // reuse the cached data ptr/size (cross-pixel lookup dedup).
-                        tcache.resolve(doLookup, level, ckey, cz, cy, cx,
-                                       miss, localStats.errorChunks,
-                                       curData, curSize, curFill);
+                        const auto rv = doLookup(level, cz, cy, cx);
+                        curData = nullptr; curSize = 0; curFill = false;
+                        if (rv.status == ChunkStatus::AllFill) {
+                            curFill = true;
+                        } else if (rv.status == ChunkStatus::Data && rv.bytes) {
+                            curData = rv.bytes->data(); curSize = rv.bytes->size();
+                        } else if (rv.status == ChunkStatus::MissQueued) {
+                            miss.record({level, cz, cy, cx});
+                        } else if (rv.status == ChunkStatus::Error) {
+                            ++localStats.errorChunks;
+                        }
                     }
 
                     // Resolve the sample value. The two HOT branches (resident data

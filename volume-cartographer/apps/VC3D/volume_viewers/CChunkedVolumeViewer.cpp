@@ -1183,7 +1183,7 @@ CChunkedVolumeViewer::RenderResult CChunkedVolumeViewer::renderFrame(RenderConte
     cv::Mat_<uint8_t> coverage(ctx.fbH, ctx.fbW, uint8_t(0));
     cv::Mat_<uint8_t> overlayValues;
     cv::Mat_<uint8_t> overlayCoverage;
-    const vc::render::ChunkedPlaneSampler::Options options(ctx.samplingMethod, 32);
+    const vc::render::ChunkedPlaneSampler::Options options(ctx.samplingMethod, 64);
 
     // tick/settle: accumulate the chunks every sampler call missed into the
     // RenderResult so finishRenderOnMainThread can requestChunks() + tick().
