@@ -504,7 +504,11 @@ __attribute__((noinline)) ChunkedPlaneSampler::Stats renderTileRange(
     // it removes the cross-pixel lookup duplication without reordering the loops.
     struct ChunkCacheEntry { std::uint64_t key; const std::byte* data; std::size_t size; bool fill; };
     constexpr int kTileCacheN = 16;   // distinct chunks per neighborhood is small
-    ChunkCacheEntry tcache[kTileCacheN];
+    // thread_local so the 16-entry table lives in TLS, NOT this kernel's stack
+    // frame -- it was ~384 bytes of frame that pushed the hot loop's working set
+    // into spills. Persists across tile-range calls on a worker; cleared here each
+    // call (the resident map is frozen per SETTLE, so stale entries must not leak).
+    static thread_local ChunkCacheEntry tcache[kTileCacheN];
     for (auto& e : tcache) { e.key = ~std::uint64_t(0); e.data = nullptr; e.size = 0; e.fill = false; }
     int tcacheHead = 0;
     // Resolve a chunk via the cache; on miss, probe the resident map + record a fine
