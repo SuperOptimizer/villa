@@ -111,6 +111,17 @@ void addStats(ChunkedPlaneSampler::Stats& dst, ChunkedPlaneSampler::Stats& src)
 
 namespace {
 
+// One coarser LOD level for the miss-fallback. pow2 + the cshLog* fields let the
+// per-sample chunk math use shifts/masks instead of runtime integer divides.
+// Defined here (before the driver) so the driver can build the table ONCE per
+// render and pass it to every worker's kernel by const ref.
+struct CoarseLevel {
+    int shift; int csh, cshY, cshX; int sz, sy, sx;
+    int cshLog, cshLogY, cshLogX;   // log2 of chunk dims (valid iff pow2)
+    bool pow2;
+};
+std::vector<CoarseLevel> buildCoarseTable(IChunkedArray& array, int level);
+
 // Forward decl: the chunk-major (sample-binned) composite kernel, defined after
 // the driver. Routed in via VCA_BINNED.
 template <int CHUNK_LOG2, typename ArrayT>
@@ -152,6 +163,10 @@ ChunkedPlaneSampler::Stats runRenderDriver(
     // VCA_BINNED: route the composite path through the chunk-major (sample-binned)
     // kernel instead of the pixel-major one. A/B flag while binning is validated.
     static const bool kBinned = Composite && (::getenv("VCA_BINNED") != nullptr);
+    // Build the coarse-LOD fallback table ONCE here (not per-worker inside each
+    // kernel call) and pass it in by const ref -- keeps the vector + its build
+    // machinery out of the hot kernel's frame.
+    const std::vector<CoarseLevel> coarse = buildCoarseTable(array, level);
     auto runRange = [&](std::size_t begin, std::size_t end) {
         auto dispatch = [&](auto& arr) -> ChunkedPlaneSampler::Stats {
             if constexpr (Composite) {
@@ -168,9 +183,9 @@ ChunkedPlaneSampler::Stats runRenderDriver(
             // to the generic dynamic-dims path (a few divides instead of shifts).
             if (chunkLog == 5)
                 return renderTileRange<Composite, Trilinear, 5>(arr, access, level, coords, normals,
-                    out, coverage, tiles, begin, end, layerStart, numLayers, layerStep);
+                    out, coverage, tiles, begin, end, layerStart, numLayers, layerStep, coarse);
             return renderTileRange<Composite, Trilinear, -1>(arr, access, level, coords, normals,
-                out, coverage, tiles, begin, end, layerStart, numLayers, layerStep);
+                out, coverage, tiles, begin, end, layerStart, numLayers, layerStep, coarse);
         };
         return cc ? dispatch(*cc) : dispatch(array);
     };
@@ -309,15 +324,6 @@ struct MissCollector {
     }
 };
 
-// One coarser LOD level for the miss-fallback (precomputed per render call).
-// pow2 + the cshLog* fields let the per-sample chunk math use shifts/masks
-// instead of runtime integer divides (idivl was ~6% of the kernel during
-// streaming, when misses are frequent). cshLog<0 / pow2=false -> divide fallback.
-struct CoarseLevel {
-    int shift; int csh, cshY, cshX; int sz, sy, sx;
-    int cshLog, cshLogY, cshLogX;   // log2 of chunk dims (valid iff pow2)
-    bool pow2;
-};
 
 // Build the coarser-LOD fallback table. noinline so the vector construction +
 // push_back grow machinery (operator new/delete, throw_length_error, memcpy)
@@ -417,7 +423,8 @@ __attribute__((noinline)) ChunkedPlaneSampler::Stats renderTileRange(
     std::size_t end,
     int layerStart,
     int numLayers,
-    float layerStep)
+    float layerStep,
+    const std::vector<CoarseLevel>& coarse)   // built once by the caller, not per-worker
 {
     constexpr bool kStatic = (CHUNK_LOG2 >= 0);
     // For the static path everything is a compile-time constant; for the generic
@@ -519,7 +526,6 @@ __attribute__((noinline)) ChunkedPlaneSampler::Stats renderTileRange(
     // Precompute the coarser-level table once (cold miss-fallback uses it). See
     // coarseFallbackImpl -- that function is noinline/cold and kept OUT of this
     // frame so the hot depth loop doesn't pay its register footprint.
-    const std::vector<CoarseLevel> coarse = buildCoarseTable(array, level);
 
     // Chunk-major lookup cache (cross-pixel dedup). The per-pixel depth walk only
     // probes the resident map on a chunk CHANGE, but ADJACENT pixels re-probe the
