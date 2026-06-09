@@ -820,6 +820,16 @@ void CChunkedVolumeViewer::onSurfaceChanged(const std::string& name,
     // coords are stale. A swap also changes the surf pointer (the key would miss
     // anyway), but an in-place edit keeps the pointer, so bump the generation here.
     invalidateGenCache();
+    // Warm the geometry-LOD pyramid + per-LOD normal caches OFF the render thread, so
+    // the first zoom into a new LOD level doesn't stall (~tens of ms) building them on
+    // the interactive path. Fire-and-forget on a worker; idempotent + thread-safe.
+    if (auto quad = std::dynamic_pointer_cast<QuadSurface>(surf)) {
+        std::weak_ptr<QuadSurface> wq = quad;
+        (void)QtConcurrent::run([wq]() {
+            if (auto q = wq.lock())
+                q->primeGeometryLods();
+        });
+    }
     // Edit of the current surface is the cheap path even if the object pointer changed.
     if (isCurrentSurface && isEditUpdate && surf) {
         _zOffWorldDir = {0, 0, 0};

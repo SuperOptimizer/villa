@@ -964,6 +964,36 @@ void QuadSurface::genLod(int level, cv::Mat_<cv::Vec3f>* coords,
                 coords, normals, size, ptr, scale, offset);
 }
 
+void QuadSurface::primeGeometryLods(int maxLevels) const
+{
+    const_cast<QuadSurface*>(this)->ensureLoaded();
+    if (!_points || _points->empty())
+        return;
+    // Warm each LOD's geometry grid (geometryLod decimates + memoizes) AND its per-LOD
+    // normal cache. The normal cache only builds inside genGridImpl when normals are
+    // requested, so issue a tiny genLod per level WITH a normals output -- that triggers
+    // the per-LOD normalCache build (the expensive grid_normal_int pass) and memoizes
+    // it in _geomLodNormals[k]. The 1x1 output makes the warp itself ~free; the cost we
+    // want to pay here (off the render thread) is the cache build. Stop once the grid is
+    // too small to decimate further (geometryLod clamps).
+    cv::Mat_<cv::Vec3f> tmpCoords, tmpNormals;
+    int lastRows = -1, lastCols = -1;
+    for (int level = 1; level <= maxLevels; ++level) {
+        const GeometryLod lod = geometryLod(level);   // builds + memoizes the grid
+        if (!lod.points || lod.points->empty())
+            break;
+        // geometryLod clamps to the coarsest available level: if the grid stopped
+        // shrinking, we've hit the bottom -- one more prime then stop.
+        const bool atBottom = (lod.points->rows == lastRows && lod.points->cols == lastCols);
+        lastRows = lod.points->rows; lastCols = lod.points->cols;
+        // Tiny gen at this LOD to build its normal cache (ptr/scale/offset arbitrary;
+        // we only care about the side-effect cache fill, not the output pixels).
+        genLod(level, &tmpCoords, &tmpNormals, cv::Size(1, 1), {0, 0, 0}, 1.0f, {0, 0, 0});
+        if (atBottom)
+            break;
+    }
+}
+
 void QuadSurface::genGridImpl(const cv::Mat_<cv::Vec3f>& pts, const cv::Vec2f& gridScale,
                               const cv::Vec3f& gridCenter,
                               const std::vector<std::pair<int,int>>& components,

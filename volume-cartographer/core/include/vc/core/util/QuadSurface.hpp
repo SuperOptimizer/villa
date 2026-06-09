@@ -364,6 +364,13 @@ public:
     void genLod(int level, cv::Mat_<cv::Vec3f>* coords, cv::Mat_<cv::Vec3f>* normals,
                 cv::Size size, const cv::Vec3f& ptr, float scale, const cv::Vec3f& offset) const;
 
+    // Eagerly build every geometry-LOD grid + its per-LOD normal cache, so the FIRST
+    // render at a new zoom level doesn't stall (~tens of ms) decimating the grid and
+    // rebuilding normals on the interactive render thread. Call once off-thread when a
+    // surface becomes active. Cheap in total: LODs are 4x-decimated, so all levels
+    // cost ~1.33x level 0. Idempotent + thread-safe (reuses geometryLod/genLod).
+    void primeGeometryLods(int maxLevels = 16) const;
+
     // Grid iteration helpers
     ValidPointRange<cv::Vec3f> validPoints() { ensureLoaded(); return ValidPointRange<cv::Vec3f>(_points.get()); }
     ValidPointRange<const cv::Vec3f> validPoints() const {
