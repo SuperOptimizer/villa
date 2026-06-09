@@ -1473,8 +1473,9 @@ vc::render::IChunkedArray* Volume::chunkedCache()
 std::shared_ptr<vc::render::ChunkCache> Volume::createChunkCache(
     vc::render::ChunkCache::Options options) const
 {
-    if (isRemote_ && !remoteCacheRoot_.empty())
-        options.persistentCachePath = remotePersistentCachePath();
+    const std::filesystem::path cacheDir =
+        (isRemote_ && !remoteCacheRoot_.empty()) ? remotePersistentCachePath()
+                                                 : std::filesystem::path{};
 
     vc::render::OpenedChunkedZarr opened = isRemote_
         ? vc::render::openHttpZarrPyramid(remoteUrl_, remoteAuth_)
@@ -1484,8 +1485,29 @@ std::shared_ptr<vc::render::ChunkCache> Volume::createChunkCache(
         return nullptr;
     }
 
+    // mca cache: ONE persistent matter-compressor archive per volume, in the same cache
+    // dir other chunks are cached in (not /tmp). When it engages it REPLACES the old
+    // per-chunk-file persistent cache (mca is the persistence layer), so leave
+    // options.persistentCachePath unset in that case. Enabled by default for remote
+    // uint8 volumes; VCA_NO_MCA_CACHE forces the old raw per-chunk cache.
+    std::vector<vc::render::ChunkCache::LevelInfo> mcaLevels;
+    const bool mcaDisabled = std::getenv("VCA_NO_MCA_CACHE") != nullptr;
+    bool mcaOn = false;
+    if (!mcaDisabled && !cacheDir.empty()) {
+        std::error_code ec;
+        std::filesystem::create_directories(cacheDir, ec);
+        const float quality = []{
+            const char* q = std::getenv("VCA_MCA_QUALITY");
+            return q ? std::strtof(q, nullptr) : 8.0f;
+        }();
+        mcaOn = vc::render::applyMatterCache(opened, cacheDir / "volume.mca", quality, mcaLevels);
+    }
+
+    if (!mcaOn && !cacheDir.empty())
+        options.persistentCachePath = cacheDir;   // fall back to the old per-chunk cache
+
     return std::make_shared<vc::render::ChunkCache>(
-        makeChunkCacheLevelInfo(opened),
+        mcaOn ? std::move(mcaLevels) : makeChunkCacheLevelInfo(opened),
         std::move(opened.fetchers),
         opened.fillValue,
         opened.dtype,

@@ -35,4 +35,14 @@ std::unique_ptr<ChunkCache> createChunkCache(
     std::size_t decodedByteCapacity,
     std::size_t maxConcurrentReads = 16);
 
+// Wrap an opened pyramid with a persistent matter-compressor (.mca) cache: each level's
+// source fetcher is decorated to fetch native chunks, re-encode 256^3 regions into the
+// shared .mca, and serve decoded 16^3 blocks. On success, `opened.fetchers` is replaced
+// and `levelInfoOut` holds the 16^3-granular LevelInfo. Returns false (no change) if the
+// volume isn't uint8 or the archive can't be opened. The .mca persists across runs.
+bool applyMatterCache(OpenedChunkedZarr& opened,
+                      const std::filesystem::path& mcaPath,
+                      float quality,
+                      std::vector<ChunkCache::LevelInfo>& levelInfoOut);
+
 } // namespace vc::render
