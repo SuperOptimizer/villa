@@ -1544,7 +1544,7 @@ CChunkedVolumeViewer::RenderResult CChunkedVolumeViewer::renderFrame(RenderConte
                 sampleCoords(coords, normals, values, coverage, *ctx.chunkArray);
             }
             panReusedFlag = panReused;
-            // Update the cache with this frame's full result (for next pan).
+            // Update the cache with this frame's exact result (for next pan).
             if (cc && cacheableRender) {
                 std::lock_guard<std::mutex> lk(cc->mutex);
                 cc->valid = true;
@@ -1556,9 +1556,9 @@ CChunkedVolumeViewer::RenderResult CChunkedVolumeViewer::renderFrame(RenderConte
                 cc->offX = offset[0]; cc->offY = offset[1];
                 cc->values = values.clone();
                 cc->coverage = coverage.clone();
-            } else if (cc) {
+            } else if (cc && !cacheableRender) {
                 std::lock_guard<std::mutex> lk(cc->mutex);
-                cc->valid = false;   // plane view: don't serve stale pans
+                cc->valid = false;   // plane view: don't serve stale reuse
             }
             if (profilePhases) phaseSampleMs += phaseTimer.elapsed();
             if (ctx.overlayChunkArray && ctx.overlayVolume && ctx.overlayOpacity > 0.0f) {
