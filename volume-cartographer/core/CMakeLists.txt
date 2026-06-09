@@ -35,6 +35,7 @@ add_library(vc_core
         src/render/ChunkCache.cpp
         src/render/ChunkedPlaneSampler.cpp
         src/render/Colormaps.cpp
+        src/render/MatterArchive.cpp
         src/render/PostProcess.cpp
         src/render/ZarrChunkFetcher.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/../apps/src/vc_merge_tifxyz_grid.cpp
@@ -66,6 +67,7 @@ target_link_libraries(vc_core PUBLIC
 )
 target_link_libraries(vc_core PRIVATE
     Blosc::blosc
+    matter_compressor
     ${VC_LIBBACKTRACE}
 )
 
