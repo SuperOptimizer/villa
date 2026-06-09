@@ -98,6 +98,10 @@ public:
     [[nodiscard]] const std::string& remoteUrl() const noexcept { return remoteUrl_; }
     [[nodiscard]] const vc::HttpAuth& remoteAuth() const noexcept { return remoteAuth_; }
     [[nodiscard]] std::filesystem::path remoteCacheRoot() const noexcept { return remoteCacheRoot_; }
+    // Set the on-disk cache root (where the volume.mca lives). The GUI resolves this from
+    // /volpkgs|/ephemeral|settings, so it must be pushed in before chunkedCache() builds
+    // the cache. Resets any existing cache so the next build picks up the new root.
+    void setRemoteCacheRoot(std::filesystem::path root);
     [[nodiscard]] std::filesystem::path remotePersistentCachePath() const;
     [[nodiscard]] std::filesystem::path path() const noexcept { return path_; }
 

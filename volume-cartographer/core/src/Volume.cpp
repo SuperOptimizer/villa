@@ -1317,6 +1317,15 @@ std::shared_ptr<Volume> Volume::NewFromUrl(
     return vol;
 }
 
+void Volume::setRemoteCacheRoot(std::filesystem::path root)
+{
+    std::lock_guard<std::mutex> lock(cacheMutex_);
+    if (remoteCacheRoot_ == root)
+        return;
+    remoteCacheRoot_ = std::move(root);
+    chunkedCache_.reset();   // rebuild against the new root on next access
+}
+
 std::filesystem::path Volume::remotePersistentCachePath() const
 {
     if (!isRemote_ || remoteCacheRoot_.empty())
@@ -1491,6 +1500,10 @@ std::shared_ptr<vc::render::ChunkCache> Volume::createChunkCache(
     } else if (!path_.empty()) {
         cacheDir = path_.parent_path() / (path_.filename().string() + ".mcacache");
     }
+
+    Logger()->info(
+        "createChunkCache: isRemote={} cacheDir='{}' levels={}",
+        isRemote_, cacheDir.string(), opened.shapes.size());
 
     std::vector<vc::render::ChunkCache::LevelInfo> mcaLevels;
     const bool mcaDisabled = std::getenv("VCA_NO_MCA_CACHE") != nullptr;

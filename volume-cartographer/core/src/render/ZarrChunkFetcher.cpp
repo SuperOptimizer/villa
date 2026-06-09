@@ -408,8 +408,12 @@ bool applyMatterCache(OpenedChunkedZarr& opened,
                       float quality,
                       std::vector<ChunkCache::LevelInfo>& levelInfoOut)
 {
-    if (opened.dtype != ChunkDtype::UInt8 || opened.shapes.empty())
+    if (opened.dtype != ChunkDtype::UInt8 || opened.shapes.empty()) {
+        Logger()->info("mca cache: skipped (dtype={} uint8={} levels={})",
+                       static_cast<int>(opened.dtype),
+                       opened.dtype == ChunkDtype::UInt8, opened.shapes.size());
         return false;
+    }
 
     const int dim0 = std::max({opened.shapes[0][0], opened.shapes[0][1], opened.shapes[0][2]});
     std::shared_ptr<MatterArchive> archive;
