@@ -658,10 +658,9 @@ std::shared_ptr<vc::render::ChunkCache> makeChunkCacheForVolume(const std::share
         : streamingCacheCapacityBytes(nullptr);
     options.maxConcurrentReads = 16;
     options.detectAllFillChunks = volume->isRemote();
-    if (volume->isRemote()) {
-        const auto cacheRoot = remoteCacheRootForState(state);
-        options.persistentCachePath = cacheRoot / stableHexHash(normalizedVolumeCacheIdentity(volume));
-    }
+    // The on-disk cache (a single volume.mca) is owned by Volume::createChunkCache; no
+    // per-chunk persistent path is set here anymore.
+    (void)state;
 
     return volume->createChunkCache(std::move(options));
 }

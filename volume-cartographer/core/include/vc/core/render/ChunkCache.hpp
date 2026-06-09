@@ -36,7 +36,10 @@ public:
         // destroyed when a viewer is closed.
         std::size_t maxConcurrentReads = 16;
         bool detectAllFillChunks = true;
-        std::optional<std::filesystem::path> persistentCachePath;
+        // The single on-disk volume.mca path (the only on-disk cache). Used solely to
+        // report its file size as the "disk" cache-size stat; the actual mca read/write
+        // is owned by the MatterCacheFetcher decorating the fetchers.
+        std::optional<std::filesystem::path> mcaPath;
     };
 
     struct Stats {
@@ -90,7 +93,6 @@ private:
         std::shared_ptr<const std::vector<std::byte>> bytes;
         std::string error;
         std::size_t decodedBytes = 0;
-        bool persisted = false;
         bool inLru = false;
         int basePriority = 0;
         std::int64_t priority = 0;
@@ -144,20 +146,7 @@ private:
                               std::uint64_t fetchSerial);
     static void storeFetchResultLocked(const std::shared_ptr<State>& state,
                                        const ChunkKey& key,
-                                       ChunkFetchResult fetch,
-                                       bool loadedFromPersistentCache);
-    static std::optional<std::vector<std::byte>> readPersistent(const State& state, const ChunkKey& key);
-    static bool readPersistentEmpty(const State& state, const ChunkKey& key);
-    static bool queuePersistentWrite(const std::shared_ptr<State>& state,
-                                     const ChunkKey& key,
-                                     std::shared_ptr<const std::vector<std::byte>> bytes);
-    static bool queuePersistentEmptyWrite(const std::shared_ptr<State>& state,
-                                          const ChunkKey& key);
-    static void writePersistent(const State& state, const ChunkKey& key, const std::vector<std::byte>& bytes);
-    static void writePersistentEmpty(const State& state, const ChunkKey& key);
-    static std::filesystem::path persistentPath(const State& state, const ChunkKey& key);
-    static std::filesystem::path persistentEmptyPath(const State& state, const ChunkKey& key);
-    static std::size_t persistentCacheBytes(const std::optional<std::filesystem::path>& path);
+                                       ChunkFetchResult fetch);
     static void pruneDownloadHistoryLocked(State& state, std::chrono::steady_clock::time_point now);
     static void touchLocked(State& state, const ChunkKey& key, Entry& entry);
     static void enforceCapacityLocked(const std::shared_ptr<State>& state);

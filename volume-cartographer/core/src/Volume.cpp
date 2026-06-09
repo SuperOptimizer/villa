@@ -1473,10 +1473,6 @@ vc::render::IChunkedArray* Volume::chunkedCache()
 std::shared_ptr<vc::render::ChunkCache> Volume::createChunkCache(
     vc::render::ChunkCache::Options options) const
 {
-    const std::filesystem::path cacheDir =
-        (isRemote_ && !remoteCacheRoot_.empty()) ? remotePersistentCachePath()
-                                                 : std::filesystem::path{};
-
     vc::render::OpenedChunkedZarr opened = isRemote_
         ? vc::render::openHttpZarrPyramid(remoteUrl_, remoteAuth_)
         : vc::render::openLocalZarrPyramid(path_);
@@ -1485,11 +1481,17 @@ std::shared_ptr<vc::render::ChunkCache> Volume::createChunkCache(
         return nullptr;
     }
 
-    // mca cache: ONE persistent matter-compressor archive per volume, in the same cache
-    // dir other chunks are cached in (not /tmp). When it engages it REPLACES the old
-    // per-chunk-file persistent cache (mca is the persistence layer), so leave
-    // options.persistentCachePath unset in that case. Enabled by default for remote
-    // uint8 volumes; VCA_NO_MCA_CACHE forces the old raw per-chunk cache.
+    // mca is the ONLY on-disk cache: ONE persistent volume.mca per volume holding all
+    // chunks at all LODs. ALL volumes (remote AND local) go through it. The cache dir is
+    // the remote cache dir for remote volumes; for local volumes it sits next to the
+    // dataset (a sibling .mca dir). uint8 only (mca is u8); VCA_NO_MCA_CACHE disables.
+    std::filesystem::path cacheDir;
+    if (isRemote_ && !remoteCacheRoot_.empty()) {
+        cacheDir = remotePersistentCachePath();
+    } else if (!path_.empty()) {
+        cacheDir = path_.parent_path() / (path_.filename().string() + ".mcacache");
+    }
+
     std::vector<vc::render::ChunkCache::LevelInfo> mcaLevels;
     const bool mcaDisabled = std::getenv("VCA_NO_MCA_CACHE") != nullptr;
     bool mcaOn = false;
@@ -1500,11 +1502,11 @@ std::shared_ptr<vc::render::ChunkCache> Volume::createChunkCache(
             const char* q = std::getenv("VCA_MCA_QUALITY");
             return q ? std::strtof(q, nullptr) : 8.0f;
         }();
-        mcaOn = vc::render::applyMatterCache(opened, cacheDir / "volume.mca", quality, mcaLevels);
+        const auto mcaPath = cacheDir / "volume.mca";
+        mcaOn = vc::render::applyMatterCache(opened, mcaPath, quality, mcaLevels);
+        if (mcaOn)
+            options.mcaPath = mcaPath;   // report the .mca size as the "disk" cache stat
     }
-
-    if (!mcaOn && !cacheDir.empty())
-        options.persistentCachePath = cacheDir;   // fall back to the old per-chunk cache
 
     return std::make_shared<vc::render::ChunkCache>(
         mcaOn ? std::move(mcaLevels) : makeChunkCacheLevelInfo(opened),

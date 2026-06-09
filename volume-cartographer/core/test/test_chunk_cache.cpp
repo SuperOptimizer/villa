@@ -267,47 +267,6 @@ TEST_CASE("ChunkCache: addChunkReadyListener/removeChunkReadyListener fires on r
     c->removeChunkReadyListener(id);
 }
 
-TEST_CASE("ChunkCache: persistent cache path round-trip")
-{
-    std::mt19937_64 rng(std::random_device{}());
-    auto persistDir = fs::temp_directory_path() /
-        ("vc_chunk_cache_persist_" + std::to_string(rng()));
-    fs::create_directories(persistDir);
-
-    auto f = std::make_shared<CountingFetcher>();
-    ChunkFetchResult fr;
-    fr.status = ChunkFetchStatus::Found;
-    fr.bytes = makeBytes(64, std::byte{33});
-    f->setCanned({0, 0, 0, 0}, fr);
-
-    {
-        std::vector<ChunkCache::LevelInfo> levels = {{{8,8,8}, {4,4,4}, {}}};
-        ChunkCache::Options opts;
-        opts.persistentCachePath = persistDir;
-        ChunkCache c(std::move(levels),
-                     std::vector<std::shared_ptr<vc::render::IChunkFetcher>>{f},
-                     0.0, ChunkDtype::UInt8, opts);
-        auto r = waitForResolved(c, 0, 0, 0, 0);
-        CHECK(r.status == ChunkStatus::Data);
-    }
-
-    // New cache: should be able to read from persistent storage without
-    // re-fetching. The fetcher could still be called once for the in-flight
-    // path; just check we don't crash.
-    {
-        std::vector<ChunkCache::LevelInfo> levels = {{{8,8,8}, {4,4,4}, {}}};
-        ChunkCache::Options opts;
-        opts.persistentCachePath = persistDir;
-        ChunkCache c(std::move(levels),
-                     std::vector<std::shared_ptr<vc::render::IChunkFetcher>>{f},
-                     0.0, ChunkDtype::UInt8, opts);
-        auto r = waitForResolved(c, 0, 0, 0, 0);
-        CHECK(r.status == ChunkStatus::Data);
-    }
-
-    fs::remove_all(persistDir);
-}
-
 TEST_CASE("ChunkCache: ctor without options uses defaults")
 {
     auto f = std::make_shared<CountingFetcher>();

@@ -42,15 +42,6 @@ utils::PriorityThreadPool& chunkWorkerPool(std::size_t workerCount)
     return *pool;
 }
 
-utils::ThreadPool& persistentCacheWriterPool()
-{
-    // Keep disk-cache writes off the chunk read/fetch pool. A single writer
-    // avoids same-path tmp/rename races while preventing writeback from
-    // occupying workers needed by the current view.
-    static utils::ThreadPool pool(1);
-    return pool;
-}
-
 std::string fetchErrorMessage(const ChunkFetchResult& fetch)
 {
     if (!fetch.message.empty())
@@ -249,8 +240,8 @@ void ChunkCache::removeChunkReadyListener(ChunkReadyCallbackId id)
 ChunkCache::Stats ChunkCache::stats() const
 {
     auto state = state_;
-    std::optional<std::filesystem::path> persistentPath;
-    bool scanPersistentCacheBytes = false;
+    std::optional<std::filesystem::path> mcaPath;
+    bool scanMcaBytes = false;
     Stats result;
     {
         std::lock_guard lock(state->mutex_);
@@ -269,16 +260,20 @@ ChunkCache::Stats ChunkCache::stats() const
         result.remoteDownloadBytesPerSecond =
             static_cast<double>(recentBytes) /
             std::chrono::duration<double>(kDownloadStatsWindow).count();
+        // "disk" cache size = the single on-disk volume.mca file (the only on-disk
+        // cache). Throttled stat() of the file size (it grows as chunks are appended).
         result.persistentCacheBytes = state->cachedPersistentCacheBytes_;
-        persistentPath = state->options_.persistentCachePath;
-        scanPersistentCacheBytes = persistentPath.has_value() &&
+        mcaPath = state->options_.mcaPath;
+        scanMcaBytes = mcaPath.has_value() &&
             (state->lastPersistentCacheSizeScan_ == std::chrono::steady_clock::time_point{} ||
              now - state->lastPersistentCacheSizeScan_ >= kPersistentCacheSizeScanInterval);
-        if (scanPersistentCacheBytes)
+        if (scanMcaBytes)
             state->lastPersistentCacheSizeScan_ = now;
     }
-    if (scanPersistentCacheBytes) {
-        result.persistentCacheBytes = persistentCacheBytes(persistentPath);
+    if (scanMcaBytes) {
+        std::error_code ec;
+        const auto sz = std::filesystem::file_size(*mcaPath, ec);
+        result.persistentCacheBytes = ec ? 0 : static_cast<std::size_t>(sz);
         std::lock_guard lock(state->mutex_);
         state->cachedPersistentCacheBytes_ = result.persistentCacheBytes;
     }
@@ -381,33 +376,17 @@ void ChunkCache::fetchAndStore(const std::shared_ptr<State>& state,
     }
 
     ChunkFetchResult fetch;
-    bool loadedFromPersistentCache = false;
     bool trackedRemoteFetch = false;
     try {
-        auto fetchRemote = [&]() {
-            if (state->options_.persistentCachePath) {
-                trackedRemoteFetch = true;
-                std::lock_guard lock(state->mutex_);
-                ++state->remoteFetchesInFlight_;
-            }
-            return state->fetchers_.at(static_cast<std::size_t>(key.level))->fetch(key);
-        };
-
-        if (auto cached = readPersistent(*state, key)) {
-            fetch = state->fetchers_.at(static_cast<std::size_t>(key.level))
-                        ->decodePersistentBytes(key, std::move(*cached));
-            if (fetch.status == ChunkFetchStatus::Found &&
-                fetch.bytes.size() == expectedChunkBytes(*state, key)) {
-                loadedFromPersistentCache = true;
-            } else {
-                fetch = fetchRemote();
-            }
-        } else if (readPersistentEmpty(*state, key)) {
-            fetch.status = ChunkFetchStatus::Missing;
-            loadedFromPersistentCache = true;
-        } else {
-            fetch = fetchRemote();
+        // On-disk caching is handled by the mca cache inside the fetcher (the
+        // MatterCacheFetcher decorator owns the single volume.mca). The ChunkCache no
+        // longer has a per-chunk persistent cache; it just calls fetch().
+        trackedRemoteFetch = true;
+        {
+            std::lock_guard lock(state->mutex_);
+            ++state->remoteFetchesInFlight_;
         }
+        fetch = state->fetchers_.at(static_cast<std::size_t>(key.level))->fetch(key);
     } catch (const std::exception& e) {
         fetch.status = ChunkFetchStatus::IoError;
         fetch.message = e.what();
@@ -435,10 +414,7 @@ void ChunkCache::fetchAndStore(const std::shared_ptr<State>& state,
             --state->remoteFetchesInFlight_;
         if (trackedRemoteFetch && fetch.status == ChunkFetchStatus::Found && !fetch.bytes.empty()) {
             const auto now = std::chrono::steady_clock::now();
-            const std::size_t downloadedBytes = fetch.hasPersistentBytes
-                ? fetch.persistentBytes.size()
-                : fetch.bytes.size();
-            state->remoteDownloadHistory_.emplace_back(now, downloadedBytes);
+            state->remoteDownloadHistory_.emplace_back(now, fetch.bytes.size());
             pruneDownloadHistoryLocked(*state, now);
         }
         if (generation != state->generation_)
@@ -446,7 +422,7 @@ void ChunkCache::fetchAndStore(const std::shared_ptr<State>& state,
         auto it = state->entries_.find(key);
         if (it == state->entries_.end() || it->second.fetchSerial != fetchSerial)
             return;
-        storeFetchResultLocked(state, key, std::move(fetch), loadedFromPersistentCache);
+        storeFetchResultLocked(state, key, std::move(fetch));
     }
     state->cv_.notify_all();
     notifyListeners(state);
@@ -454,8 +430,7 @@ void ChunkCache::fetchAndStore(const std::shared_ptr<State>& state,
 
 void ChunkCache::storeFetchResultLocked(const std::shared_ptr<State>& state,
                                         const ChunkKey& key,
-                                        ChunkFetchResult fetch,
-                                        bool loadedFromPersistentCache)
+                                        ChunkFetchResult fetch)
 {
     auto it = state->entries_.find(key);
     if (it == state->entries_.end())
@@ -472,7 +447,6 @@ void ChunkCache::storeFetchResultLocked(const std::shared_ptr<State>& state,
     entry.bytes.reset();
     entry.error.clear();
     entry.decodedBytes = 0;
-    entry.persisted = false;
 
     switch (fetch.status) {
     case ChunkFetchStatus::Found: {
@@ -483,27 +457,16 @@ void ChunkCache::storeFetchResultLocked(const std::shared_ptr<State>& state,
         }
         if (state->options_.detectAllFillChunks && isAllFill(*state, fetch.bytes)) {
             entry.status = EntryStatus::AllFill;
-            entry.persisted = loadedFromPersistentCache ||
-                queuePersistentEmptyWrite(state, key);
             break;
         }
         entry.status = EntryStatus::Data;
         entry.decodedBytes = fetch.bytes.size();
         entry.bytes = std::make_shared<const std::vector<std::byte>>(std::move(fetch.bytes));
         state->decodedBytes_ += entry.decodedBytes;
-        std::shared_ptr<const std::vector<std::byte>> persistentBytes = entry.bytes;
-        if (fetch.hasPersistentBytes) {
-            persistentBytes = std::make_shared<const std::vector<std::byte>>(
-                std::move(fetch.persistentBytes));
-        }
-        entry.persisted = loadedFromPersistentCache ||
-            queuePersistentWrite(state, key, std::move(persistentBytes));
         break;
     }
     case ChunkFetchStatus::Missing:
         entry.status = EntryStatus::Missing;
-        entry.persisted = loadedFromPersistentCache ||
-            queuePersistentEmptyWrite(state, key);
         break;
     case ChunkFetchStatus::HttpError:
     case ChunkFetchStatus::IoError:
@@ -517,171 +480,6 @@ void ChunkCache::storeFetchResultLocked(const std::shared_ptr<State>& state,
     enforceCapacityLocked(state);
 }
 
-std::optional<std::vector<std::byte>> ChunkCache::readPersistent(const State& state, const ChunkKey& key)
-{
-    if (!state.options_.persistentCachePath)
-        return std::nullopt;
-
-    const auto path = persistentPath(state, key);
-    std::ifstream file(path, std::ios::binary | std::ios::ate);
-    if (!file)
-        return std::nullopt;
-
-    const auto size = file.tellg();
-    if (size < 0)
-        return std::nullopt;
-
-    std::vector<std::byte> bytes(static_cast<std::size_t>(size));
-    file.seekg(0);
-    file.read(reinterpret_cast<char*>(bytes.data()), size);
-    if (!file)
-        return std::nullopt;
-    if (state.fetchers_.at(static_cast<std::size_t>(key.level))
-            ->persistentCacheExtension(key) == ".bin" &&
-        bytes.size() != expectedChunkBytes(state, key))
-        return std::nullopt;
-    return bytes;
-}
-
-bool ChunkCache::readPersistentEmpty(const State& state, const ChunkKey& key)
-{
-    if (!state.options_.persistentCachePath)
-        return false;
-    std::error_code ec;
-    return std::filesystem::exists(persistentEmptyPath(state, key), ec) && !ec;
-}
-
-bool ChunkCache::queuePersistentWrite(const std::shared_ptr<State>& state,
-                                      const ChunkKey& key,
-                                      std::shared_ptr<const std::vector<std::byte>> bytes)
-{
-    if (!state || !state->options_.persistentCachePath || !bytes)
-        return false;
-    if (state->fetchers_.at(static_cast<std::size_t>(key.level))
-            ->persistentCacheExtension(key) == ".bin" &&
-        bytes->size() != expectedChunkBytes(*state, key))
-        return false;
-
-    persistentCacheWriterPool().enqueue([state, key, bytes = std::move(bytes)] {
-        writePersistent(*state, key, *bytes);
-    });
-    return true;
-}
-
-bool ChunkCache::queuePersistentEmptyWrite(const std::shared_ptr<State>& state,
-                                           const ChunkKey& key)
-{
-    if (!state || !state->options_.persistentCachePath)
-        return false;
-
-    persistentCacheWriterPool().enqueue([state, key] {
-        writePersistentEmpty(*state, key);
-    });
-    return true;
-}
-
-void ChunkCache::writePersistent(const State& state, const ChunkKey& key, const std::vector<std::byte>& bytes)
-{
-    if (!state.options_.persistentCachePath)
-        return;
-    if (state.fetchers_.at(static_cast<std::size_t>(key.level))
-            ->persistentCacheExtension(key) == ".bin" &&
-        bytes.size() != expectedChunkBytes(state, key))
-        return;
-
-    const auto path = persistentPath(state, key);
-    std::filesystem::create_directories(path.parent_path());
-    const auto tmp = path.string() + ".tmp";
-    {
-        std::ofstream file(tmp, std::ios::binary | std::ios::trunc);
-        if (!file)
-            return;
-        file.write(reinterpret_cast<const char*>(bytes.data()),
-                   static_cast<std::streamsize>(bytes.size()));
-        if (!file)
-            return;
-    }
-    std::error_code ec;
-    std::filesystem::rename(tmp, path, ec);
-    if (ec) {
-        std::filesystem::remove(path, ec);
-        ec.clear();
-        std::filesystem::rename(tmp, path, ec);
-    }
-}
-
-void ChunkCache::writePersistentEmpty(const State& state, const ChunkKey& key)
-{
-    if (!state.options_.persistentCachePath)
-        return;
-
-    const auto path = persistentEmptyPath(state, key);
-    std::filesystem::create_directories(path.parent_path());
-    const auto tmp = path.string() + ".tmp";
-    {
-        std::ofstream file(tmp, std::ios::binary | std::ios::trunc);
-        if (!file)
-            return;
-        file.put('\n');
-        if (!file)
-            return;
-    }
-    std::error_code ec;
-    std::filesystem::rename(tmp, path, ec);
-    if (ec) {
-        std::filesystem::remove(path, ec);
-        ec.clear();
-        std::filesystem::rename(tmp, path, ec);
-    }
-}
-
-std::filesystem::path ChunkCache::persistentPath(const State& state, const ChunkKey& key)
-{
-    return *state.options_.persistentCachePath /
-           ("level_" + std::to_string(key.level)) /
-           std::to_string(key.iz) /
-           std::to_string(key.iy) /
-           (std::to_string(key.ix) +
-            state.fetchers_.at(static_cast<std::size_t>(key.level))
-                ->persistentCacheExtension(key));
-}
-
-std::filesystem::path ChunkCache::persistentEmptyPath(const State& state, const ChunkKey& key)
-{
-    return *state.options_.persistentCachePath /
-           ("level_" + std::to_string(key.level)) /
-           std::to_string(key.iz) /
-           std::to_string(key.iy) /
-           (std::to_string(key.ix) + ".empty");
-}
-
-std::size_t ChunkCache::persistentCacheBytes(const std::optional<std::filesystem::path>& path)
-{
-    if (!path)
-        return 0;
-
-    std::error_code ec;
-    if (!std::filesystem::exists(*path, ec))
-        return 0;
-
-    std::size_t bytes = 0;
-    std::filesystem::recursive_directory_iterator it(
-        *path,
-        std::filesystem::directory_options::skip_permission_denied,
-        ec);
-    const std::filesystem::recursive_directory_iterator end;
-    while (!ec && it != end) {
-        if (it->is_regular_file(ec)) {
-            const auto size = it->file_size(ec);
-            if (!ec)
-                bytes += static_cast<std::size_t>(size);
-        } else {
-            ec.clear();
-        }
-        it.increment(ec);
-    }
-    return bytes;
-}
 
 void ChunkCache::pruneDownloadHistoryLocked(State& state, std::chrono::steady_clock::time_point now)
 {
@@ -715,11 +513,8 @@ void ChunkCache::enforceCapacityLocked(const std::shared_ptr<State>& state)
             continue;
         Entry& entry = it->second;
         entry.inLru = false;
-        if (entry.status == EntryStatus::Data) {
-            if (entry.bytes && !entry.persisted)
-                (void)queuePersistentWrite(state, victim, entry.bytes);
+        if (entry.status == EntryStatus::Data)
             state->decodedBytes_ -= entry.decodedBytes;
-        }
         state->entries_.erase(it);
     }
 }

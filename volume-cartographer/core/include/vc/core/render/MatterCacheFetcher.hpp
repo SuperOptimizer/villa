@@ -39,9 +39,6 @@ public:
     // fetch one 16^3 block (key is in 16^3-chunk coords). Returns the decoded 4096 bytes.
     ChunkFetchResult fetch(const ChunkKey& key) override;
 
-    // The mca cache IS the persistent layer; disable the per-chunk-file persistent cache.
-    std::string persistentCacheExtension(const ChunkKey&) const override { return ".mcablk"; }
-
     static constexpr int kMca = MatterArchive::kChunk;   // 256
     static constexpr int kBlk = MatterArchive::kBlock;    // 16
 
