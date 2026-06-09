@@ -329,6 +329,37 @@ private:
     };
     GenCache _genCache;
     std::uint64_t _genSurfaceGeneration = 0;   // bump to invalidate (surface edited)
+
+    // COMPOSITE REPROJECTION CACHE: the composite sampler walks ~64 depth layers per
+    // pixel over the whole window -- the worst-frame cost (avg ~149ms at LOD0). But
+    // pixel (x,y)'s composited value depends only on its surface-offset (offX+x,
+    // offY+y) at a fixed (scale, zOff, layers). So when the camera PANS, most of the
+    // window is the SAME composite shifted by the integer offset delta -- blit the
+    // overlap from the cached values/coverage and recompute only the newly-exposed
+    // border strip. ZOOM (scale change) bilinear-reprojects the cached image as an
+    // instant approximation (refined next tick). Z-SCROLL (zOff change) uses the
+    // per-pixel max-depth to re-walk only columns whose max fell out of the window.
+    // Keyed on everything that changes the composite; any non-motion change (window
+    // only re-LUTs, but layers/method/LOD/surface edit) fully invalidates.
+    struct CompositeCache {
+        std::mutex mutex;
+        bool valid = false;
+        // key (motion-invariant part)
+        const void* surf = nullptr;
+        std::uint64_t surfGen = 0;
+        int fbW = 0, fbH = 0, level = 0;
+        int numLayers = 0, layerStart = 0;
+        std::string method;
+        float scale = 0.f, zOff = 0.f;
+        // motion part (compared for pan/zoom/z-scroll classification)
+        float offX = 0.f, offY = 0.f;
+        // payload: raw composite output (pre-LUT) + coverage. maxDepth holds the
+        // depth-layer index that produced each pixel's max (for z-scroll incremental).
+        cv::Mat_<uint8_t> values;
+        cv::Mat_<uint8_t> coverage;
+        cv::Mat_<int16_t> maxDepth;
+    };
+    CompositeCache _compositeCache;
     bool _segmentationEditActive = false;
     bool _deferSegmentationIntersections = false;
     bool _deferredSegmentationIntersectionsDirty = false;
