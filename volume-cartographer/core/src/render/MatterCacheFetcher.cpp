@@ -30,18 +30,30 @@ static std::uint64_t regionKey(int cz, int cy, int cx)
 bool MatterCacheFetcher::ensureRegion(int regCz, int regCy, int regCx)
 {
     const std::uint64_t rk = regionKey(regCz, regCy, regCx);
+
+    // Single-flight claim: wait out any in-flight assembly of this region; if it's
+    // already resolved, return immediately; otherwise claim it (InFlight) and assemble.
     {
-        std::lock_guard<std::mutex> lk(regMu_);
-        if (regionDone_.count(rk))
-            return archive_->hasChunk(lod_, regCz, regCy, regCx);
-    }
-    // Already in a persisted .mca from a previous run?
-    if (archive_->hasChunk(lod_, regCz, regCy, regCx)) {
-        std::lock_guard<std::mutex> lk(regMu_);
-        regionDone_.insert(rk);
-        return true;
+        std::unique_lock<std::mutex> lk(regMu_);
+        for (;;) {
+            auto it = regions_.find(rk);
+            if (it == regions_.end())
+                break;   // not claimed -> we'll claim it below
+            if (it->second == RegionState::InFlight) {
+                regCv_.wait(lk);   // another thread is assembling it; wait for publish
+                continue;
+            }
+            return it->second == RegionState::Present;
+        }
+        // Persisted from a previous run? (cheap index probe under the lock is fine.)
+        if (archive_->hasChunk(lod_, regCz, regCy, regCx)) {
+            regions_[rk] = RegionState::Present;
+            return true;
+        }
+        regions_[rk] = RegionState::InFlight;   // claim
     }
 
+    // ---- we own this region: assemble + encode OUTSIDE the lock ----
     // Assemble the 256^3 region from the source's native chunks (srcEdge_ each).
     const int subPerAxis = kMca / srcEdge_;   // 1 (c3d 256) or 2 (zarr 128)
     std::vector<std::uint8_t> region(static_cast<std::size_t>(kMca) * kMca * kMca, 0);
@@ -93,12 +105,15 @@ bool MatterCacheFetcher::ensureRegion(int regCz, int regCy, int regCx)
                 anyData = true;
             }
 
+    if (anyData)
+        archive_->appendChunkRaw(lod_, regCz, regCy, regCx, region.data());
+
+    // publish the result + wake everyone waiting on this region.
     {
         std::lock_guard<std::mutex> lk(regMu_);
-        if (anyData)
-            archive_->appendChunkRaw(lod_, regCz, regCy, regCx, region.data());
-        regionDone_.insert(rk);
+        regions_[rk] = anyData ? RegionState::Present : RegionState::Absent;
     }
+    regCv_.notify_all();
     return anyData;
 }
 

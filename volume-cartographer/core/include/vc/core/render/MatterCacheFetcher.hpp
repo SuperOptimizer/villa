@@ -14,10 +14,11 @@
 // Each level gets its own MatterCacheFetcher sharing the volume's single MatterArchive.
 
 #include <array>
+#include <condition_variable>
 #include <cstdint>
 #include <memory>
 #include <mutex>
-#include <unordered_set>
+#include <unordered_map>
 
 #include "vc/core/render/ChunkFetch.hpp"
 #include "vc/core/render/MatterArchive.hpp"
@@ -53,9 +54,13 @@ private:
     int srcEdge_ = 256;                 // source chunk edge (128 or 256)
     std::array<int, 3> levelShape_{};   // voxel extent of this level
 
-    // which 256^3 regions we've already materialized (per (lod) -> region key).
+    // Per-256^3-region single-flight: the FIRST thread to touch a region assembles +
+    // encodes it; every other thread requesting any 16^3 block of that same region waits
+    // for that one assembly instead of redundantly re-fetching + re-encoding it.
+    enum class RegionState { InFlight, Present, Absent };
     std::mutex regMu_;
-    std::unordered_set<std::uint64_t> regionDone_;
+    std::condition_variable regCv_;
+    std::unordered_map<std::uint64_t, RegionState> regions_;   // region key -> state
 };
 
 }  // namespace vc::render
