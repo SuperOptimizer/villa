@@ -36,6 +36,7 @@ add_library(vc_core
         src/render/ChunkedPlaneSampler.cpp
         src/render/Colormaps.cpp
         src/render/MatterArchive.cpp
+        src/render/MatterCacheFetcher.cpp
         src/render/PostProcess.cpp
         src/render/ZarrChunkFetcher.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/../apps/src/vc_merge_tifxyz_grid.cpp

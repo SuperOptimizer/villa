@@ -1,0 +1,130 @@
+#include "vc/core/render/MatterCacheFetcher.hpp"
+
+#include <algorithm>
+#include <cstring>
+
+#include "vc/core/util/Logging.hpp"
+
+namespace vc::render {
+
+MatterCacheFetcher::MatterCacheFetcher(std::shared_ptr<IChunkFetcher> source,
+                                       std::shared_ptr<MatterArchive> archive,
+                                       int lod,
+                                       int sourceChunkEdge,
+                                       std::array<int, 3> levelShape)
+    : source_(std::move(source))
+    , archive_(std::move(archive))
+    , lod_(lod)
+    , srcEdge_(sourceChunkEdge)
+    , levelShape_(levelShape)
+{
+}
+
+static std::uint64_t regionKey(int cz, int cy, int cx)
+{
+    return (static_cast<std::uint64_t>(cz & 0x1FFFFF) << 42) |
+           (static_cast<std::uint64_t>(cy & 0x1FFFFF) << 21) |
+           (static_cast<std::uint64_t>(cx & 0x1FFFFF));
+}
+
+bool MatterCacheFetcher::ensureRegion(int regCz, int regCy, int regCx)
+{
+    const std::uint64_t rk = regionKey(regCz, regCy, regCx);
+    {
+        std::lock_guard<std::mutex> lk(regMu_);
+        if (regionDone_.count(rk))
+            return archive_->hasChunk(lod_, regCz, regCy, regCx);
+    }
+    // Already in a persisted .mca from a previous run?
+    if (archive_->hasChunk(lod_, regCz, regCy, regCx)) {
+        std::lock_guard<std::mutex> lk(regMu_);
+        regionDone_.insert(rk);
+        return true;
+    }
+
+    // Assemble the 256^3 region from the source's native chunks (srcEdge_ each).
+    const int subPerAxis = kMca / srcEdge_;   // 1 (c3d 256) or 2 (zarr 128)
+    std::vector<std::uint8_t> region(static_cast<std::size_t>(kMca) * kMca * kMca, 0);
+
+    // region voxel origin
+    const int vz0 = regCz * kMca, vy0 = regCy * kMca, vx0 = regCx * kMca;
+    bool anyData = false;
+
+    for (int sz = 0; sz < subPerAxis; ++sz)
+        for (int sy = 0; sy < subPerAxis; ++sy)
+            for (int sx = 0; sx < subPerAxis; ++sx) {
+                // source native-chunk index covering this sub-block.
+                const int scz = (vz0 + sz * srcEdge_) / srcEdge_;
+                const int scy = (vy0 + sy * srcEdge_) / srcEdge_;
+                const int scx = (vx0 + sx * srcEdge_) / srcEdge_;
+                // skip sub-chunks entirely past the volume edge.
+                if (scz * srcEdge_ >= levelShape_[0] ||
+                    scy * srcEdge_ >= levelShape_[1] ||
+                    scx * srcEdge_ >= levelShape_[2])
+                    continue;
+
+                ChunkKey sk{lod_, scz, scy, scx};
+                ChunkFetchResult sub;
+                try {
+                    sub = source_->fetch(sk);
+                } catch (const std::exception& e) {
+                    Logger()->warn("MatterCacheFetcher: source fetch failed l{} ({},{},{}): {}",
+                                   lod_, scz, scy, scx, e.what());
+                    continue;
+                }
+                if (sub.status != ChunkFetchStatus::Found || sub.bytes.empty())
+                    continue;   // missing/air sub-chunk -> stays zero in the region
+
+                // copy the source chunk (srcEdge_^3, z,y,x raster, u8) into the region at
+                // its (sz,sy,sx) sub-offset. Clamp to the actual fetched size at edges.
+                const auto* src = reinterpret_cast<const std::uint8_t*>(sub.bytes.data());
+                const std::size_t gotVox = sub.bytes.size();
+                const int oz = sz * srcEdge_, oy = sy * srcEdge_, ox = sx * srcEdge_;
+                for (int z = 0; z < srcEdge_; ++z) {
+                    for (int y = 0; y < srcEdge_; ++y) {
+                        const std::size_t srcRow =
+                            (static_cast<std::size_t>(z) * srcEdge_ + y) * srcEdge_;
+                        if (srcRow + srcEdge_ > gotVox) break;   // partial-edge chunk
+                        const std::size_t dstRow =
+                            ((static_cast<std::size_t>(oz + z) * kMca + (oy + y)) * kMca + ox);
+                        std::memcpy(region.data() + dstRow, src + srcRow, srcEdge_);
+                    }
+                }
+                anyData = true;
+            }
+
+    {
+        std::lock_guard<std::mutex> lk(regMu_);
+        if (anyData)
+            archive_->appendChunkRaw(lod_, regCz, regCy, regCx, region.data());
+        regionDone_.insert(rk);
+    }
+    return anyData;
+}
+
+ChunkFetchResult MatterCacheFetcher::fetch(const ChunkKey& key)
+{
+    ChunkFetchResult result;
+    // key is in 16^3-chunk coords. enclosing 256^3 region:
+    const int blkPerRegion = kMca / kBlk;   // 16
+    const int regCz = key.iz / blkPerRegion;
+    const int regCy = key.iy / blkPerRegion;
+    const int regCx = key.ix / blkPerRegion;
+    const int bz = key.iz % blkPerRegion;
+    const int by = key.iy % blkPerRegion;
+    const int bx = key.ix % blkPerRegion;
+
+    if (!ensureRegion(regCz, regCy, regCx)) {
+        // region had no source data -> this block is air/missing.
+        result.status = ChunkFetchStatus::Missing;
+        return result;
+    }
+
+    result.bytes.resize(static_cast<std::size_t>(kBlk) * kBlk * kBlk);
+    archive_->decodeBlock(lod_, regCz, regCy, regCx, bz, by, bx,
+                          reinterpret_cast<std::uint8_t*>(result.bytes.data()));
+    result.status = ChunkFetchStatus::Found;
+    return result;
+}
+
+}  // namespace vc::render

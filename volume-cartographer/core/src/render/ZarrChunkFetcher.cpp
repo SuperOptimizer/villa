@@ -1,8 +1,13 @@
 #include "vc/core/render/ZarrChunkFetcher.hpp"
+#include "vc/core/render/MatterArchive.hpp"
+#include "vc/core/render/MatterCacheFetcher.hpp"
 #include "vc/core/types/VcDataset.hpp"
+#include "vc/core/util/Logging.hpp"
 
 #include <utils/http_fetch.hpp>
 #include <utils/zarr.hpp>
+
+#include <cstdlib>
 
 #include <algorithm>
 #include <array>
@@ -443,8 +448,48 @@ std::unique_ptr<ChunkCache> createChunkCache(
     std::size_t decodedByteCapacity,
     std::size_t maxConcurrentReads)
 {
+    // mca cache: when VCA_MCA_CACHE=<path.mca> is set, re-express the whole volume
+    // through a matter-compressor archive. Each level's source fetcher is wrapped in a
+    // MatterCacheFetcher sharing one .mca; the volume is served at mca's native 16^3
+    // chunk granularity (resident cache resides 4KB blocks), fetched native + re-encoded
+    // 256^3-at-a-time on demand. uint8 only (mca is u8); skip otherwise.
+    const char* mcaPath = std::getenv("VCA_MCA_CACHE");
+    const bool mcaEnabled = mcaPath && mcaPath[0] &&
+                            opened.dtype == vc::render::ChunkDtype::UInt8 &&
+                            !opened.shapes.empty();
+
     std::vector<ChunkCache::LevelInfo> levels;
     levels.reserve(opened.shapes.size());
+
+    if (mcaEnabled) {
+        const float quality = []{
+            const char* q = std::getenv("VCA_MCA_QUALITY");
+            return q ? std::strtof(q, nullptr) : 8.0f;
+        }();
+        const int dim0 = std::max({opened.shapes[0][0], opened.shapes[0][1], opened.shapes[0][2]});
+        auto archive = std::make_shared<MatterArchive>(std::string(mcaPath), dim0, quality);
+        Logger()->info("ChunkCache: mca cache enabled at {} (dim0={}, q={})", mcaPath, dim0, quality);
+
+        std::vector<std::shared_ptr<IChunkFetcher>> mcaFetchers;
+        mcaFetchers.reserve(opened.fetchers.size());
+        for (std::size_t i = 0; i < opened.shapes.size(); ++i) {
+            const int srcEdge = opened.chunkShapes[i][0];   // assume cubic native chunks
+            mcaFetchers.push_back(std::make_shared<MatterCacheFetcher>(
+                opened.fetchers[i], archive, static_cast<int>(i), srcEdge, opened.shapes[i]));
+            // report 16^3 chunk granularity to the cache + sampler.
+            levels.push_back({opened.shapes[i],
+                              {MatterArchive::kBlock, MatterArchive::kBlock, MatterArchive::kBlock},
+                              opened.transforms[i]});
+        }
+
+        ChunkCache::Options options;
+        options.decodedByteCapacity = decodedByteCapacity;
+        options.maxConcurrentReads = maxConcurrentReads;
+        return std::make_unique<ChunkCache>(
+            std::move(levels), std::move(mcaFetchers),
+            opened.fillValue, opened.dtype, std::move(options));
+    }
+
     for (std::size_t i = 0; i < opened.shapes.size(); ++i) {
         levels.push_back({opened.shapes[i], opened.chunkShapes[i], opened.transforms[i]});
     }
