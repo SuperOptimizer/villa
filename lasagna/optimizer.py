@@ -25,6 +25,7 @@ import opt_loss_station
 import opt_loss_bend
 import opt_loss_cyl
 import opt_loss_snap_surf
+import opt_loss_atlas_line
 from snap_surf import map_global as snap_surf_map_global
 from progress_table import format_progress_value, print_progress_legend
 import opt_loss_flatten
@@ -389,6 +390,8 @@ def _parse_opt_settings(
 lambda_global: dict[str, float] = {
 	"normal": 1.0,
 	"step": 0.0,
+	"smooth_step": 0.0,
+	"avg_step": 0.0,
 	"smooth": 0.0,
 	"winding_density": 0.0,
 	"data": 0.0,
@@ -401,6 +404,9 @@ lambda_global: dict[str, float] = {
 	"bend": 0.0,
 	"ext_offset": 0.0,
 	"snap_surf_map": 0.0,
+	"atlas_line": 0.0,
+	"atlas_line_control": 0.0,
+	"atlas_line_other": 0.0,
 	"map_dist": 1.0,
 	"map_vec_normal": 1.0,
 	"map_surface_normal": 1.0,
@@ -561,6 +567,8 @@ def load_stages_cfg(cfg: dict, *, init_mode: str | None = None) -> list[Stage]:
 				))
 				continue
 			global_opt_cfg = s.pop("global_opt", None)
+			if global_opt_cfg is None:
+				global_opt_cfg = s.pop("opt", None)
 			if global_opt_cfg is None:
 				global_opt_cfg = dict(s)
 				s.clear()
@@ -890,6 +898,7 @@ def optimize(
 	_optimize_t0 = time.perf_counter()
 	opt_loss_corr.reset_state()
 	opt_loss_snap_surf.reset_state()
+	opt_loss_atlas_line.reset_state()
 	_snap_global_runtime: snap_surf_map_global.GlobalMapRuntime | None = None
 	_snap_self_runtimes: dict[str, snap_surf_map_global.SelfMapRuntime] = {}
 	_loaded_snap_surf_map_state = snap_surf_map_state if isinstance(snap_surf_map_state, dict) else None
@@ -1713,6 +1722,11 @@ def optimize(
 	Needs = fit_model.ModelForwardNeeds
 	terms = {
 		"step": {"loss": opt_loss_step.step_loss, "needs": Needs()},
+		"step_regularizer": {
+			"loss": opt_loss_step.step_regularizer_loss,
+			"sub": ["smooth_step", "avg_step"],
+			"needs": Needs(),
+		},
 		"smooth": {"loss": opt_loss_smooth.smooth_loss, "needs": Needs()},
 		"winding_density": {
 			"loss": opt_loss_winding_density.winding_density_loss,
@@ -1791,6 +1805,11 @@ def optimize(
 				lr_prefetch_channels=frozenset({"grad_mag"}),
 				prefetch_snap_surf_map=True,
 			),
+		},
+		"atlas_line": {
+			"loss": opt_loss_atlas_line.atlas_line_loss,
+			"sub": ["atlas_line", "atlas_line_control", "atlas_line_other"],
+			"needs": Needs(mesh_normals=True),
 		},
 		"cyl_normal": {
 			"loss": opt_loss_cyl.cyl_normal_loss,
@@ -2036,6 +2055,11 @@ def optimize(
 			_need_term("cyl_outside", stage_eff) > 0
 		)
 		stage_args = opt_cfg.args or {}
+		atlas_debug_objs = bool(stage_args.get("atlas_debug_objs", stage_args.get("atlas-debug-objs", False)))
+		atlas_debug_obj_interval = max(1, int(stage_args.get(
+			"atlas_debug_obj_interval",
+			stage_args.get("atlas-debug-obj-interval", 1),
+		)))
 		status_interval_raw = stage_args.get("status_interval", stage_args.get("debug_print_interval", 100))
 		status_interval = max(0, int(status_interval_raw))
 		steps_label = _steps_label(opt_cfg)
@@ -2370,6 +2394,7 @@ def optimize(
 						  shell_no: int | None = None) -> None:
 			nonlocal _status_rows, _status_legend_cols
 			label_map = {
+				"avg_step": "avg_st",
 				"cyl_bend": "c_bend",
 				"cyl_normal": "c_norm",
 				"cyl_outside": "c_out",
@@ -2396,6 +2421,7 @@ def optimize(
 				"pred_dt_pull_samples_m": "psampM",
 				"pred_dt_pull_prefix_mean": "pullpre",
 				"pred_dt_pull_weight_mean": "pullw",
+				"smooth_step": "sm_step",
 				"snap_surf_map": "smap",
 				"snaps_map_snap": "sms_los",
 				"snaps_map_snap_abs": "sms_abs",
@@ -2490,6 +2516,20 @@ def optimize(
 				"cyl_outside_pen_frac": "out%",
 				"cyl_outside_depth_max": "outmax",
 				"cyl_outside_depth_avg": "outavg",
+				"atlas_line": "a_line",
+				"atlas_line_control": "a_ctl",
+				"atlas_line_other": "a_oth",
+				"atlas_line_samples": "a_samp",
+				"atlas_line_valid": "a_val",
+				"atlas_line_rms": "a_rms",
+				"atlas_line_active_vertices": "a_vtx",
+				"atlas_line_signed_delta_mean": "a_dlt",
+				"atlas_line_control_valid": "a_cval",
+				"atlas_line_control_rms": "a_crms",
+				"atlas_line_control_active_vertices": "a_cvtx",
+				"atlas_line_other_valid": "a_oval",
+				"atlas_line_other_rms": "a_orms",
+				"atlas_line_other_active_vertices": "a_ovtx",
 				"flatten_point_valid": "f_pt",
 				"flatten_quad_valid": "f_quad",
 				"flatten_tgt_step": "f_tgt",
@@ -2629,6 +2669,22 @@ def optimize(
 				"cyl_outside_pen_frac": "outside frac",
 				"cyl_outside_depth_max": "outside max",
 				"cyl_outside_depth_avg": "outside avg",
+				"smooth_step": "local same-direction step equalization loss",
+				"avg_step": "global average step-scale loss",
+				"atlas_line": "atlas line loss",
+				"atlas_line_control": "atlas control-anchor loss",
+				"atlas_line_other": "atlas in-span line-anchor loss",
+				"atlas_line_samples": "atlas line sample slots",
+				"atlas_line_valid": "atlas valid samples",
+				"atlas_line_rms": "atlas line RMS",
+				"atlas_line_active_vertices": "atlas active vertices",
+				"atlas_line_signed_delta_mean": "atlas signed normal correction mean",
+				"atlas_line_control_valid": "atlas valid control samples",
+				"atlas_line_control_rms": "atlas control RMS",
+				"atlas_line_control_active_vertices": "atlas active control vertices",
+				"atlas_line_other_valid": "atlas valid other samples",
+				"atlas_line_other_rms": "atlas other RMS",
+				"atlas_line_other_active_vertices": "atlas active other vertices",
 				"p:wcirc_avg_vx": "param circ avg",
 				"p:wcirc_tgt_vx": "param circ target",
 				"p:wstep_invalid_avg_vx": "param invalid avg",
@@ -2728,9 +2784,25 @@ def optimize(
 				"snaps_map_nsign": 179,
 				"snaps_map_scales": 180,
 				"snaps_map_repair": 181,
-				"cyl_outside_pen_frac": 190,
-				"cyl_outside_depth_max": 191,
-				"cyl_outside_depth_avg": 192,
+				"smooth_step": 196,
+				"avg_step": 197,
+				"atlas_line": 182,
+				"atlas_line_control": 183,
+				"atlas_line_other": 184,
+				"atlas_line_samples": 185,
+				"atlas_line_valid": 186,
+				"atlas_line_rms": 187,
+				"atlas_line_active_vertices": 188,
+				"atlas_line_signed_delta_mean": 189,
+				"atlas_line_control_valid": 190,
+				"atlas_line_control_rms": 191,
+				"atlas_line_control_active_vertices": 192,
+				"atlas_line_other_valid": 193,
+				"atlas_line_other_rms": 194,
+				"atlas_line_other_active_vertices": 195,
+				"cyl_outside_pen_frac": 200,
+				"cyl_outside_depth_max": 201,
+				"cyl_outside_depth_avg": 202,
 			}
 			def _sort_key(k: str) -> tuple[int, str]:
 				return (key_order.get(k, 0), k)
@@ -3022,7 +3094,9 @@ def optimize(
 					_cache.sync()
 
 		# Initial evaluation
-		def _eval_terms(res_, eff_, *, profile_label: str | None = None, timing: _OptTimingWindow | None = None):
+		def _eval_terms(res_, eff_, *, profile_label: str | None = None,
+						timing: _OptTimingWindow | None = None,
+						atlas_debug_step: int | None = None):
 			"""Evaluate all loss terms, handling both single and multi-loss returns."""
 			total = torch.zeros((), device=next(model.parameters()).device, dtype=torch.float32)
 			tv: dict[str, float] = {}
@@ -3055,7 +3129,21 @@ def optimize(
 				_log_cuda_memory(f"{loss_label}.before")
 				_t_loss = _stage_start(f"{profile_label}.{name}") if profile_label is not None else None
 				_t_loss_wall = time.perf_counter() if timing is not None else None
-				result = t["loss"](res=res_)
+				if name == "atlas_line":
+					write_atlas_debug = (
+						atlas_debug_objs
+						and atlas_debug_step is not None
+						and (int(atlas_debug_step) % atlas_debug_obj_interval) == 0
+					)
+					result = t["loss"](res=res_, stage_eff=eff_, debug_payload=write_atlas_debug)
+					if write_atlas_debug:
+						opt_loss_atlas_line.write_debug_objs(
+							stage=stage.name,
+							step=int(atlas_debug_step),
+							interval=1,
+						)
+				else:
+					result = t["loss"](res=res_)
 				_debug_cuda_sync(f"{profile_label}.{name}" if profile_label is not None else name)
 				_log_cuda_memory(f"{loss_label}.after_raw")
 				if timing is not None and _t_loss_wall is not None:
@@ -3070,6 +3158,8 @@ def optimize(
 							continue
 						tv[sub_name] = float(lv.detach().cpu())
 						total = total + w * lv
+					if name == "atlas_line":
+						tv.update(opt_loss_atlas_line.last_stats())
 				else:
 					lv, lms, masks = result
 					w = _need_term(name, eff_)
@@ -3080,6 +3170,8 @@ def optimize(
 						tv.update(opt_loss_cyl.last_stats())
 					if name == "snap_surf_map":
 						tv.update(opt_loss_snap_surf.last_stats())
+					if name == "atlas_line":
+						tv.update(opt_loss_atlas_line.last_stats())
 					if name in ("flatten_sdir", "flatten_avg_offset", "flatten_orient"):
 						tv.update(opt_loss_flatten.last_stats())
 					total = total + w * lv
@@ -3811,7 +3903,7 @@ def optimize(
 			_log_cuda_memory(f"{label}.initial_eval.loss_terms.before")
 			opt_loss_snap_surf.set_debug_step(0, label=f"{label}_initial")
 			loss0, term_vals0, display_loss0 = _eval_terms(
-				res0, stage_eff, profile_label=f"{label}.initial_eval.loss")
+				res0, stage_eff, profile_label=f"{label}.initial_eval.loss", atlas_debug_step=0)
 			_log_cuda_memory(f"{label}.initial_eval.loss_terms.after")
 			_stage_done(f"{label}.initial_eval.loss_terms", _t_terms)
 			if snap_surf_map_opt_stage is not None:
@@ -3933,7 +4025,8 @@ def optimize(
 			_t_loss_eval = time.perf_counter()
 			opt_loss_snap_surf.set_debug_step(step + 1, label=label)
 			_log_cuda_memory(f"{label}.{step + 1}.loss_eval.before")
-			loss, term_vals, display_loss = _eval_terms(res, stage_eff, timing=_opt_timing)
+			loss, term_vals, display_loss = _eval_terms(
+				res, stage_eff, timing=_opt_timing, atlas_debug_step=step + 1)
 			_log_cuda_memory(f"{label}.{step + 1}.loss_eval.after")
 			if _flow_timing is not None:
 				_timing_cuda_sync()

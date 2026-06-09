@@ -14,6 +14,7 @@ import cli_json
 import cli_model
 import cli_opt
 import fit_data
+import atlas as atlas_mod
 import model
 import opt_loss_corr
 import opt_loss_dir
@@ -631,6 +632,8 @@ def _stage_opt_cfgs(raw_stages: object):
 			yield from _stage_opt_cfgs(children)
 			continue
 		opt_cfg = stage.get("global_opt")
+		if not isinstance(opt_cfg, dict):
+			opt_cfg = stage.get("opt")
 		yield opt_cfg if isinstance(opt_cfg, dict) else stage
 
 
@@ -810,8 +813,8 @@ def _build_parser() -> argparse.ArgumentParser:
 	cli_opt.add_args(p)
 	p.add_argument("--out-dir", default=None, help="Output directory for snapshots and debug")
 	p.add_argument("--tifxyz-init", default=None, help="Initialize model from tifxyz directory instead of model.pt or new model")
-	p.add_argument("--model-init", choices=("seed", "ext", "model", "flatten"), default="seed",
-		help="Initial model source: seed creates a new model, ext uses --tifxyz-init, model uses --model-input, flatten optimizes one external tifxyz inverse map")
+	p.add_argument("--model-init", choices=("seed", "ext", "model", "flatten", "atlas"), default="seed",
+		help="Initial model source: seed creates a new model, ext uses --tifxyz-init, model uses --model-input, flatten optimizes one external tifxyz inverse map, atlas uses config atlas data")
 	p.add_argument("--self-map-init", choices=("off", "multi_wrap_full", "multi_wrap_d"), default="off",
 		help="Initialize snap_surf_map from the model itself instead of external_surfaces")
 	p.add_argument("--flatten-solver", choices=("torch", "inverse", "forward"), default="torch",
@@ -1256,8 +1259,8 @@ def main(argv: list[str] | None = None) -> int:
 
 	model_init = str(getattr(args, "model_init", "seed")).strip().lower()
 	self_map_init = str(getattr(args, "self_map_init", "off")).strip().lower().replace("-", "_")
-	if model_init not in {"seed", "ext", "model", "flatten"}:
-		raise ValueError(f"invalid model-init '{model_init}' (expected seed, ext, model, or flatten)")
+	if model_init not in {"seed", "ext", "model", "flatten", "atlas"}:
+		raise ValueError(f"invalid model-init '{model_init}' (expected seed, ext, model, flatten, or atlas)")
 	if model_init == "flatten":
 		return _run_flatten_mode(
 			cfg=cfg,
@@ -1516,6 +1519,25 @@ def main(argv: list[str] | None = None) -> int:
 			raise ValueError("model-init=model requires --model-input")
 		if getattr(args, "tifxyz_init", None):
 			raise ValueError("model-init=model must not set --tifxyz-init; tifxyz can only be used as external_surfaces")
+	elif model_init == "atlas":
+		if model_cfg.model_input is not None:
+			raise ValueError("model-init=atlas must not set --model-input")
+		if getattr(args, "tifxyz_init", None):
+			raise ValueError("model-init=atlas must not set --tifxyz-init")
+		if not isinstance(cfg.get("atlas"), dict):
+			raise ValueError("model-init=atlas requires top-level config atlas object")
+		if isinstance(args_cfg, dict):
+			bad_atlas_args = [
+				name for name in ("depth", "subsample-mesh", "subsample_mesh", "subsample-winding", "subsample_winding")
+				if name in args_cfg
+			]
+			if bad_atlas_args:
+				raise ValueError(
+					"model-init=atlas does not support args "
+					+ ", ".join(sorted(bad_atlas_args))
+					+ "; atlas models are always depth=1 with fixed atlas sampling"
+				)
+		model_cfg = dataclasses.replace(model_cfg, depth=1, subsample_mesh=1, subsample_winding=1, pyramid_d=False)
 
 	if model_init == "seed" and data_cfg.seed is not None:
 		model_cfg = dataclasses.replace(model_cfg, z_center=float(data_cfg.seed[2]))
@@ -1540,10 +1562,28 @@ def main(argv: list[str] | None = None) -> int:
 
 	tifxyz_init = getattr(args, "tifxyz_init", None)
 	loaded_snap_surf_map_state: dict | None = None
+	atlas_lines_3d: fit_data.AtlasLines3D | None = None
 
 	# --- Construct / load model (before data, so we can compute bbox) ---
 	_t = _stage_start("construct_model")
-	if model_init == "ext":
+	if model_init == "atlas":
+		atlas_init = atlas_mod.build_atlas_init(
+			cfg["atlas"],
+			device=device,
+			mesh_step=model_cfg.mesh_step,
+			winding_step=model_cfg.winding_step,
+		)
+		mdl = atlas_init.model
+		atlas_lines_3d = atlas_init.atlas_lines
+		fit_config["_atlas_init_"] = copy.deepcopy(atlas_init.metadata)
+		print(
+			f"[fit] model-init=atlas: base_shape={tuple(mdl._grid_xyz().shape[1:3])} "
+			f"samples={atlas_init.metadata['line_sample_count']} "
+			f"period_columns={atlas_init.metadata['period_columns']} "
+			f"windings={atlas_init.metadata['leftmost_winding']}..{atlas_init.metadata['rightmost_winding']}",
+			flush=True,
+		)
+	elif model_init == "ext":
 		from tifxyz_io import surface_step_stats
 		xyz_init, valid_init, _meta_init, _scale_init = _load_scaled_tifxyz(
 			str(tifxyz_init),
@@ -1853,6 +1893,7 @@ def main(argv: list[str] | None = None) -> int:
 	cfg.pop("voxel_size_um", None)
 	cfg.pop("external_surfaces", None)
 	cfg.pop("tifxyz", None)
+	cfg.pop("atlas", None)
 	stages = optimizer.load_stages_cfg(
 		cfg,
 		init_mode=model_cfg.init_mode if model_init == "seed" else None,
@@ -1923,6 +1964,8 @@ def main(argv: list[str] | None = None) -> int:
 		mdl.params = dataclasses.replace(mdl.params, volume_extent=volume_extent)
 		if corr_points_3d is not None:
 			d = dataclasses.replace(d, corr_points=corr_points_3d)
+		if atlas_lines_3d is not None:
+			d = dataclasses.replace(d, atlas_lines=atlas_lines_3d)
 		if data_cfg.winding_volume is not None:
 			wv_t, wv_min, wv_max = fit_data.load_winding_volume(
 				path=data_cfg.winding_volume, device=device,
@@ -1940,6 +1983,8 @@ def main(argv: list[str] | None = None) -> int:
 			d = _load_streaming(needed_channels)
 			if data.corr_points is not None:
 				d = dataclasses.replace(d, corr_points=data.corr_points)
+			if data.atlas_lines is not None:
+				d = dataclasses.replace(d, atlas_lines=data.atlas_lines)
 			if data.winding_volume is not None:
 				d = dataclasses.replace(
 					d,
@@ -2022,6 +2067,32 @@ def main(argv: list[str] | None = None) -> int:
 		corr_results = opt_loss_corr.get_last_results()
 		if corr_results is not None:
 			st["_corr_points_results_"] = corr_results
+		if data.atlas_lines is not None:
+			try:
+				import opt_loss_atlas_line
+
+				with torch.no_grad():
+					atlas_res = mdl(data, needs=model.ModelForwardNeeds(mesh_normals=True))
+					opt_loss_atlas_line.atlas_line_loss(
+						res=atlas_res,
+						stage_eff={"atlas_line_control": 1.0, "atlas_line_other": 1.0},
+						debug_payload=True,
+					)
+					atlas_control_results = opt_loss_atlas_line.atlas_control_points_results(
+						lines=data.atlas_lines,
+					)
+				if atlas_control_results is not None:
+					st["_atlas_control_points_results_"] = atlas_control_results
+					summary = atlas_control_results.get("summary", {})
+					print(
+						"[fit] saving atlas control point results "
+						f"total={summary.get('total_count', 0)} "
+						f"valid={summary.get('valid_count', 0)} "
+						f"rms={float(summary.get('rms_distance', 0.0)):.6g}",
+						flush=True,
+					)
+			except Exception as exc:
+				print(f"[fit] WARNING: failed to build atlas control point results: {exc}", flush=True)
 		if corr_point_roi_init is not None:
 			payload = copy.deepcopy(corr_point_roi_init.payload)
 			payload["output_radius_grid_points"] = int(data_cfg.corr_point_roi_output_radius)

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 import os
 import sys
 import unittest
+from pathlib import Path
 
 
 ROOT = os.path.dirname(os.path.dirname(__file__))
@@ -13,6 +15,38 @@ import optimizer
 
 
 class OptimizerStageWeightsTest(unittest.TestCase):
+	def test_atlas_line_config_parses_split_step_regularizers(self) -> None:
+		cfg_path = Path(ROOT) / "configs" / "atlas_line.json"
+		cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+		stages = optimizer.load_stages_cfg(cfg)
+
+		self.assertEqual(stages[0].name, "atlas_init_relax")
+		self.assertTrue(stages[0].global_opt.steps_auto)
+		self.assertEqual(stages[0].global_opt.args["atlas_debug_obj_interval"], 1)
+		self.assertFalse(stages[0].global_opt.args["atlas_debug_objs"])
+		self.assertAlmostEqual(stages[0].global_opt.args["corr_splat_sigma"], 4.0, delta=1.0e-12)
+		self.assertIn("smooth_step", cfg["base"])
+		self.assertIn("avg_step", cfg["base"])
+		self.assertAlmostEqual(
+			stages[0].global_opt.base_eff["smooth_step"],
+			float(cfg["base"]["smooth_step"]),
+			delta=1.0e-12,
+		)
+		self.assertAlmostEqual(
+			stages[0].global_opt.base_eff["avg_step"],
+			float(cfg["base"]["avg_step"]),
+			delta=1.0e-12,
+		)
+		self.assertAlmostEqual(
+			stages[0].global_opt.base_eff["step"],
+			float(cfg["base"].get("step", 0.0)),
+			delta=1.0e-12,
+		)
+		self.assertEqual(stages[1].name, "atlas_line_fit")
+		self.assertTrue(stages[1].global_opt.steps_auto)
+		self.assertAlmostEqual(stages[1].global_opt.args["corr_splat_sigma"], 4.0, delta=1.0e-12)
+		self.assertAlmostEqual(stages[1].global_opt.eff["atlas_line_other"], 0.0, delta=1.0e-12)
+
 	def test_stage_w_fac_does_not_inherit_to_later_stages(self) -> None:
 		stages = optimizer.load_stages_cfg({
 			"base": {
@@ -66,6 +100,47 @@ class OptimizerStageWeightsTest(unittest.TestCase):
 		self.assertEqual(opt.eff["normal"], 0.5)
 		self.assertEqual(opt.eff["smooth"], 1.0)
 		self.assertEqual(opt.eff["map_dist"], 8.0)
+
+	def test_atlas_line_split_weights_parse_independently(self) -> None:
+		stages = optimizer.load_stages_cfg({
+			"base": {
+				"atlas_line_control": 0.2,
+				"atlas_line_other": 0.5,
+			},
+			"stages": [
+				{"name": "stage0", "steps": 1, "params": ["mesh_ms"], "w_fac": {
+					"atlas_line_control": 3.0,
+					"atlas_line_other": 0.25,
+				}},
+			],
+		})
+
+		opt = stages[0].global_opt
+		self.assertAlmostEqual(opt.eff["atlas_line_control"], 0.6, delta=1.0e-12)
+		self.assertAlmostEqual(opt.eff["atlas_line_other"], 0.125, delta=1.0e-12)
+
+	def test_step_regularizer_split_weights_parse_independently(self) -> None:
+		stages = optimizer.load_stages_cfg({
+			"base": {
+				"smooth_step": 10.0,
+				"avg_step": 0.1,
+			},
+			"stages": [
+				{"name": "stage0", "steps": 1, "params": ["mesh_ms"], "w_fac": {
+					"smooth_step": 0.0,
+					"avg_step": 5.0,
+				}},
+				{"name": "stage1", "steps": 1, "params": ["mesh_ms"], "w_fac": {
+					"smooth_step": 0.25,
+					"avg_step": 0.0,
+				}},
+			],
+		})
+
+		self.assertAlmostEqual(stages[0].global_opt.eff["smooth_step"], 0.0, delta=1.0e-12)
+		self.assertAlmostEqual(stages[0].global_opt.eff["avg_step"], 0.5, delta=1.0e-12)
+		self.assertAlmostEqual(stages[1].global_opt.eff["smooth_step"], 2.5, delta=1.0e-12)
+		self.assertAlmostEqual(stages[1].global_opt.eff["avg_step"], 0.0, delta=1.0e-12)
 
 	def test_numeric_w_fac_scales_applicable_map_losses(self) -> None:
 		stages = optimizer.load_stages_cfg({
