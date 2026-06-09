@@ -560,7 +560,9 @@ QString formatVec3(const cv::Vec3f& v)
 
 QString formatWholeVolumePosition(const cv::Vec3f& v)
 {
-    return QString("[%1, %2, %3]")
+    // v is in coordinate/UI order [x, y, z] = [width, height, slices]. Label each
+    // component so the scroll Z (slice/depth) axis is unambiguous in the status bar.
+    return QString("[X=%1, Y=%2, Z=%3]")
         .arg(v[0], 0, 'f', 0)
         .arg(v[1], 0, 'f', 0)
         .arg(v[2], 0, 'f', 0);
