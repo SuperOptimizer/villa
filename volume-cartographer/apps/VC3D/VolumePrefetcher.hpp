@@ -21,9 +21,9 @@ public:
     VolumePrefetcher& operator=(const VolumePrefetcher&) = delete;
 
     // Start prefetching `volume` at `levels` (in order; empty = all levels,
-    // coarsest first). Stops any previous run first. No-op if the volume has
-    // no persistent mca cache (non-uint8).
-    void start(std::shared_ptr<Volume> volume, std::vector<int> levels);
+    // coarsest first) on `threads` dedicated workers (clamped to >=1). Stops any
+    // previous run first. No-op if the volume has no persistent mca cache.
+    void start(std::shared_ptr<Volume> volume, std::vector<int> levels, int threads);
 
     // Signal and join the worker team.
     void stop();
@@ -31,8 +31,6 @@ public:
     bool running() const { return !threads_.empty(); }
 
 private:
-    static constexpr int kThreads = 8;
-
     std::shared_ptr<std::atomic<bool>> stopFlag_;
     std::vector<std::jthread> threads_;
 };

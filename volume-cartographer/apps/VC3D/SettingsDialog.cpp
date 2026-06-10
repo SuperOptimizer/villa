@@ -66,6 +66,8 @@ SettingsDialog::SettingsDialog(QWidget *parent) : QDialog(parent)
         settings.value(perf::PREFETCH_LEVELS, perf::PREFETCH_LEVELS_DEFAULT)
             .toStringList()
             .join(','));
+    spinPrefetchThreads->setValue(
+        settings.value(perf::PREFETCH_THREADS, perf::PREFETCH_THREADS_DEFAULT).toInt());
     {
         const QString stored =
             settings.value(viewer::REMOTE_CACHE_DIR).toString();
@@ -158,6 +160,7 @@ void SettingsDialog::accept()
     settings.setValue(perf::RAM_CACHE_SIZE_GB, spinRamCacheSizeGB->value());
     settings.setValue(perf::PREFETCH_VOLUME, chkPrefetchVolume->isChecked());
     settings.setValue(perf::PREFETCH_LEVELS, edtPrefetchLevels->text().trimmed());
+    settings.setValue(perf::PREFETCH_THREADS, spinPrefetchThreads->value());
     settings.setValue(viewer::REMOTE_CACHE_DIR, edtRemoteCachePath->text());
     settings.setValue(perf::DISK_CACHE_COMPRESSED, chkVideoRecompress->isChecked());
 

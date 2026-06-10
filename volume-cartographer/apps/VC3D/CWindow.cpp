@@ -1886,7 +1886,9 @@ void CWindow::setVolume(std::shared_ptr<Volume> newvol)
                 if (ok)
                     levels.push_back(l);
             }
-            _volumePrefetcher->start(newvol, std::move(levels));
+            const int threads =
+                settings.value(perf::PREFETCH_THREADS, perf::PREFETCH_THREADS_DEFAULT).toInt();
+            _volumePrefetcher->start(newvol, std::move(levels), threads);
         }
     }
 

@@ -224,6 +224,7 @@ namespace perf {
     constexpr auto RAM_CACHE_SIZE_GB = "perf/ram_cache_size_gb";
     constexpr auto PREFETCH_VOLUME = "perf/prefetch_volume";
     constexpr auto PREFETCH_LEVELS = "perf/prefetch_levels";
+    constexpr auto PREFETCH_THREADS = "perf/prefetch_threads";
 
     constexpr int PRELOADED_SLICES_DEFAULT = 200;
     constexpr int PARALLEL_PROCESSES_DEFAULT = 8;
@@ -233,6 +234,7 @@ namespace perf {
     constexpr int RAM_CACHE_SIZE_GB_DEFAULT = 10;
     constexpr bool PREFETCH_VOLUME_DEFAULT = false;
     constexpr auto PREFETCH_LEVELS_DEFAULT = "";   // empty = all levels, coarsest first
+    constexpr int PREFETCH_THREADS_DEFAULT = 16;
 
     // When true the disk cache stores c3d-compressed sharded zarr (smaller,
     // lossy).  When false it stores source chunk bytes unchanged at the

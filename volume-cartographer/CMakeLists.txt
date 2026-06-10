@@ -381,11 +381,18 @@ if(NOT TARGET LZ4::lz4)
 endif()
 find_package(CGAL REQUIRED)
 
-if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+# OpenMP is stubbed out by default: VC3D drives all parallelism explicitly
+# (QThreadPool, the chunk IO pool, prefetch threads) and real OpenMP just adds
+# a spin-waiting pool that competes for cores. Clang always uses the stub; for
+# gcc, -DVC_DISABLE_OPENMP=ON forces it too (default OFF keeps gcc on real OMP
+# so upstream/CI behaviour is unchanged unless opted in).
+option(VC_DISABLE_OPENMP "Replace OpenMP with an empty stub for all compilers" OFF)
+if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang" OR VC_DISABLE_OPENMP)
     include_directories(${CMAKE_SOURCE_DIR}/core/openmp_stub)
     add_library(openmp_stub INTERFACE)
     add_library(OpenMP::OpenMP_CXX ALIAS openmp_stub)
     add_library(OpenMP::OpenMP_C  ALIAS openmp_stub)
+    message(STATUS "OpenMP: stubbed (no real OpenMP runtime)")
 else()
     find_package(OpenMP REQUIRED)
 endif()

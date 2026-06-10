@@ -1,14 +1,18 @@
 #include "VolumePrefetcher.hpp"
 
+#include <algorithm>
+
 #include "vc/core/types/Volume.hpp"
 #include "vc/core/render/ChunkCache.hpp"
 #include "vc/core/util/Logging.hpp"
 
-void VolumePrefetcher::start(std::shared_ptr<Volume> volume, std::vector<int> levels)
+void VolumePrefetcher::start(std::shared_ptr<Volume> volume, std::vector<int> levels,
+                            int threads)
 {
     stop();
     if (!volume)
         return;
+    const int nThreads = std::max(1, threads);
 
     std::shared_ptr<vc::render::ChunkCache> cache;
     try {
@@ -50,14 +54,14 @@ void VolumePrefetcher::start(std::shared_ptr<Volume> volume, std::vector<int> le
         return;
 
     Logger()->info("prefetch: {} regions across {} level(s) for {} ({} threads)",
-                   total, grids->size(), volume->id(), kThreads);
+                   total, grids->size(), volume->id(), nThreads);
 
     stopFlag_ = std::make_shared<std::atomic<bool>>(false);
     auto next = std::make_shared<std::atomic<std::size_t>>(0);
     auto stopFlag = stopFlag_;
 
-    threads_.reserve(kThreads);
-    for (int t = 0; t < kThreads; ++t) {
+    threads_.reserve(nThreads);
+    for (int t = 0; t < nThreads; ++t) {
         threads_.emplace_back([cache, grids, total, next, stopFlag, volume] {
             for (;;) {
                 if (stopFlag->load(std::memory_order_relaxed))

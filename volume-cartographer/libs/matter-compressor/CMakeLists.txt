@@ -32,6 +32,20 @@ set_target_properties(matter_compressor PROPERTIES POSITION_INDEPENDENT_CODE ON)
 find_package(Threads REQUIRED)
 target_link_libraries(matter_compressor m Threads::Threads)
 
+# The codec is the hot encode/decode path; build it for the host arch. The
+# parent project's global flags do not reliably reach a vendored subdir (and CI
+# builds generic), so set it on THIS target. -DMC_NO_NATIVE=ON for portable
+# binaries (distribution / cross-build). Always -O3 -ffast-math regardless of
+# the parent's build type, since this TU is pure number-crunching.
+target_compile_options(matter_compressor PRIVATE -O3 -ffast-math -Wno-stringop-overflow)
+if(NOT MC_NO_NATIVE)
+  include(CheckCCompilerFlag)
+  check_c_compiler_flag(-march=native MC_HAS_MARCH_NATIVE)
+  if(MC_HAS_MARCH_NATIVE)
+    target_compile_options(matter_compressor PRIVATE -march=native)
+  endif()
+endif()
+
 # Tests + native flags only when built standalone (vendoring consumers don't want our
 # test exes added to their build).
 if(MC_STANDALONE)
