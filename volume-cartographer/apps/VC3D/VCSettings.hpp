@@ -234,7 +234,10 @@ namespace perf {
     constexpr int RAM_CACHE_SIZE_GB_DEFAULT = 10;
     constexpr bool PREFETCH_VOLUME_DEFAULT = false;
     constexpr auto PREFETCH_LEVELS_DEFAULT = "";   // empty = all levels, coarsest first
-    constexpr int PREFETCH_THREADS_DEFAULT = 16;
+    // shard drivers. Each shard is ALREADY internally parallel (parallel ranged
+    // download + multi-thread encode), so a couple overlapping shards saturate
+    // the pipe; more just thrash bandwidth and starve interactive fetches.
+    constexpr int PREFETCH_THREADS_DEFAULT = 2;
 
     // When true the disk cache stores c3d-compressed sharded zarr (smaller,
     // lossy).  When false it stores source chunk bytes unchanged at the

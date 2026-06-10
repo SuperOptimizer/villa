@@ -692,7 +692,9 @@ CChunkedVolumeViewer::CChunkedVolumeViewer(CState* state, ViewerManager* manager
     });
 
     _statusTimer = new QTimer(this);
-    _statusTimer->setInterval(10000);
+    // 1s tick: the stats read is a cheap atomic load now (no stat() syscall), so
+    // the disk/RAM figures stay live during background prefetch even when idle.
+    _statusTimer->setInterval(1000);
     connect(_statusTimer, &QTimer::timeout, this, [this]() {
         updateStatusLabel();
     });

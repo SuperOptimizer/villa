@@ -230,6 +230,16 @@ public:
             static_cast<std::size_t>(b.originChunk[0]),
             static_cast<std::size_t>(b.originChunk[1]),
             static_cast<std::size_t>(b.originChunk[2])};
+        // inner-chunk grid extent: an edge shard is partial — clamp the inner loop
+        // so we never index past the array bounds. innerChunks[d] =
+        // ceil(shape[d] / sub_chunk_shape[d]).
+        const auto& meta = array_->metadata();
+        std::array<std::size_t, 3> nInner{1, 1, 1};
+        for (int d = 0; d < 3; ++d) {
+            const std::size_t sub = (meta.shard_config && d < (int)meta.shard_config->sub_chunks.size())
+                ? meta.shard_config->sub_chunks[d] : meta.chunks[d];
+            nInner[d] = sub ? (meta.shape[d] + sub - 1) / sub : 0;
+        }
         utils::ShardBytes shard;
         try {
             auto s = array_->read_whole_shard(corner);
@@ -239,15 +249,19 @@ public:
         } catch (const std::exception&) {
             return false;   // transient download error -> let caller retry
         }
-        for (int z = 0; z < per; ++z)
-            for (int y = 0; y < per; ++y)
-                for (int x = 0; x < per; ++x) {
-                    const std::array<std::size_t, 3> ii{corner[0] + z, corner[1] + y,
-                                                        corner[2] + x};
-                    auto c = array_->extract_inner_chunk(shard.span(), ii);
+        for (int z = 0; z < per && corner[0] + z < nInner[0]; ++z)
+            for (int y = 0; y < per && corner[1] + y < nInner[1]; ++y)
+                for (int x = 0; x < per && corner[2] + x < nInner[2]; ++x) {
+                    // extract takes SHARD-RELATIVE inner indices (0..per-1); the
+                    // sink/ChunkKey use ABSOLUTE inner-chunk coords (corner + rel).
+                    const std::array<std::size_t, 3> rel{
+                        static_cast<std::size_t>(z), static_cast<std::size_t>(y),
+                        static_cast<std::size_t>(x)};
+                    auto c = array_->extract_inner_chunk(shard.span(), rel);
                     if (c && !c->empty())
-                        sink(ChunkKey{key.level, static_cast<int>(ii[0]),
-                                      static_cast<int>(ii[1]), static_cast<int>(ii[2])},
+                        sink(ChunkKey{key.level, static_cast<int>(corner[0] + z),
+                                      static_cast<int>(corner[1] + y),
+                                      static_cast<int>(corner[2] + x)},
                              std::move(*c));
                 }
         return true;
