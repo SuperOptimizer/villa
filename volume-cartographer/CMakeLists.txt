@@ -431,6 +431,7 @@ include_directories(core/include)
 add_subdirectory(libs/OpenABF)
 add_subdirectory(libs/c3d)
 add_subdirectory(libs/matter-compressor)   # mca streaming/re-encode cache codec
+add_subdirectory(libs/libs3)                # minimal C S3 client (GET/HEAD/range + SigV4)
 if(VC_BUILD_FLATBOI)
     add_subdirectory(libs/flatboi)
 endif()

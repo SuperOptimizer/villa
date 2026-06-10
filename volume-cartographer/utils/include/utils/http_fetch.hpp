@@ -12,8 +12,8 @@
 #include <optional>
 #include <chrono>
 #include <span>
-#include <atomic>
 #include <filesystem>
+#include <memory>
 
 // NOTE: <curl/curl.h> is intentionally NOT included here. All curl-typed
 // code lives in http_fetch.cpp so the ~88 TUs that pull this header in
@@ -121,32 +121,15 @@ public:
         std::string user_agent{"utils-http/1.0"};
     };
 
-    HttpClient() = default;
+    HttpClient();
+    explicit HttpClient(Config config);
 
-    explicit HttpClient(Config config)
-        : config_(std::move(config))
-    {
-    }
-
-    // Flip the process-global abort flag. Any in-flight curl_easy_perform
-    // returns CURLE_ABORTED_BY_CALLBACK on the next progress tick (sub-
-    // millisecond on an active socket) and pending retries bail. Use to
-    // make app shutdown effectively instantaneous regardless of S3 timeout.
-    static void abortAll() noexcept
-    {
-        abort_flag().store(true, std::memory_order_release);
-    }
-
-    // Reset the abort flag (e.g. for tests that re-use the process).
-    static void resetAbort() noexcept
-    {
-        abort_flag().store(false, std::memory_order_release);
-    }
-
-    [[nodiscard]] static bool isAborted() noexcept
-    {
-        return abort_flag().load(std::memory_order_acquire);
-    }
+    // Flip the process-global abort flag (libs3): any in-flight transfer
+    // returns promptly and pending retries bail. Use to make app shutdown
+    // effectively instantaneous regardless of S3 timeout.
+    static void abortAll() noexcept;
+    static void resetAbort() noexcept;   // e.g. for tests that re-use the process
+    [[nodiscard]] static bool isAborted() noexcept;
 
     // GET request
     [[nodiscard]] HttpResponse get(std::string_view url) const;
@@ -168,14 +151,9 @@ public:
                                          const std::filesystem::path& file_path,
                                          std::string_view content_type = "application/octet-stream") const;
 
-    [[nodiscard]] static std::atomic<bool>& abort_flag() noexcept
-    {
-        static std::atomic<bool> flag{false};
-        return flag;
-    }
-
 private:
     Config config_;
+    std::shared_ptr<void> client_;   // s3_client (libs3 stays out of this header)
 };
 
 } // namespace utils
