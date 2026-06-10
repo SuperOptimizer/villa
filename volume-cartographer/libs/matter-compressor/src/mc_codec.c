@@ -8,22 +8,26 @@
 #include <math.h>
 #include "mc_dct.h"          // mc_dct3_fwd / mc_dct3_inv / mc_dct_init
 #include "mc_rangecoder.h"   // enc/dec block coefs + bit coders
-#include "mc_klt_tab.h"      // trained 3D-LFNST secondary transform (Q14)
 
 #define N3 (MC_BLK*MC_BLK*MC_BLK)
+#define MC_GRID3_F 4096
 
-static float g_quality = 8.0f;
+// Quality state is THREAD-LOCAL: format v6 stores q per chunk, so concurrent
+// decodes of different-q chunks each keep their own step/prior tables (rebuilt
+// only when the thread's q actually changes — once per chunk at most).
+static _Thread_local float g_quality = 8.0f;
 static int   g_max_err = 0;            // 0 = corrections off
 // per-coefficient quant step table (quality * hf_weight), rebuilt when quality
 // changes. powf per coefficient was 20%+ of encode AND decode time.
-static float g_step_tab[N3];
-static float g_step_q = -1.0f;
+static _Thread_local float g_step_tab[N3];
+static _Thread_local float g_step_q = -1.0f;
 static void step_tab_build(void);
 void  mc_set_quality(float q){ g_quality = q; step_tab_build(); }
 float mc_get_quality(void){ return g_quality; }
 void  mc_set_max_error(int tau){ g_max_err = tau<0?0:tau; }
 int   mc_get_max_error(void){ return g_max_err; }
 void  mc_codec_init(void){ mc_dct_init(); }
+void  mc_codec_set_priors(const uint16_t *plo, const uint16_t *phi){ rc_set_priors(plo,phi); }
 
 void mc_buf_put(mc_buf *b, const void *s, size_t n){
     if(b->len+n > b->cap){ size_t nc=b->cap?b->cap*2:1<<16; while(nc<b->len+n)nc*=2; b->p=realloc(b->p,nc); b->cap=nc; }
@@ -32,65 +36,11 @@ void mc_buf_put(mc_buf *b, const void *s, size_t n){
 
 // frozen quant: dead-zone, step = quality*(1+L1freq)^MC_HF_EXP
 static inline float hf_weight(int cz,int cy,int cx){ return powf(1.0f+(float)(cz+cy+cx), MC_HF_EXP); }
-// ---- 3D-LFNST secondary transform (AV2 IST / VVC LFNST analog) -------------
-// A trained KLT over the 4x4x4 low-band DCT corner, applied between the DCT
-// and quantization; the decoder applies the transpose after dequantization.
-// Corner outputs are eigenvalue-ordered; their quant steps reuse the corner's
-// own band-weight profile sorted ascending (finest step on the strongest
-// component), so total bit allocation matches the primary path.
-// MEASURED NEUTRAL on scroll data (identical ratio/PSNR, max error -1..-5):
-// the 3D DCT already decorrelates this texture; LFNST pays in video because
-// directional intra-prediction residuals leave structure the DCT misses,
-// which we don't have. Kept (off) with the trained table + mc_klt for
-// future data regimes.
-#define MC_LFNST 0
-static int   g_klt_pos[64];          // corner raster positions, (L1, raster) order
-static float g_klt_w[64];            // sorted corner hf weights (ascending)
-static int   g_klt_ready=0;
-static void klt_build(void){
-    if(g_klt_ready) return;
-    int n=0;
-    for(int b=0;b<=9;++b)
-        for(int cz=0;cz<4;++cz)for(int cy=0;cy<4;++cy)for(int cx=0;cx<4;++cx)
-            if(cz+cy+cx==b) g_klt_pos[n++]=(cz*MC_BLK+cy)*MC_BLK+cx;
-    for(int i=0;i<64;++i){
-        int p=g_klt_pos[i];
-        g_klt_w[i]=hf_weight(p>>8,(p>>4)&15,p&15);
-    }
-    for(int i=0;i<64;++i)for(int j=i+1;j<64;++j)
-        if(g_klt_w[j]<g_klt_w[i]){ float t=g_klt_w[i]; g_klt_w[i]=g_klt_w[j]; g_klt_w[j]=t; }
-    g_klt_ready=1;
-}
-static void klt_fwd(float *coef){
-    float v[64], o[64];
-    for(int i=0;i<64;++i) v[i]=coef[g_klt_pos[i]];
-    for(int i=0;i<64;++i){
-        float a=0;
-        for(int j=0;j<64;++j) a+=(float)MC_KLT[i][j]*v[j];
-        o[i]=a*(1.0f/16384.0f);
-    }
-    for(int i=0;i<64;++i) coef[g_klt_pos[i]]=o[i];
-}
-static void klt_inv(float *coef){
-    float v[64], o[64];
-    for(int i=0;i<64;++i) v[i]=coef[g_klt_pos[i]];
-    for(int j=0;j<64;++j){
-        float a=0;
-        for(int i=0;i<64;++i) a+=(float)MC_KLT[i][j]*v[i];   // transpose
-        o[j]=a*(1.0f/16384.0f);
-    }
-    for(int i=0;i<64;++i) coef[g_klt_pos[i]]=o[i];
-}
-
 static void step_tab_build(void){
     rc_prior_build(g_quality);
     if(g_step_q==g_quality) return;
-    klt_build();
     for(int cz=0;cz<MC_BLK;++cz)for(int cy=0;cy<MC_BLK;++cy)for(int cx=0;cx<MC_BLK;++cx)
         g_step_tab[(cz*MC_BLK+cy)*MC_BLK+cx]=g_quality*hf_weight(cz,cy,cx);
-#if MC_LFNST
-    for(int i=0;i<64;++i) g_step_tab[g_klt_pos[i]]=g_quality*g_klt_w[i];
-#endif
     g_step_q=g_quality;
 }
 static inline mc_i32 quant_one(float c, float step){
@@ -104,63 +54,6 @@ static inline float deq_one(mc_i32 lv, float step){
     return lv<0?-r:r;
 }
 
-// ---- RDOQ: encoder-only rate-distortion level decision (MEASURED: no win) ----
-// For each nonzero dead-zone level m, evaluate {0, m-1, m} against a rate model
-// built from the trained priors and keep the min of D + lambda*R. Measured on
-// PHercParis4 2.4um masked across lambda in {0.05..0.6}: every setting lands ON
-// OR BELOW the plain dead-zone RD curve at iso-PSNR — the frozen dz=0.8 +
-// band-weighted steps already encode a better allocation than flat-lambda
-// thresholding. Kept (disabled) for reference / future revisit with a
-// context-exact rate model.
-#define MC_RDOQ 0
-#define MC_AQ 0   // measured: variance-based QP reallocation lands below the
-                  // dead-zone RD curve at iso-PSNR on scroll data (statistically
-                  // homogeneous noise) — same lesson as RDOQ. Keep off.
-#define MC_AQ_LO 60.0
-#define MC_AQ_HI 900.0
-#define MC_RDOQ_LAMBDA 0.20f     // J = D + lambda*step^2*bits
-static float g_rd_sig0[NB_BANDS], g_rd_sig1[NB_BANDS];   // sig-flag bits by band
-static float g_rd_mag[66];                                // magnitude+sign bits, m in [1,65]
-static int   g_rd_ready=0;
-static double rd_bits(double p){ if(p<1e-4)p=1e-4; if(p>1-1e-4)p=1-1e-4; return -log2(p); }
-static void rdoq_init(void){
-    if(g_rd_ready) return;
-    for(int b=0;b<NB_BANDS;++b){
-        double p0=0; for(int dn=0;dn<4;++dn) p0+=RC_PRIOR_SIG[b*4+dn]/4096.0;
-        p0/=4.0;
-        g_rd_sig0[b]=(float)rd_bits(p0); g_rd_sig1[b]=(float)rd_bits(1.0-p0);
-    }
-    for(int m=1;m<=65;++m){          // mirror enc_magnitude bit-for-bit
-        double bits=0; int v=m-1,k=0,done=0;
-        while(k<MAGCTX-1&&v>0){ bits+=rd_bits(1.0-RC_PRIOR_MAG[k]/4096.0); v-=1;k++;
-            if(v==0){ bits+=rd_bits(RC_PRIOR_MAG[k]/4096.0); done=1; break; } }
-        if(!done){
-            if(v==0) bits+=rd_bits(RC_PRIOR_MAG[k]/4096.0);
-            else { bits+=rd_bits(1.0-RC_PRIOR_MAG[k]/4096.0);
-                   int nb=0,t=v+1; while(t>1){t>>=1;nb++;} bits+=2*nb+1; }
-        }
-        g_rd_mag[m]=(float)(bits+1.0);                     // +1: sign bypass
-    }
-    g_rd_ready=1;
-}
-// returns the RD-chosen magnitude for |coef|=a at quant step `step`, band b,
-// given the dead-zone choice m (>=1).
-static inline mc_i32 rdoq_level(float a, float step, int b, mc_i32 m){
-    float lam=MC_RDOQ_LAMBDA*step*step;
-    float bestJ=0; mc_i32 best=0;
-    // candidate 0
-    bestJ = a*a + lam*g_rd_sig0[b];
-    // candidates m and m-1
-    for(mc_i32 c=m; c>=1 && c>=m-1; --c){
-        float rec=((float)c+0.2f)*step;                    // matches deq_one
-        float d=a-rec;
-        mc_i32 cm = c<=65?c:65;
-        float J = d*d + lam*(g_rd_sig1[b]+g_rd_mag[cm]);
-        if(J<bestJ){ bestJ=J; best=c; }
-    }
-    return best;
-}
-
 // block-mask surface coder: 3-neighbor (z-1,y-1,x-1) context bit coder over the
 // block's 16^3 air mask (air = vox==0). Out-of-block neighbors read as 0. Codes
 // into the block's single range-coder stream (shared with the coefficients).
@@ -171,9 +64,9 @@ static inline mc_i32 rdoq_level(float a, float step, int b, mc_i32 m){
 // ~3-6x on boundary blocks (most blocks of a masked scroll volume).
 #define MSUB 4
 static void enc_blockmask(rc_enc *e, const mc_u8 *vox){
-    ctx_t ctx[8]; for(int i=0;i<8;++i) ctx_init_ps(&ctx[i],RC_PRIOR_MASK[i],RC_SHIFT[3]);
-    ctx_t cu[4];  for(int i=0;i<4;++i) ctx_init_ps(&cu[i],RC_PRIOR_MASKU[i],RC_SHIFT[4]);
-    ctx_t ca[2];  for(int i=0;i<2;++i) ctx_init_ps(&ca[i],RC_PRIOR_MASKA[i],RC_SHIFT[5]);
+    ctx_t ctx[8]; for(int i=0;i<8;++i) ctx_init_p(&ctx[i],RC_PRIOR_MASK[i]);
+    ctx_t cu[4];  for(int i=0;i<4;++i) ctx_init_p(&cu[i],RC_PRIOR_MASKU[i]);
+    ctx_t ca[2];  for(int i=0;i<2;++i) ctx_init_p(&ca[i],RC_PRIOR_MASKA[i]);
     const int S=MC_BLK, G=S/MSUB;
     static _Thread_local mc_u8 air[N3];
     mc_u8 sc[4*4*4];                       // subcube class: 0=material,1=air,2=mixed
@@ -210,9 +103,9 @@ static void enc_blockmask(rc_enc *e, const mc_u8 *vox){
     }
 }
 static void dec_blockmask(rc_dec *d, mc_u8 *air){
-    ctx_t ctx[8]; for(int i=0;i<8;++i) ctx_init_ps(&ctx[i],RC_PRIOR_MASK[i],RC_SHIFT[3]);
-    ctx_t cu[4];  for(int i=0;i<4;++i) ctx_init_ps(&cu[i],RC_PRIOR_MASKU[i],RC_SHIFT[4]);
-    ctx_t ca[2];  for(int i=0;i<2;++i) ctx_init_ps(&ca[i],RC_PRIOR_MASKA[i],RC_SHIFT[5]);
+    ctx_t ctx[8]; for(int i=0;i<8;++i) ctx_init_p(&ctx[i],RC_PRIOR_MASK[i]);
+    ctx_t cu[4];  for(int i=0;i<4;++i) ctx_init_p(&cu[i],RC_PRIOR_MASKU[i]);
+    ctx_t ca[2];  for(int i=0;i<2;++i) ctx_init_p(&ca[i],RC_PRIOR_MASKA[i]);
     const int S=MC_BLK, G=S/MSUB;
     mc_u8 sc[4*4*4];
     for(int sz=0;sz<G;++sz)for(int sy=0;sy<G;++sy)for(int sx=0;sx<G;++sx){
@@ -276,22 +169,84 @@ void mc_deblock(mc_u8 *v, int nz, int ny, int nx, float quality){
         }
 }
 
+// ---- per-chunk material-fraction map (4096 nibbles) -------------------------
+// Smooth field: each nibble coded as 4 adaptive bins conditioned on the
+// previous nibble bucket (0 / 1-14 / 15). ~0.1-0.3% of chunk bytes.
+uint32_t mc_enc_fracmap(const uint8_t *frac, uint8_t *out, size_t cap){
+    rc_enc e; enc_init(&e,out,cap);
+    ctx_t cx[3][4]; for(int b=0;b<3;++b)for(int i=0;i<4;++i) ctx_init(&cx[b][i]);
+    int prev=0;
+    for(int i=0;i<MC_GRID3_F;++i){
+        int v=frac[i]&15, pb=prev==0?0:prev==15?2:1;
+        for(int b=3;b>=0;--b) enc_bit(&e,&cx[pb][b],(v>>b)&1);
+        prev=v;
+    }
+    enc_flush(&e);
+    return (uint32_t)e.len;
+}
+void mc_dec_fracmap(const uint8_t *in, uint32_t len, uint8_t *frac){
+    rc_dec d; dec_init(&d,in,len);
+    ctx_t cx[3][4]; for(int b=0;b<3;++b)for(int i=0;i<4;++i) ctx_init(&cx[b][i]);
+    int prev=0;
+    for(int i=0;i<MC_GRID3_F;++i){
+        int v=0, pb=prev==0?0:prev==15?2:1;
+        for(int b=3;b>=0;--b) v|=dec_bit(&d,&cx[pb][b])<<b;
+        frac[i]=(uint8_t)v; prev=v;
+    }
+}
+
 // block payload layout: ONE range-coded stream, nothing else. The stream starts
-// with [mixed bit][corr bit][qpd 2 bits][dc 8 bits] all context-coded with
+// with [mixed bit][corr bit][dc 8 bits] all context-coded with
 // trained priors (the old raw dc+flags bytes were ~5% of an average payload),
 // then the mask bins (if mixed), the coefficients, and the corrections. flags bit0 =
 // mixed block; the stream carries the mask bins (if mixed) then the coefficients.
 // One stream = one flush (~5B) instead of two streams + a 2B mask length.
 int mc_enc_block(const mc_u8 *vox, mc_buf *out, uint32_t *len_out){
-    int n=N3, any=0; for(int i=0;i<n;++i) any|=vox[i];
-    if(!any){ *len_out=0; return 0; }
-
+    int n=N3, any=0;
     static _Thread_local float blk[N3], coef[N3];
     static _Thread_local mc_i32 lv[N3];
-    long sum=0,cnt=0; for(int i=0;i<n;++i){ if(vox[i]){ sum+=vox[i]; cnt++; } }
+    long sum=0,cnt=0;
+#if MC_SIMD_NEON
+    {   uint32x4_t s32=vdupq_n_u32(0), c32=vdupq_n_u32(0);
+        for(int i=0;i<n;i+=16){
+            uint8x16_t v=vld1q_u8(vox+i);
+            s32=vpadalq_u16(s32,vpaddlq_u8(v));
+            uint8x16_t one=vminq_u8(v,vdupq_n_u8(1));
+            c32=vpadalq_u16(c32,vpaddlq_u8(one));
+        }
+        sum=(long)vaddvq_u32(s32); cnt=(long)vaddvq_u32(c32);
+        any=cnt>0;
+    }
+#else
+    for(int i=0;i<n;++i) any|=vox[i];
+    for(int i=0;i<n;++i){ if(vox[i]){ sum+=vox[i]; cnt++; } }
+#endif
+    if(!any||!cnt){ *len_out=0; return 0; }
     int dc = (int)((sum+cnt/2)/cnt);                  // DC over material only
     int nair = n-(int)cnt;                            // air = vox==0
+#if MC_SIMD_NEON
+    {   int16x8_t vdc=vdupq_n_s16((int16_t)dc);
+        for(int i=0;i<n;i+=16){
+            uint8x16_t v=vld1q_u8(vox+i);
+            uint8x16_t nz=vtstq_u8(v,v);
+            int16x8_t lo=vreinterpretq_s16_u16(vmovl_u8(vget_low_u8(v)));
+            int16x8_t hi=vreinterpretq_s16_u16(vmovl_u8(vget_high_u8(v)));
+            lo=vsubq_s16(lo,vdc); hi=vsubq_s16(hi,vdc);
+            int16x8_t mlo=vreinterpretq_s16_u16(vmovl_u8(vget_low_u8(nz)));
+            int16x8_t mhi=vreinterpretq_s16_u16(vmovl_u8(vget_high_u8(nz)));
+            // mask: 0x00FF per nonzero after widen -> turn into all-ones/all-zero
+            mlo=vreinterpretq_s16_u16(vtstq_u16(vreinterpretq_u16_s16(mlo),vreinterpretq_u16_s16(mlo)));
+            mhi=vreinterpretq_s16_u16(vtstq_u16(vreinterpretq_u16_s16(mhi),vreinterpretq_u16_s16(mhi)));
+            lo=vandq_s16(lo,mlo); hi=vandq_s16(hi,mhi);   // air -> 0 (== dc-dc)
+            vst1q_f32(blk+i   ,vcvtq_f32_s32(vmovl_s16(vget_low_s16(lo))));
+            vst1q_f32(blk+i+4 ,vcvtq_f32_s32(vmovl_s16(vget_high_s16(lo))));
+            vst1q_f32(blk+i+8 ,vcvtq_f32_s32(vmovl_s16(vget_low_s16(hi))));
+            vst1q_f32(blk+i+12,vcvtq_f32_s32(vmovl_s16(vget_high_s16(hi))));
+        }
+    }
+#else
     for(int i=0;i<n;++i) blk[i]=(float)((vox[i]?vox[i]:dc)-dc);
+#endif
     // harmonic (Jacobi) air-fill: relax air voxels to 6-neighbor mean (material
     // fixed). Air-voxel index list + ping-pong buffers: each sweep touches only
     // the air voxels and there is no per-sweep copy (material values are
@@ -350,39 +305,7 @@ int mc_enc_block(const mc_u8 *vox, mc_buf *out, uint32_t *len_out){
         }
     }
     mc_dct3_fwd(blk,coef);
-#if MC_LFNST
-    step_tab_build(); klt_fwd(coef);
-#endif
-#if MC_RDOQ
-    rdoq_init();
-#endif
-    // adaptive per-block QP: scale the quant step by local activity (variance of
-    // material voxels). Flat (noise-dominated) blocks get a finer step, busy
-    // blocks a coarser one; 2-bit delta signalled in flags bits 2-3.
-    int qpd=0;
-#if MC_AQ
-    {
-        double s1=0,s2=0;
-        for(int i=0;i<n;++i) if(vox[i]){ double v=vox[i]; s1+=v; s2+=v*v; }
-        double var = cnt? s2/cnt-(s1/cnt)*(s1/cnt) : 0;
-        qpd = var<MC_AQ_LO ? 3 : var>MC_AQ_HI ? 1 : 0;     // 3 -> finer, 1 -> coarser
-    }
-#endif
-    const float qp_scale[4]={1.0f,1.4f,1.0f,0.71f};
-    float qs=qp_scale[qpd];
-    for(int cz=0;cz<MC_BLK;++cz)for(int cy=0;cy<MC_BLK;++cy)for(int cx=0;cx<MC_BLK;++cx){
-        int idx=(cz*MC_BLK+cy)*MC_BLK+cx; float step=g_step_tab[idx]*qs;
-        mc_i32 m=quant_one(coef[idx],step);
-#if MC_RDOQ
-        if(m){
-            int b=(cz+cy+cx)*NB_BANDS/(3*MC_BLK); if(b>=NB_BANDS)b=NB_BANDS-1;
-            mc_i32 am=m<0?-m:m;
-            mc_i32 r=rdoq_level(fabsf(coef[idx]),step,b,am);
-            m = coef[idx]<0?-r:r;
-        }
-#endif
-        lv[idx]=m;
-    }
+    for(int idx=0;idx<N3;++idx) lv[idx]=quant_one(coef[idx],g_step_tab[idx]);
     static _Thread_local rc_i16 ql[N3];
     static _Thread_local rc_u8 scratch[N3*4+1024];
     for(int i=0;i<n;++i){ mc_i32 v=lv[i]; ql[i]=(rc_i16)(v>32767?32767:v<-32768?-32768:v); }
@@ -392,10 +315,7 @@ int mc_enc_block(const mc_u8 *vox, mc_buf *out, uint32_t *len_out){
     int ncorr=0;
     if(g_max_err>0){
         static _Thread_local float rcoef[N3], rblk[N3];
-        for(int idx=0;idx<N3;++idx) rcoef[idx]=deq_one(ql[idx],g_step_tab[idx]*qs);
-#if MC_LFNST
-        klt_inv(rcoef);
-#endif
+        for(int idx=0;idx<N3;++idx) rcoef[idx]=deq_one(ql[idx],g_step_tab[idx]);
         mc_dct3_inv(rcoef,rblk);
         for(int i=0;i<n;++i){
             if(!vox[i]) continue;                          // air decodes to exactly 0
@@ -407,13 +327,11 @@ int mc_enc_block(const mc_u8 *vox, mc_buf *out, uint32_t *len_out){
     }
 
     rc_enc e; enc_init(&e,scratch,sizeof scratch);
-    {   // header bins: mixed, has-corr, qpd, dc (trained priors)
-        ctx_t cf[4]; for(int i=0;i<4;++i) ctx_init_ps(&cf[i],RC_PRIOR_FLAG[i],RC_SHIFT[6]);
-        ctx_t cd[8]; for(int i=0;i<8;++i) ctx_init_ps(&cd[i],RC_PRIOR_DC[i],RC_SHIFT[7]);
+    {   // header bins: mixed, has-corr, dc (trained priors)
+        ctx_t cf[2]; for(int i=0;i<2;++i) ctx_init_p(&cf[i],RC_PRIOR_FLAG[i]);
+        ctx_t cd[8]; for(int i=0;i<8;++i) ctx_init_p(&cd[i],RC_PRIOR_DC[i]);
         RC_TRAIN(RCC_FLAG,0,nair>0);  enc_bit(&e,&cf[0],nair>0);
         RC_TRAIN(RCC_FLAG,1,ncorr>0); enc_bit(&e,&cf[1],ncorr>0);
-        RC_TRAIN(RCC_FLAG,2,(qpd>>1)&1); enc_bit(&e,&cf[2],(qpd>>1)&1);
-        RC_TRAIN(RCC_FLAG,3,qpd&1);      enc_bit(&e,&cf[3],qpd&1);
         for(int b=7;b>=0;--b){ int bit=(dc>>b)&1; RC_TRAIN(RCC_DC,7-b,bit); enc_bit(&e,&cd[7-b],bit); }
     }
     if(nair>0) enc_blockmask(&e,vox);
@@ -442,12 +360,10 @@ void mc_dec_block(const mc_u8 *p, uint32_t plen, mc_u8 *dst){
     static _Thread_local rc_i16 ql[N3];
     rc_dec d; dec_init(&d,p,plen);
     {   // header bins (must mirror the encoder exactly)
-        ctx_t cf[4]; for(int i=0;i<4;++i) ctx_init_ps(&cf[i],RC_PRIOR_FLAG[i],RC_SHIFT[6]);
-        ctx_t cd[8]; for(int i=0;i<8;++i) ctx_init_ps(&cd[i],RC_PRIOR_DC[i],RC_SHIFT[7]);
+        ctx_t cf[2]; for(int i=0;i<2;++i) ctx_init_p(&cf[i],RC_PRIOR_FLAG[i]);
+        ctx_t cd[8]; for(int i=0;i<8;++i) ctx_init_p(&cd[i],RC_PRIOR_DC[i]);
         flags |= dec_bit(&d,&cf[0]) ? 1 : 0;
         flags |= dec_bit(&d,&cf[1]) ? 2 : 0;
-        int q1=dec_bit(&d,&cf[2]), q0=dec_bit(&d,&cf[3]);
-        flags |= ((q1<<1)|q0)<<2;
         for(int b=0;b<8;++b) dc=(dc<<1)|dec_bit(&d,&cd[b]);
     }
     if(flags&1) dec_blockmask(&d,air);
@@ -455,22 +371,52 @@ void mc_dec_block(const mc_u8 *p, uint32_t plen, mc_u8 *dst){
     int ext[3]; dec_block_coefs_ext(&d,ql,MC_BLK,ext);
     static _Thread_local float coef[N3], blk[N3];
     step_tab_build();
-    const float qp_scale[4]={1.0f,1.4f,1.0f,0.71f};
-    float qs=qp_scale[(flags>>2)&3];
     int ez=ext[0],ey=ext[1],ex=ext[2];
     if(ez<0 && !(flags&1) && !(flags&2)){                   // constant block: dc fill
         memset(dst,(mc_u8)dc,n); return;
     }
     (void)ey;(void)ex;
-    for(int idx=0;idx<N3;++idx) coef[idx]=deq_one(ql[idx],g_step_tab[idx]*qs);
-#if MC_LFNST
-    klt_inv(coef);
-#endif
+#if MC_SIMD_NEON
+    {   // fused dequant -> i32 DCT input (no float coefficient pass), then
+        // integer iDCT and vectorized clamp+dc+air store.
+        static _Thread_local mc_fi32 qin[N3] __attribute__((aligned(64)));
+        static _Thread_local mc_fi32 qout[N3] __attribute__((aligned(64)));
+        float32x4_t bias=vdupq_n_f32(MC_DZ_FRAC-1.0f+0.40f);
+        for(int i=0;i<N3;i+=4){
+            int32x4_t lv=vmovl_s16(vld1_s16(ql+i));
+            uint32x4_t nz=vmvnq_u32(vceqzq_s32(lv));
+            uint32x4_t neg=vcltzq_s32(lv);
+            float32x4_t a=vcvtq_f32_s32(vabsq_s32(lv));
+            float32x4_t r=vmulq_f32(vaddq_f32(a,bias),vld1q_f32(g_step_tab+i));
+            int32x4_t ri=vcvtnq_s32_f32(r);
+            ri=vbslq_s32(neg,vnegq_s32(ri),ri);
+            ri=vandq_s32(ri,vreinterpretq_s32_u32(nz));
+            vst1q_s32(qin+i,ri);
+        }
+        mc_dct3_inv_i32(qin,qout);
+        int32x4_t vdc=vdupq_n_s32(dc);
+        for(int i=0;i<n;i+=16){
+            int32x4_t a0=vaddq_s32(vld1q_s32(qout+i),vdc);
+            int32x4_t a1=vaddq_s32(vld1q_s32(qout+i+4),vdc);
+            int32x4_t a2=vaddq_s32(vld1q_s32(qout+i+8),vdc);
+            int32x4_t a3=vaddq_s32(vld1q_s32(qout+i+12),vdc);
+            uint16x8_t p0=vcombine_u16(vqmovun_s32(a0),vqmovun_s32(a1));
+            uint16x8_t p1=vcombine_u16(vqmovun_s32(a2),vqmovun_s32(a3));
+            uint8x16_t v8=vcombine_u8(vqmovn_u16(p0),vqmovn_u16(p1));
+            uint8x16_t am=vld1q_u8(air+i);
+            v8=vbicq_u8(v8,vtstq_u8(am,am));               // air -> 0
+            vst1q_u8(dst+i,v8);
+        }
+        (void)coef;(void)blk;
+    }
+#else
+    for(int idx=0;idx<N3;++idx) coef[idx]=deq_one(ql[idx],g_step_tab[idx]);
     mc_dct3_inv(coef,blk);
     for(int i=0;i<n;++i){
         int v = air[i] ? 0 : (int)lrintf(blk[i])+dc;  // mask-restore: air -> exactly 0
         if(v<0)v=0; if(v>255)v=255; dst[i]=(mc_u8)v;
     }
+#endif
     if(flags&2){                                      // sparse max-error corrections
         rc_u32 ncorr=dec_eg(&d)+1, pos=0;
         for(rc_u32 c=0;c<ncorr;++c){

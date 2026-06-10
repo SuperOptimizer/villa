@@ -11,6 +11,7 @@
 //
 // Thread-safety: appends, decodes and cache reads are all safe from many threads.
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -24,12 +25,13 @@ public:
     static constexpr int kBlock = 16;     // MC_BLK
     static constexpr int kBlocksPerAxis = kChunk / kBlock;   // 16
 
-    // Open (or create) a persistent appendable archive at `path` for a volume whose
-    // LOD0 edge is `dim0` voxels (chunk-aligned up to a multiple of 256), encoded at
-    // `quality`, with an mc_cache resident-block budget of `cacheBytes`. A stale
-    // archive (older format version / different dim) is deleted and recreated.
-    // Throws std::runtime_error on failure.
-    MatterArchive(std::string path, int dim0, float quality, std::size_t cacheBytes);
+    // Open (or create) a persistent appendable archive at `path` for a volume of
+    // LOD0 extent (nz,ny,nx) voxels (each axis padded to a 256 multiple internally),
+    // encoded at `quality`, with an mc_cache resident-block budget of `cacheBytes`.
+    // A stale archive (older format version / different dims) is deleted and
+    // recreated. Throws std::runtime_error on failure.
+    MatterArchive(std::string path, std::array<int, 3> shape0, float quality,
+                  std::size_t cacheBytes);
     ~MatterArchive();
 
     MatterArchive(const MatterArchive&) = delete;
@@ -54,7 +56,7 @@ public:
     };
     CacheStats cacheStats() const;
 
-    int   dim0() const { return dim0_; }
+    std::array<int, 3> shape0() const { return shape0_; }
     float quality() const { return quality_; }
     const std::string& path() const { return path_; }
 
@@ -62,7 +64,7 @@ private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
     std::string path_;
-    int   dim0_ = 0;
+    std::array<int, 3> shape0_{};
     float quality_ = 0.f;
 };
 

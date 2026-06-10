@@ -16,10 +16,9 @@ typedef uint32_t rc_u32; typedef uint64_t rc_u64;
 
 typedef struct { rc_u8 *buf; size_t cap, len; rc_u64 low; rc_u32 range; rc_u8 cache; rc_u64 cache_size; } rc_enc;
 typedef struct { const rc_u8 *buf; size_t len, pos; rc_u32 code, range; } rc_dec;
-typedef struct { uint16_t p0; uint8_t sh; } ctx_t;   // sh = adaptation shift (PARA)
-static inline void ctx_init(ctx_t *c){ c->p0 = 1u<<11; c->sh = 4; }
-static inline void ctx_init_p(ctx_t *c, uint16_t p0){ c->p0 = p0; c->sh = 4; }
-static inline void ctx_init_ps(ctx_t *c, uint16_t p0, uint8_t sh){ c->p0 = p0; c->sh = sh; }
+typedef struct { uint16_t p0; } ctx_t;
+static inline void ctx_init(ctx_t *c){ c->p0 = 1u<<11; }
+static inline void ctx_init_p(ctx_t *c, uint16_t p0){ c->p0 = p0; }
 #define RC_TOP (1u<<24)
 
 // ---- trained context priors -------------------------------------------------
@@ -61,19 +60,35 @@ static const uint16_t RC_PHI[8][RC_NSLOT]={
   /*FLAG*/ {1023,4064,4064,4064,2048,2048,2048,2048,2048,2048,2048,2048,2048,2048,2048,2048,2048,2048,2048,2048,2048,2048,2048,2048,2048,2048,2048,2048,2048,2048,2048,2048},
   /*DC*/ {3873,366,1820,2056,2040,2055,2041,2045,2048,2048,2048,2048,2048,2048,2048,2048,2048,2048,2048,2048,2048,2048,2048,2048,2048,2048,2048,2048,2048,2048,2048,2048}
 };
-static uint16_t g_pri[8][RC_NSLOT];
-static float g_pri_q = -1.0f;
+static _Thread_local uint16_t g_pri[8][RC_NSLOT];
+static _Thread_local float g_pri_q = -1.0f;
+// Per-volume prior override (format v6: a trained-prior blob stored in the
+// archive replaces the baked corpus tables). Process-global, set at open
+// before decode threads start; a generation counter forces per-thread rebuild.
+static uint16_t g_plo_ovr[8][RC_NSLOT], g_phi_ovr[8][RC_NSLOT];
+static int g_pri_ovr = 0;
+static int g_pri_gen = 1;
+static _Thread_local int g_pri_seen = 0;
+static void rc_set_priors(const uint16_t *plo, const uint16_t *phi){
+    if(plo&&phi){
+        memcpy(g_plo_ovr,plo,sizeof g_plo_ovr);
+        memcpy(g_phi_ovr,phi,sizeof g_phi_ovr);
+        g_pri_ovr=1;
+    } else g_pri_ovr=0;
+    g_pri_gen++;
+}
 static void rc_prior_build(float q){
-    if(g_pri_q==q) return;
+    if(g_pri_q==q && g_pri_seen==g_pri_gen) return;
+    g_pri_seen=g_pri_gen;
     float lo=0.0f, hi=3.585f;                       // log2(1) .. log2(12)
     float w=(q<=1.0f)?0.0f:((float)(log(q)/log(2.0))-lo)/(hi-lo);
     if(w<0)w=0; if(w>1)w=1;
+    const uint16_t (*tlo)[RC_NSLOT] = g_pri_ovr ? (const uint16_t(*)[RC_NSLOT])g_plo_ovr : RC_PLO;
+    const uint16_t (*thi)[RC_NSLOT] = g_pri_ovr ? (const uint16_t(*)[RC_NSLOT])g_phi_ovr : RC_PHI;
     for(int c=0;c<8;++c)for(int s=0;s<RC_NSLOT;++s)
-        g_pri[c][s]=(uint16_t)(RC_PLO[c][s]+(RC_PHI[c][s]-RC_PLO[c][s])*w+0.5f);
+        g_pri[c][s]=(uint16_t)(tlo[c][s]+(thi[c][s]-tlo[c][s])*w+0.5f);
     g_pri_q=q;
 }
-// per-class adaptation shifts (PARA-style; tuned on corpus): smaller = faster
-static const uint8_t RC_SHIFT[8]={4,4,4,4,4,4,4,4};   // SIG MAG EOB MASK MASKU MASKA FLAG DC
 #define RC_PRIOR_SIG   g_pri[0]
 #define RC_PRIOR_MAG   g_pri[1]
 #define RC_PRIOR_EOB   g_pri[2]
@@ -95,8 +110,8 @@ static void enc_shift_low(rc_enc *e){
 }
 static void enc_bit(rc_enc *e, ctx_t *c, int bit){
     rc_u32 r0=(e->range>>12)*c->p0;
-    if(bit==0){ e->range=r0; c->p0=(uint16_t)(c->p0+((4096-c->p0)>>c->sh)); }
-    else { e->low+=r0; e->range-=r0; c->p0=(uint16_t)(c->p0-(c->p0>>c->sh)); }
+    if(bit==0){ e->range=r0; c->p0=(uint16_t)(c->p0+((4096-c->p0)>>4)); }
+    else { e->low+=r0; e->range-=r0; c->p0=(uint16_t)(c->p0-(c->p0>>4)); }
     while(e->range<RC_TOP){ enc_shift_low(e); e->range<<=8; }
 }
 static void enc_bypass(rc_enc *e, int bit){ e->range>>=1; if(bit) e->low+=e->range; while(e->range<RC_TOP){ enc_shift_low(e); e->range<<=8; } }
@@ -105,23 +120,44 @@ static void enc_flush(rc_enc *e){ for(int i=0;i<5;++i) enc_shift_low(e); }
 static void dec_init(rc_dec *d,const rc_u8*buf,size_t len){ d->buf=buf;d->len=len;d->pos=0;d->code=0;d->range=0xFFFFFFFFu; for(int i=0;i<5;++i){ rc_u8 b=(d->pos<d->len)?d->buf[d->pos++]:0; d->code=(d->code<<8)|b; } }
 static int dec_bit(rc_dec *d, ctx_t *c){
     rc_u32 r0=(d->range>>12)*c->p0; int bit;
-    if(d->code<r0){ d->range=r0;bit=0; c->p0=(uint16_t)(c->p0+((4096-c->p0)>>c->sh)); }
-    else { d->code-=r0; d->range-=r0; bit=1; c->p0=(uint16_t)(c->p0-(c->p0>>c->sh)); }
+    if(d->code<r0){ d->range=r0;bit=0; c->p0=(uint16_t)(c->p0+((4096-c->p0)>>4)); }
+    else { d->code-=r0; d->range-=r0; bit=1; c->p0=(uint16_t)(c->p0-(c->p0>>4)); }
     while(d->range<RC_TOP){ rc_u8 b=(d->pos<d->len)?d->buf[d->pos++]:0; d->code=(d->code<<8)|b; d->range<<=8; }
     return bit;
 }
 static int dec_bypass(rc_dec *d){ d->range>>=1; int bit=(d->code>=d->range); if(bit)d->code-=d->range; while(d->range<RC_TOP){ rc_u8 b=(d->pos<d->len)?d->buf[d->pos++]:0; d->code=(d->code<<8)|b; d->range<<=8; } return bit; }
 
+// batched bypass: k equiprobable bits in one renorm round (bit-compatible
+// with k single bypasses only when both sides batch identically — they do).
+static void enc_bypass_n(rc_enc *e, rc_u32 v, int k){
+    while(k>16){ enc_bypass_n(e,(v>>(k-16))&0xFFFF,16); k-=16; }
+    if(!k) return;
+    e->range>>=k;
+    e->low+=(rc_u64)(v&((1u<<k)-1))*e->range;
+    while(e->range<RC_TOP){ enc_shift_low(e); e->range<<=8; }
+}
+static rc_u32 dec_bypass_n(rc_dec *d, int k){
+    rc_u32 v=0;
+    while(k>16){ v=(v<<16)|dec_bypass_n(d,16); k-=16; }
+    if(!k) return v;
+    d->range>>=k;
+    rc_u32 q=d->code/d->range;
+    rc_u32 m=(1u<<k)-1; if(q>m)q=m;
+    d->code-=q*d->range;
+    while(d->range<RC_TOP){ rc_u8 b=(d->pos<d->len)?d->buf[d->pos++]:0; d->code=(d->code<<8)|b; d->range<<=8; }
+    return (v<<k)|q;
+}
+
 // Exp-Golomb in bypass bits (order 0), v >= 0.
 static void enc_eg(rc_enc*e,rc_u32 v){
     rc_u32 nb=0,t=v+1; while(t>1){t>>=1;nb++;}
     for(rc_u32 i=0;i<nb;++i)enc_bypass(e,1); enc_bypass(e,0);
-    for(rc_i32 i=(rc_i32)nb-1;i>=0;--i)enc_bypass(e,((v+1)>>i)&1);
+    if(nb) enc_bypass_n(e,(v+1)&((1u<<nb)-1),(int)nb);
 }
 static rc_u32 dec_eg(rc_dec*d){
     rc_u32 nb=0; while(dec_bypass(d))nb++;
-    rc_u32 x=1; for(rc_u32 i=0;i<nb;++i)x=(x<<1)|(rc_u32)dec_bypass(d);
-    return x-1;
+    if(!nb) return 0;
+    return ((1u<<nb)|dec_bypass_n(d,(int)nb))-1;
 }
 
 // --- coefficient context coder (block size S) ---
@@ -141,8 +177,8 @@ typedef struct {
                                // own magnitude distribution)
 } atom_ctx;
 static void atom_ctx_init(atom_ctx *a){
-    for(int i=0;i<NB_BANDS*4;++i) ctx_init_ps(&a->sig[i],RC_PRIOR_SIG[i],RC_SHIFT[0]);
-    for(int i=0;i<MAGCTX;++i)     ctx_init_ps(&a->mag[i],RC_PRIOR_MAG[i],RC_SHIFT[1]);
+    for(int i=0;i<NB_BANDS*4;++i) ctx_init_p(&a->sig[i],RC_PRIOR_SIG[i]);
+    for(int i=0;i<MAGCTX;++i)     ctx_init_p(&a->mag[i],RC_PRIOR_MAG[i]);
 }
 static void enc_magnitude(rc_enc*e,atom_ctx*ac,rc_u32 m){
     ctx_t*mag=ac->mag; rc_u32 v=m-1,k=0;
@@ -150,13 +186,15 @@ static void enc_magnitude(rc_enc*e,atom_ctx*ac,rc_u32 m){
     if(v==0){ RC_TRAIN(RCC_MAG,k,0); enc_bit(e,&mag[k],0); return; }
     RC_TRAIN(RCC_MAG,k,1); enc_bit(e,&mag[k],1); rc_u32 x=v,nbits=0,tt=x+1; while(tt>1){tt>>=1;nbits++;}
     for(rc_u32 i=0;i<nbits;++i)enc_bypass(e,1); enc_bypass(e,0);
-    for(rc_i32 i=(rc_i32)nbits-1;i>=0;--i)enc_bypass(e,((x+1)>>i)&1);
+    if(nbits) enc_bypass_n(e,(x+1)&((1u<<nbits)-1),(int)nbits);
 }
 static rc_u32 dec_magnitude(rc_dec*d,atom_ctx*ac){
     ctx_t*mag=ac->mag; rc_u32 v=0,k=0;
     while(k<(rc_u32)(MAGCTX-1)){ if(dec_bit(d,&mag[k])){v+=1;k++;} else return v+1; }
     if(!dec_bit(d,&mag[k])) return v+1;
-    rc_u32 nbits=0; while(dec_bypass(d))nbits++; rc_u32 x=1; for(rc_u32 i=0;i<nbits;++i)x=(x<<1)|(rc_u32)dec_bypass(d); x-=1; return v+x+1;
+    rc_u32 nbits=0; while(dec_bypass(d))nbits++;
+    rc_u32 x = nbits ? ((1u<<nbits)|dec_bypass_n(d,(int)nbits))-1 : 0;
+    return v+x+1;
 }
 
 // per-size ascending-L1-frequency scan tables, built lazily (indexed by log2 S).
@@ -183,20 +221,20 @@ static inline int band_of_S(rc_u32 idx,int S){
 // low bits in bypass. v in [0, n]; prefix k = MSB position + 1 (0 -> v==0).
 #define EOB_CTX 14
 typedef struct { ctx_t pfx[EOB_CTX]; } eob_ctx;
-static void eob_ctx_init(eob_ctx*c){ for(int i=0;i<EOB_CTX;++i) ctx_init_ps(&c->pfx[i],RC_PRIOR_EOB[i],RC_SHIFT[2]); }
+static void eob_ctx_init(eob_ctx*c){ for(int i=0;i<EOB_CTX;++i) ctx_init_p(&c->pfx[i],RC_PRIOR_EOB[i]); }
 static void enc_eob(rc_enc*e,eob_ctx*c,rc_u32 v,int n){
     int kmax=0; while((1u<<kmax)<=(rc_u32)n) kmax++;          // 13 for n=4096
     int k=0; while((1u<<k)<=v) k++;                            // MSB+1 (0 for v=0)
     for(int i=0;i<k;++i){ RC_TRAIN(RCC_EOB,i,1); enc_bit(e,&c->pfx[i],1); }
     if(k<kmax){ RC_TRAIN(RCC_EOB,k,0); enc_bit(e,&c->pfx[k],0); }
-    if(k>1) for(int i=k-2;i>=0;--i) enc_bypass(e,(v>>i)&1);    // suffix below the MSB
+    if(k>1) enc_bypass_n(e,v&((1u<<(k-1))-1),k-1);             // suffix below the MSB
 }
 static rc_u32 dec_eob(rc_dec*d,eob_ctx*c,int n){
     int kmax=0; while((1u<<kmax)<=(rc_u32)n) kmax++;
     int k=0; while(k<kmax && dec_bit(d,&c->pfx[k])) k++;
     if(k==0) return 0;
-    rc_u32 v=1; for(int i=0;i<k-1;++i) v=(v<<1)|(rc_u32)dec_bypass(d);
-    return v;
+    if(k==1) return 1;
+    return (1u<<(k-1))|dec_bypass_n(d,k-1);
 }
 
 // encode/decode quantized levels q[S^3] (raster).

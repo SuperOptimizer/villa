@@ -54,10 +54,13 @@
 #define MCH_METACAP 104             // u64 metadata region capacity (= MC_META_END - MC_HDR)
 #define MCH_METALEN 112             // u64 metadata bytes actually written
 #define MCH_QUALITY 120             // f32 quality the archive was built at (writer stamps it)
+#define MCH_PRIOROFF 128            // u64 offset of an optional per-volume prior blob (0 = none)
+#define MC_PRIORS_MAGIC 0x53524950u // "PRIS"
+#define MC_PRIORS_BYTES (8 + 2*8*32*2)  // magic+ver, RC_PLO + RC_PHI as u16[8][32]
 #define MC_HDR      256u            // header size; metadata region begins here
 #define MC_META_END (128u*1024u)    // archive data begins at this offset (128KB)
 #define MC_META_CAP (MC_META_END - MC_HDR)
-#define MC_VERSION  4u              // format version (v4: header bins in-stream, subcube mask)
+#define MC_VERSION  7u              // format version (v7: per-chunk material-fraction map)
 
 #define MC_CHUNK_ALIGN 256          // volume dim must be a multiple of this
 

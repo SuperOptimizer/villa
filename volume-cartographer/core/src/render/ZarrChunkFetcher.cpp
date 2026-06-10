@@ -416,16 +416,17 @@ std::shared_ptr<MatterArchive> applyMatterCache(OpenedChunkedZarr& opened,
         return nullptr;
     }
 
-    const int dim0 = std::max({opened.shapes[0][0], opened.shapes[0][1], opened.shapes[0][2]});
     std::shared_ptr<MatterArchive> archive;
     try {
-        archive = std::make_shared<MatterArchive>(mcaPath.string(), dim0, quality, cacheBytes);
+        archive = std::make_shared<MatterArchive>(mcaPath.string(), opened.shapes[0],
+                                                  quality, cacheBytes);
     } catch (const std::exception& e) {
         Logger()->warn("mca cache: failed to open {} ({}); falling back to raw cache",
                        mcaPath.string(), e.what());
         return nullptr;
     }
-    Logger()->info("mca cache enabled at {} (dim0={}, q={})", mcaPath.string(), dim0, quality);
+    Logger()->info("mca cache enabled at {} (shape0={}x{}x{}, q={})", mcaPath.string(),
+                   opened.shapes[0][0], opened.shapes[0][1], opened.shapes[0][2], quality);
 
     std::vector<std::shared_ptr<IChunkFetcher>> mcaFetchers;
     mcaFetchers.reserve(opened.fetchers.size());

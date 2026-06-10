@@ -17,23 +17,26 @@ struct MatterArchive::Impl {
     mc_cache* cache = nullptr;
 };
 
-static int alignUp(int v, int a) { return ((v + a - 1) / a) * a; }
-
-MatterArchive::MatterArchive(std::string path, int dim0, float quality, std::size_t cacheBytes)
+MatterArchive::MatterArchive(std::string path, std::array<int, 3> shape0, float quality,
+                             std::size_t cacheBytes)
     : impl_(std::make_unique<Impl>())
     , path_(std::move(path))
-    , dim0_(dim0)
+    , shape0_(shape0)
     , quality_(quality)
 {
-    const int dimAligned = alignUp(dim0, kChunk);
-    impl_->a = mc_archive_open(path_.c_str(), dimAligned, quality);
+    // shape0 is (z,y,x); mc takes (nx,ny,nz) and pads each axis to 256 internally.
+    auto open = [&] {
+        return mc_archive_open_dims(path_.c_str(), shape0_[2], shape0_[1], shape0_[0],
+                                    quality);
+    };
+    impl_->a = open();
     if (!impl_->a && std::filesystem::exists(path_)) {
-        // stale archive (older format version / different dim): it's a rebuildable
+        // stale archive (older format version / different dims): it's a rebuildable
         // cache, so delete and recreate.
         Logger()->warn("MatterArchive: {} is stale/incompatible; recreating", path_);
         std::error_code ec;
         std::filesystem::remove(path_, ec);
-        impl_->a = mc_archive_open(path_.c_str(), dimAligned, quality);
+        impl_->a = open();
     }
     if (!impl_->a)
         throw std::runtime_error("MatterArchive: mc_archive_open failed for " + path_);

@@ -17,6 +17,14 @@
 //     reused by a later eviction; a stale frame is possible, a UAF is not
 //     (same contract as vc's BlockCache). Use mc_cache_get_copy when the
 //     caller needs a stable snapshot.
+//
+// THREAD-SAFETY CONTRACT: all operations are safe from any number of threads
+// (per-shard mutexes; decode runs outside the locks with a double-checked
+// insert). mc_cache_get's pointer may be overwritten by a concurrent
+// eviction (torn read, never UAF) — use mc_cache_get_copy where that
+// matters. Writers that REPLACE a chunk in the source must call
+// mc_cache_invalidate_chunk afterwards; the mc_reader binding serializes
+// decode (mc_reader is single-threaded), the mc_archive binding does not.
 // ============================================================================
 #ifndef MC_CACHE_H
 #define MC_CACHE_H
@@ -30,8 +38,16 @@ typedef struct mc_cache mc_cache;
 // Called outside any cache lock; must be thread-safe (mc decode is).
 typedef void (*mc_cache_src_fn)(void *ud, int lod, int bz, int by, int bx, mc_u8 *dst);
 
+// Eviction policy. CLOCK = classic NRU sweep. S3FIFO (default) = small/main
+// FIFO queues + ghost table (SOSP'23): one-hit wonders die in the small queue,
+// re-referenced ghosts go straight to main — scan-resistant, which matters for
+// render loops (slice sweeps re-touch everything once per frame).
+typedef enum { MC_CACHE_S3FIFO = 0, MC_CACHE_CLOCK = 1 } mc_cache_policy;
+
 // Create a cache with ~`bytes` of block storage (rounded to slots of 4 KB).
 mc_cache *mc_cache_new(size_t bytes, mc_cache_src_fn src, void *src_ud);
+// Switch eviction policy (call before first use; clears nothing).
+void mc_cache_set_policy(mc_cache *c, mc_cache_policy p);
 void      mc_cache_free(mc_cache *c);
 
 // Get the decoded block, from cache or by decoding (and caching) it.
@@ -49,6 +65,68 @@ int  mc_cache_contains(mc_cache *c, int lod, int bz, int by, int bx);
 // blocks that are not already resident). Renderers call this from IO/worker
 // threads ahead of the viewport so the render threads only ever hit.
 void mc_cache_prefetch_chunk(mc_cache *c, int lod, int cz, int cy, int cx);
+
+// Batch update: bring an explicit working set into the cache and return when
+// every listed block is resident. The vc3d pattern: compute all needed blocks
+// up front from geometry, submit the list, wait, then query (all hits).
+//   - already-resident blocks are touched (marked recently used) so the new
+//     working set is protected; everything else decays toward eviction,
+//   - misses are decoded by an internal worker pool, grouped by chunk for
+//     payload locality (nthreads = 0 -> one per core, capped at 16),
+//   - duplicates in the list are fine; list order does not matter,
+//   - the working set should fit in the cache: if n exceeds capacity, later
+//     inserts evict earlier ones from the same batch.
+// Returns the number of blocks that were newly decoded.
+typedef struct { int lod, bz, by, bx; } mc_block_id;
+size_t mc_cache_update(mc_cache *c, const mc_block_id *ids, size_t n, int nthreads);
+
+// Invalidate every cached block of chunk (lod, cz,cy,cx). Writers call this
+// after re-appending/replacing a chunk so readers stop seeing stale blocks.
+// Thread-safe against concurrent gets/inserts.
+void mc_cache_invalidate_chunk(mc_cache *c, int lod, int cz, int cy, int cx);
+
+// Finest resident LOD covering block (bz,by,bx in `finest_lod` block coords):
+// probes finest_lod..7 (block coords halve per level) WITHOUT touching
+// recently-used bits. Returns the lod, or -1 if nothing is resident. The
+// page-table pattern: render the best resident level now, refine later.
+int mc_cache_best_lod(mc_cache *c, int finest_lod, int bz, int by, int bx);
+
+// Async batch update: like mc_cache_update but returns immediately with a
+// ticket. Poll mc_cache_ticket_done, or mc_cache_ticket_wait to block.
+// mc_cache_ticket_cancel makes workers stop at the next chunk-group boundary
+// (camera moved -> abandon stale prefetch). Always mc_cache_ticket_free
+// (it joins any remaining workers first).
+typedef struct mc_cache_ticket mc_cache_ticket;
+mc_cache_ticket *mc_cache_update_async(mc_cache *c, const mc_block_id *ids, size_t n, int nthreads);
+int  mc_cache_ticket_done(mc_cache_ticket *t);      // 1 when all work finished/cancelled
+void mc_cache_ticket_cancel(mc_cache_ticket *t);
+void mc_cache_ticket_wait(mc_cache_ticket *t);
+void mc_cache_ticket_free(mc_cache_ticket *t);
+
+// ---- tick-phase contract (vc3d game-loop model) ----------------------------
+// thaw():   write phase — update/resolve/invalidate/prefetch allowed; reads
+//           take shard locks as usual. Increments the pin epoch.
+// freeze(): read phase — the cache is immutable. get/get_copy/contains/
+//           best_lod skip ALL locks (no writer can exist) and do not touch
+//           eviction state. Misses do NOT insert: get returns NULL (fall back
+//           to mc_cache_best_lod), get_copy decodes directly into the caller
+//           buffer; both record the miss in the feedback queue.
+// Write-phase calls made while frozen are refused (return error / no-op) —
+// the contract is load-bearing for the lock-free reads.
+void mc_cache_freeze(mc_cache *c);
+void mc_cache_thaw(mc_cache *c);
+
+// Resolve: batch update + pointer table, the render-phase fast path. Ensures
+// every ids[i] is resident (decoding misses in parallel), fills ptrs[i] with
+// its arena address, and epoch-pins those slots so this frame's own inserts
+// cannot evict them. Pointers stay valid until the next thaw(). Thawed phase
+// only. Returns blocks newly decoded.
+size_t mc_cache_resolve(mc_cache *c, const mc_block_id *ids, size_t n,
+                        const mc_u8 **ptrs, int nthreads);
+
+// Drain the frozen-phase miss queue (call after thaw; feed into the next
+// update/resolve batch). Duplicates possible — update() handles them.
+size_t mc_cache_misses_drain(mc_cache *c, mc_block_id *out, size_t cap);
 
 // Drop everything (e.g. source archive replaced).
 void mc_cache_clear(mc_cache *c);
