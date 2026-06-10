@@ -1,7 +1,6 @@
 #include "vc/core/render/McVolumeArray.hpp"
 
-#include "mc_volume.h"
-#include "mc_render.h"
+#include "mc_volume.h"   // pulls in matter_compressor.h (mc_render/mc_sample APIs)
 
 #include <cmath>
 #include <cstdio>

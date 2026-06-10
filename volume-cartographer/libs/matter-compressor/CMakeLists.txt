@@ -26,9 +26,7 @@ endif()
 
 # core library: codec + archive + surface sampling/render (deps: libm + pthread)
 add_library(matter_compressor STATIC
-  src/matter_compressor.c
-  src/mc_sample.c
-  src/mc_render.c)
+  src/matter_compressor.c)
 target_include_directories(matter_compressor PUBLIC src)
 set_target_properties(matter_compressor PROPERTIES POSITION_INDEPENDENT_CODE ON)
 find_package(Threads REQUIRED)
