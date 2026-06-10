@@ -148,8 +148,6 @@ private:
         std::unordered_map<ChunkReadyCallbackId, ChunkReadyCallback> callbacks_;
         std::size_t remoteFetchesInFlight_ = 0;
         std::deque<std::pair<std::chrono::steady_clock::time_point, std::size_t>> remoteDownloadHistory_;
-        std::chrono::steady_clock::time_point lastPersistentCacheSizeScan_{};
-        std::size_t cachedPersistentCacheBytes_ = 0;
         std::chrono::steady_clock::time_point lastListenerNotify_{};
     };
 

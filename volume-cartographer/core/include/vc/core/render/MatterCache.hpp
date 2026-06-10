@@ -77,6 +77,9 @@ public:
     const std::string& path() const { return path_; }
     // true when the ctor created the file (including stale-delete + recreate).
     bool createdFresh() const { return createdFresh_; }
+    // bytes actually written to the .mca (append cursor, NOT the file's
+    // ftruncate'd reservation). One atomic load — no syscall.
+    std::uint64_t diskBytes() const;
 
 private:
     struct Impl;

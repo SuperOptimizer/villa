@@ -20,7 +20,6 @@ namespace vc::render {
 namespace {
 
 constexpr auto kDownloadStatsWindow = std::chrono::seconds{3};
-constexpr auto kPersistentCacheSizeScanInterval = std::chrono::seconds{2};
 constexpr int kViewEpochPriorityStride = 1024;
 
 std::size_t normalizedWorkerCount(std::size_t requested)
@@ -325,8 +324,6 @@ void ChunkCache::prefetchShardBlocking(int level, int iz, int iy, int ix)
 ChunkCache::Stats ChunkCache::stats() const
 {
     auto state = state_;
-    std::optional<std::filesystem::path> mcaPath;
-    bool scanMcaBytes = false;
     Stats result;
     {
         std::lock_guard lock(state->mutex_);
@@ -352,23 +349,11 @@ ChunkCache::Stats ChunkCache::stats() const
         result.remoteDownloadBytesPerSecond =
             static_cast<double>(recentBytes) /
             std::chrono::duration<double>(kDownloadStatsWindow).count();
-        // "disk" cache size = the single on-disk volume.mca file (the only on-disk
-        // cache). Throttled stat() of the file size (it grows as chunks are appended).
-        result.persistentCacheBytes = state->cachedPersistentCacheBytes_;
+        // "disk" cache size = bytes actually written to volume.mca (the append
+        // cursor, not the file's ftruncate'd reservation). One atomic load.
         if (state->options_.archive)
-            mcaPath = std::filesystem::path{state->options_.archive->path()};
-        scanMcaBytes = mcaPath.has_value() &&
-            (state->lastPersistentCacheSizeScan_ == std::chrono::steady_clock::time_point{} ||
-             now - state->lastPersistentCacheSizeScan_ >= kPersistentCacheSizeScanInterval);
-        if (scanMcaBytes)
-            state->lastPersistentCacheSizeScan_ = now;
-    }
-    if (scanMcaBytes) {
-        std::error_code ec;
-        const auto sz = std::filesystem::file_size(*mcaPath, ec);
-        result.persistentCacheBytes = ec ? 0 : static_cast<std::size_t>(sz);
-        std::lock_guard lock(state->mutex_);
-        state->cachedPersistentCacheBytes_ = result.persistentCacheBytes;
+            result.persistentCacheBytes =
+                static_cast<std::size_t>(state->options_.archive->diskBytes());
     }
     return result;
 }

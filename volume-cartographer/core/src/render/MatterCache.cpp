@@ -79,6 +79,11 @@ bool MatterArchive::appendChunkRaw(int lod, int cz, int cy, int cx, const std::u
     return mc_archive_append_chunk_raw(impl_->a, lod, cz, cy, cx, vox256) == 0;
 }
 
+std::uint64_t MatterArchive::diskBytes() const
+{
+    return impl_->a ? mc_archive_data_len(impl_->a) : 0;
+}
+
 bool MatterArchive::appendChunkCompressed(int lod, int cz, int cy, int cx,
                                           const std::uint8_t* blob, std::size_t len)
 {
