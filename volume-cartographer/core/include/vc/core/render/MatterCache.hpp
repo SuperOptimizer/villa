@@ -75,6 +75,8 @@ public:
     std::array<int, 3> shape0() const { return shape0_; }
     float quality() const { return quality_; }
     const std::string& path() const { return path_; }
+    // true when the ctor created the file (including stale-delete + recreate).
+    bool createdFresh() const { return createdFresh_; }
 
 private:
     struct Impl;
@@ -82,6 +84,7 @@ private:
     std::string path_;
     std::array<int, 3> shape0_{};
     float quality_ = 0.f;
+    bool createdFresh_ = false;
 };
 
 

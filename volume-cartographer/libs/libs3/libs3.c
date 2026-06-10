@@ -1059,15 +1059,17 @@ static s3_status resolve_request_creds(s3_client *c, s3_credentials *out) {
  * caller must curl_slist_free_all after perform. */
 static void apply_auth(s3_client *c, CURL *curl, const s3_credentials *cr,
                        struct curl_slist **hdrs,
-                       char *sigv4_buf, char *userpwd_buf) {
+                       char *sigv4_buf, size_t sigv4_len,
+                       char *userpwd_buf, size_t userpwd_len) {
     bool have_aws = cr && cr->access_key && cr->access_key[0] &&
                     cr->secret_key && cr->secret_key[0];
     if (have_aws) {
         const char *region = (cr->region && cr->region[0]) ? cr->region
                                                            : "us-east-1";
-        sprintf(sigv4_buf, "aws:amz:%s:s3", region);
+        /* creds/region come from env/INI/CLI output: bound the writes. */
+        snprintf(sigv4_buf, sigv4_len, "aws:amz:%s:s3", region);
         curl_easy_setopt(curl, CURLOPT_AWS_SIGV4, sigv4_buf);
-        sprintf(userpwd_buf, "%s:%s", cr->access_key, cr->secret_key);
+        snprintf(userpwd_buf, userpwd_len, "%s:%s", cr->access_key, cr->secret_key);
         curl_easy_setopt(curl, CURLOPT_USERPWD, userpwd_buf);
         if (cr->session_token && cr->session_token[0]) {
             char *h = str_appendf(NULL, "x-amz-security-token: %s",
@@ -1172,7 +1174,7 @@ static s3_status do_request(s3_client *c, const char *url, method_t method,
         struct curl_slist *hdrs = NULL;
         char sigv4_buf[128], userpwd_buf[2048];
         sigv4_buf[0] = userpwd_buf[0] = '\0';
-        apply_auth(c, curl, &cr, &hdrs, sigv4_buf, userpwd_buf);
+        apply_auth(c, curl, &cr, &hdrs, sigv4_buf, sizeof sigv4_buf, userpwd_buf, sizeof userpwd_buf);
         s3_credentials_free(&cr);
 
         /* merge caller-supplied headers */
@@ -1438,7 +1440,7 @@ s3_status s3_get_batch(s3_client *c,
             s3_status crc = resolve_request_creds(c, &s->cr);
             if (crc != S3_OK) { final = crc; goto drain; }
             apply_auth(c, s->eh, &s->cr, &s->hdrs,
-                       s->sigv4, s->userpwd);
+                       s->sigv4, sizeof s->sigv4, s->userpwd, sizeof s->userpwd);
             if (s->hdrs)
                 curl_easy_setopt(s->eh, CURLOPT_HTTPHEADER, s->hdrs);
 
@@ -1731,7 +1733,7 @@ s3_status s3_multipart_upload_parts_parallel(s3_multipart *m,
             s3_status crc = resolve_request_creds(m->client, &s->cr);
             if (crc != S3_OK) { final = crc; goto drain; }
             apply_auth(m->client, s->eh, &s->cr, &s->hdrs,
-                       s->sigv4, s->userpwd);
+                       s->sigv4, sizeof s->sigv4, s->userpwd, sizeof s->userpwd);
             if (s->hdrs)
                 curl_easy_setopt(s->eh, CURLOPT_HTTPHEADER, s->hdrs);
 

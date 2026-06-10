@@ -43,6 +43,7 @@ MatterArchive::MatterArchive(std::string path, std::array<int, 3> shape0, float 
         return mc_archive_open_dims(path_.c_str(), shape0_[2], shape0_[1], shape0_[0],
                                     quality);
     };
+    createdFresh_ = !std::filesystem::exists(path_);
     impl_->a = open();
     if (!impl_->a && std::filesystem::exists(path_)) {
         // stale archive (older format version / different dims): it's a rebuildable
@@ -50,6 +51,7 @@ MatterArchive::MatterArchive(std::string path, std::array<int, 3> shape0, float 
         Logger()->warn("MatterArchive: {} is stale/incompatible; recreating", path_);
         std::error_code ec;
         std::filesystem::remove(path_, ec);
+        createdFresh_ = true;
         impl_->a = open();
     }
     if (!impl_->a)
@@ -263,8 +265,18 @@ bool MatterCacheFetcher::ensureRegion(int regCz, int regCy, int regCx,
 
     const auto t1 = std::chrono::steady_clock::now();
     downloadedBytes = fetchedBytes.load();
-    if (anyData)
-        archive_->appendChunkRaw(lod_, regCz, regCy, regCx, region.data());
+    if (anyData && !archive_->appendChunkRaw(lod_, regCz, regCy, regCx, region.data())) {
+        // archive write failed (disk full?): publishing Present would serve zeros
+        // forever. Unclaim so a later fetch retries.
+        {
+            std::lock_guard<std::mutex> lk(regMu_);
+            regions_.erase(rk);
+        }
+        regCv_.notify_all();
+        Logger()->warn("mca region l{} ({},{},{}): archive append failed; will retry",
+                       lod_, regCz, regCy, regCx);
+        return false;
+    }
     const auto t2 = std::chrono::steady_clock::now();
 
     using ms = std::chrono::duration<double, std::milli>;
@@ -547,11 +559,11 @@ std::shared_ptr<MatterArchive> openHttpMcaArchive(const std::string& url,
     std::error_code ec;
     std::filesystem::create_directories(cacheDir, ec);
     const auto mcaPath = cacheDir / "volume.mca";
-    const bool fresh = !std::filesystem::exists(mcaPath);
     auto archive = std::make_shared<MatterArchive>(mcaPath.string(), remote->shape0(),
                                                    remote->quality(), cacheBytes);
-    if (fresh) {
+    if (archive->createdFresh()) {
         // mirror the per-volume codec priors so local decode matches the remote.
+        // createdFresh also covers a stale archive deleted+recreated by the ctor.
         auto [plo, phi] = remote->priors();
         if (plo && phi)
             archive->setPriors(plo, phi);
