@@ -91,6 +91,8 @@ class ViewerTransformsPanel;
 class LineAnnotationController;
 class AtlasControlPointsDock;
 
+class VolumePrefetcher;
+
 class CWindow : public QMainWindow
 {
 
@@ -288,6 +290,7 @@ private:
     size_t _cacheSizeBytes = 0;
 
     std::unique_ptr<VolumeOverlayController> _volumeOverlay;
+    std::unique_ptr<VolumePrefetcher> _volumePrefetcher;
     std::unique_ptr<ViewerManager> _viewerManager;
     std::unique_ptr<ViewerControlsPanel> _viewerControlsPanel;
     bool _mirrorCursorToSegmentation{false};

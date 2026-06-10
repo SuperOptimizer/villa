@@ -143,6 +143,9 @@ public:
     // --- Cache management ---
 
     [[nodiscard]] vc::render::IChunkedArray* chunkedCache();
+    // shared handle for long-running background users (prefetch): stays valid
+    // even if the volume swaps its cache (budget change, invalidation).
+    [[nodiscard]] std::shared_ptr<vc::render::ChunkCache> chunkedCacheShared();
     [[nodiscard]] std::shared_ptr<vc::render::ChunkCache> createChunkCache(
         vc::render::ChunkCache::Options options) const;
 

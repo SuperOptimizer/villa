@@ -15,6 +15,7 @@ set(srcs
     Keybinds.cpp
     Keybinds.hpp
     CWindow.cpp
+    VolumePrefetcher.cpp
     CWindowContextMenu.cpp
     RenderBenchRecorder.cpp
     RenderBenchRecorder.hpp

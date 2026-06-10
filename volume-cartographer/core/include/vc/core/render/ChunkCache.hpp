@@ -78,6 +78,12 @@ public:
     ChunkReadyCallbackId addChunkReadyListener(ChunkReadyCallback cb) override;
     void removeChunkReadyListener(ChunkReadyCallbackId id) override;
 
+    // Pull one chunk through its fetcher ON THE CALLING THREAD, bypassing the
+    // shared worker pool entirely — for dedicated prefetch threads that must not
+    // occupy interactive fetch slots. Persists via the fetcher (mca); does not
+    // touch the entry table.
+    void warmChunkBlocking(int level, int iz, int iy, int ix);
+
     Stats stats() const;
     void invalidate();
     void beginViewRequest();

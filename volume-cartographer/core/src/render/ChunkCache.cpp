@@ -281,6 +281,22 @@ void ChunkCache::removeChunkReadyListener(ChunkReadyCallbackId id)
     state->callbacks_.erase(id);
 }
 
+void ChunkCache::warmChunkBlocking(int level, int iz, int iy, int ix)
+{
+    auto state = state_;
+    const ChunkKey key{level, iz, iy, ix};
+    if (!isValidKey(*state, key))
+        return;
+    auto fetcher = state->fetchers_[static_cast<std::size_t>(level)];
+    if (!fetcher)
+        return;
+    try {
+        (void)fetcher->fetch(key);
+    } catch (const std::exception& e) {
+        Logger()->warn("warmChunkBlocking l{} ({},{},{}): {}", level, iz, iy, ix, e.what());
+    }
+}
+
 ChunkCache::Stats ChunkCache::stats() const
 {
     auto state = state_;

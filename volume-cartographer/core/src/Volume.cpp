@@ -1497,6 +1497,13 @@ vc::render::IChunkedArray* Volume::chunkedCache()
     return chunkedCache_.get();
 }
 
+std::shared_ptr<vc::render::ChunkCache> Volume::chunkedCacheShared()
+{
+    chunkedCache();   // ensure built
+    std::lock_guard<std::mutex> lock(cacheMutex_);
+    return chunkedCache_;
+}
+
 std::shared_ptr<vc::render::ChunkCache> Volume::createChunkCache(
     vc::render::ChunkCache::Options options) const
 {
