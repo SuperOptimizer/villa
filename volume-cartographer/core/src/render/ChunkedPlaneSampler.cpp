@@ -3,6 +3,7 @@
 #include <utils/thread_pool.hpp>
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <cstddef>
 #include <future>
@@ -84,8 +85,17 @@ bool shouldParallelizeSamples(int rows, int cols)
 struct LevelAccess {
     std::array<int, 3> shape{};
     std::array<int, 3> chunkShape{};
+    // chunk shapes are powers of two in practice (16 mca, 128/256 zarr); shift/mask
+    // replaces three idivs per voxel read on the sampling hot path. shift[i] < 0
+    // means not a power of two -> divide.
+    std::array<int, 3> chunkShift{-1, -1, -1};
     IChunkedArray::LevelTransform transform;
     uint8_t fill = 0;
+
+    inline int chunkIndex(int axis, int v) const
+    {
+        return chunkShift[axis] >= 0 ? (v >> chunkShift[axis]) : (v / chunkShape[axis]);
+    }
 };
 
 struct LevelPlane {
@@ -120,6 +130,11 @@ LevelAccess makeLevelAccess(IChunkedArray& array, int level)
     access.chunkShape = array.chunkShape(level);
     access.transform = array.levelTransform(level);
     access.fill = static_cast<uint8_t>(std::clamp(std::lround(array.fillValue()), 0L, 255L));
+    for (int i = 0; i < 3; ++i) {
+        const int cs = access.chunkShape[i];
+        if (cs > 0 && (cs & (cs - 1)) == 0)
+            access.chunkShift[i] = std::countr_zero(static_cast<unsigned>(cs));
+    }
     return access;
 }
 
@@ -188,9 +203,9 @@ bool readVoxel(IChunkedArray& array,
     if (chunkShape[0] <= 0 || chunkShape[1] <= 0 || chunkShape[2] <= 0)
         return false;
 
-    const int cz = iz / chunkShape[0];
-    const int cy = iy / chunkShape[1];
-    const int cx = ix / chunkShape[2];
+    const int cz = access.chunkIndex(0, iz);
+    const int cy = access.chunkIndex(1, iy);
+    const int cx = access.chunkIndex(2, ix);
     const ChunkResult& result = cache.get({level, cz, cy, cx}, requested, errors);
     if (result.status == ChunkStatus::MissQueued ||
         result.status == ChunkStatus::Missing ||
@@ -381,9 +396,9 @@ bool sampleTrilinear(IChunkedArray& array,
     const auto& chunkShape = access.chunkShape;
     if (chunkShape[0] > 0 && chunkShape[1] > 0 && chunkShape[2] > 0 &&
         ix + 1 < shape[2] && iy + 1 < shape[1] && iz + 1 < shape[0]) {
-        const int cz = iz / chunkShape[0];
-        const int cy = iy / chunkShape[1];
-        const int cx = ix / chunkShape[2];
+        const int cz = access.chunkIndex(0, iz);
+        const int cy = access.chunkIndex(1, iy);
+        const int cx = access.chunkIndex(2, ix);
         const int lz = iz - cz * chunkShape[0];
         const int ly = iy - cy * chunkShape[1];
         const int lx = ix - cx * chunkShape[2];
