@@ -37,13 +37,33 @@ target_link_libraries(matter_compressor m Threads::Threads)
 # builds generic), so set it on THIS target. -DMC_NO_NATIVE=ON for portable
 # binaries (distribution / cross-build). Always -O3 -ffast-math regardless of
 # the parent's build type, since this TU is pure number-crunching.
-target_compile_options(matter_compressor PRIVATE -O3 -ffast-math -Wno-stringop-overflow)
+# Archive determinism (byte-identical across ISAs): no -ffast-math, explicit
+# -ffp-contract=off. Hot paths are integer; neither flag costs performance.
+target_compile_options(matter_compressor PRIVATE -O3 -ffp-contract=off -Wno-stringop-overflow)
 if(NOT MC_NO_NATIVE)
   include(CheckCCompilerFlag)
   check_c_compiler_flag(-march=native MC_HAS_MARCH_NATIVE)
   if(MC_HAS_MARCH_NATIVE)
     target_compile_options(matter_compressor PRIVATE -march=native)
   endif()
+endif()
+
+# matter_compressor_volume: remote-zarr streaming + transcode + cache + prefetch
+# (mc_volume) over a local .mca. Bundles the vendored c3d decoder + mc_zarr; links
+# the parent project's libs3 target (VC's libs/libs3) for S3/HTTP. Built whether
+# standalone or vendored so VC3D's render shim can link it.
+add_library(matter_compressor_volume STATIC
+  src/mc_volume.c src/mc_zarr.c src/c3d.c)
+target_include_directories(matter_compressor_volume PUBLIC src)
+set_target_properties(matter_compressor_volume PROPERTIES
+  POSITION_INDEPENDENT_CODE ON C_STANDARD 23 C_STANDARD_REQUIRED ON)
+# c3d decode output feeds the .mca re-encode -> honor archive determinism:
+# no -ffast-math, explicit -ffp-contract=off.
+set_source_files_properties(src/c3d.c PROPERTIES COMPILE_OPTIONS "-O3;-ffp-contract=off")
+target_link_libraries(matter_compressor_volume PUBLIC matter_compressor libs3 zstd::libzstd)
+find_package(OpenMP QUIET)
+if(OpenMP_C_FOUND)
+  target_link_libraries(matter_compressor_volume PRIVATE OpenMP::OpenMP_C)
 endif()
 
 # Tests + native flags only when built standalone (vendoring consumers don't want our
