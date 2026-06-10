@@ -6,8 +6,7 @@
 #include "vc/core/util/Logging.hpp"
 
 extern "C" {
-#include "mc_archive_api.h"
-#include "mc_cache.h"
+#include "matter_compressor.h"
 }
 
 namespace vc::render {
