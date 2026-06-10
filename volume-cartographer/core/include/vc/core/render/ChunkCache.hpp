@@ -67,7 +67,6 @@ public:
     int numLevels() const override;
     std::array<int, 3> shape(int level) const override;
     std::array<int, 3> chunkShape(int level) const override;
-    std::array<int, 3> prefetchShape(int level) const override;
     ChunkDtype dtype() const override;
     double fillValue() const override;
     LevelTransform levelTransform(int level) const override;

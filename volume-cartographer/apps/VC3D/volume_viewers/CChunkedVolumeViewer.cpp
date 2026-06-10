@@ -59,10 +59,6 @@ constexpr float kSegmentationResolutionLodZoomBias = 1.0f;
 constexpr int kSurfaceResolutionLevelBias = 1;
 constexpr int kInitialSegmentationSurfaceLevel = 5;
 constexpr float kPanSmoothingAlpha = 0.65f;
-constexpr bool kEnableRemoteVolumePrefetchHalo = false;
-constexpr int kChunkPrefetchHaloPx = 128;
-constexpr int kChunkPrefetchPriorityOffset = 1024;
-constexpr int kNormalPrefetchSampleStridePx = 32;
 constexpr int kSurfaceCellTileSize = 64;
 constexpr std::array<QRgb, 12> kIntersectionPalette = {
     qRgb(255, 120, 120), qRgb(120, 200, 255), qRgb(120, 255, 140),
@@ -156,21 +152,6 @@ std::string normalizedVolumeCacheIdentity(const std::shared_ptr<Volume>& volume)
     if (ec)
         path = volume->path();
     return "local|" + path.string() + "|id=" + volume->id();
-}
-
-bool shouldSpeculativelyPrefetchVolume(const std::shared_ptr<Volume>& volume)
-{
-    // Speculative prefetch (visible-set warming, viewport halos, normal-direction
-    // neighbors) is DISABLED: the render workers' tryGetChunk misses queue exactly
-    // the blocks the requested frames need, and the mca cache makes refetches cheap.
-    (void)volume;
-    return false;
-}
-
-bool shouldPrefetchRemoteVolumeHalo(const std::shared_ptr<Volume>& volume)
-{
-    return kEnableRemoteVolumePrefetchHalo &&
-           shouldSpeculativelyPrefetchVolume(volume);
 }
 
 uint32_t alphaBlendArgb(uint32_t base, uint32_t overlay, float alpha)
@@ -444,105 +425,6 @@ std::uint64_t surfaceCellTileKey(int col, int row)
     const int tx = col >= 0 ? col / kSurfaceCellTileSize : (col - kSurfaceCellTileSize + 1) / kSurfaceCellTileSize;
     const int ty = row >= 0 ? row / kSurfaceCellTileSize : (row - kSurfaceCellTileSize + 1) / kSurfaceCellTileSize;
     return surfaceTileKey(tx, ty);
-}
-
-void addChunkBox(std::unordered_set<vc::render::ChunkKey, vc::render::ChunkKeyHash>& keys,
-                 vc::render::IChunkedArray& array,
-                 int level,
-                 const cv::Vec3f& lo0,
-                 const cv::Vec3f& hi0,
-                 vc::Sampling sampling)
-{
-    const auto shape = array.shape(level);
-    const auto chunkShape = array.chunkShape(level);
-    // Enumerate at prefetch granularity (e.g. one 256^3 mca region instead of its
-    // 4096 16^3 blocks); emitted keys stay in chunkShape units, snapped to it.
-    const auto prefetchShape = array.prefetchShape(level);
-    if (shape[0] <= 0 || shape[1] <= 0 || shape[2] <= 0 ||
-        chunkShape[0] <= 0 || chunkShape[1] <= 0 || chunkShape[2] <= 0 ||
-        prefetchShape[0] <= 0 || prefetchShape[1] <= 0 || prefetchShape[2] <= 0) {
-        return;
-    }
-    const int fz = std::max(1, prefetchShape[0] / chunkShape[0]);
-    const int fy = std::max(1, prefetchShape[1] / chunkShape[1]);
-    const int fx = std::max(1, prefetchShape[2] / chunkShape[2]);
-
-    const auto transform = array.levelTransform(level);
-    auto toLevel = [&transform](const cv::Vec3f& p) {
-        return cv::Vec3f(
-            float(double(p[0]) * transform.scaleFromLevel0[0] + transform.offsetFromLevel0[0]),
-            float(double(p[1]) * transform.scaleFromLevel0[1] + transform.offsetFromLevel0[1]),
-            float(double(p[2]) * transform.scaleFromLevel0[2] + transform.offsetFromLevel0[2]));
-    };
-    const cv::Vec3f lo = toLevel(lo0);
-    const cv::Vec3f hi = toLevel(hi0);
-    const float pad = sampling == vc::Sampling::Nearest ? 0.5f : 1.0f;
-
-    const int ix0 = std::clamp(int(std::floor(std::min(lo[0], hi[0]) - pad)), 0, shape[2] - 1);
-    const int iy0 = std::clamp(int(std::floor(std::min(lo[1], hi[1]) - pad)), 0, shape[1] - 1);
-    const int iz0 = std::clamp(int(std::floor(std::min(lo[2], hi[2]) - pad)), 0, shape[0] - 1);
-    const int ix1 = std::clamp(int(std::ceil(std::max(lo[0], hi[0]) + pad)), 0, shape[2] - 1);
-    const int iy1 = std::clamp(int(std::ceil(std::max(lo[1], hi[1]) + pad)), 0, shape[1] - 1);
-    const int iz1 = std::clamp(int(std::ceil(std::max(lo[2], hi[2]) + pad)), 0, shape[0] - 1);
-    if (ix1 < ix0 || iy1 < iy0 || iz1 < iz0)
-        return;
-
-    for (int rz = iz0 / prefetchShape[0]; rz <= iz1 / prefetchShape[0]; ++rz) {
-        for (int ry = iy0 / prefetchShape[1]; ry <= iy1 / prefetchShape[1]; ++ry) {
-            for (int rx = ix0 / prefetchShape[2]; rx <= ix1 / prefetchShape[2]; ++rx)
-                keys.insert({level, rz * fz, ry * fy, rx * fx});
-        }
-    }
-}
-
-std::vector<vc::render::ChunkKey> collectSurfaceCellChunkKeys(
-    vc::render::IChunkedArray& array,
-    QuadSurface& surface,
-    const cv::Rect& cellRect,
-    int level,
-    vc::Sampling sampling)
-{
-    std::vector<vc::render::ChunkKey> result;
-    if (level < 0 || level >= array.numLevels())
-        return result;
-
-    const cv::Mat_<cv::Vec3f>* points = surface.rawPointsPtr();
-    if (!points || points->empty() || points->cols < 2 || points->rows < 2)
-        return result;
-
-    const cv::Rect bounds(0, 0, points->cols - 1, points->rows - 1);
-    const cv::Rect rect = cellRect & bounds;
-    if (rect.empty())
-        return result;
-
-    std::unordered_set<vc::render::ChunkKey, vc::render::ChunkKeyHash> keys;
-    keys.reserve(std::size_t(rect.area() / 4 + 16));
-    for (int y = rect.y; y < rect.y + rect.height; ++y) {
-        const cv::Vec3f* row0 = points->ptr<cv::Vec3f>(y);
-        const cv::Vec3f* row1 = points->ptr<cv::Vec3f>(y + 1);
-        for (int x = rect.x; x < rect.x + rect.width; ++x) {
-            const cv::Vec3f p00 = row0[x];
-            const cv::Vec3f p10 = row0[x + 1];
-            const cv::Vec3f p01 = row1[x];
-            const cv::Vec3f p11 = row1[x + 1];
-            if (!validSurfacePoint(p00) || !validSurfacePoint(p10) ||
-                !validSurfacePoint(p01) || !validSurfacePoint(p11)) {
-                continue;
-            }
-            cv::Vec3f lo(std::min({p00[0], p10[0], p01[0], p11[0]}),
-                         std::min({p00[1], p10[1], p01[1], p11[1]}),
-                         std::min({p00[2], p10[2], p01[2], p11[2]}));
-            cv::Vec3f hi(std::max({p00[0], p10[0], p01[0], p11[0]}),
-                         std::max({p00[1], p10[1], p01[1], p11[1]}),
-                         std::max({p00[2], p10[2], p01[2], p11[2]}));
-            addChunkBox(keys, array, level, lo, hi, sampling);
-        }
-    }
-
-    result.reserve(keys.size());
-    for (const auto& key : keys)
-        result.push_back(key);
-    return result;
 }
 
 bool rectContains(const cv::Rect& outer, const cv::Rect& inner)
@@ -1018,7 +900,6 @@ void CChunkedVolumeViewer::OnVolumeChanged(std::shared_ptr<Volume> vol)
         _genSurfaceCache->normals.release();
     }
     _zOffWorldDir = {0, 0, 0};
-    _surfaceChunkPrefetchCache = {};
     if (_cursorCrosshair)
         _cursorCrosshair->hide();
     clearLineAnnotationPlacementMarker();
@@ -1051,39 +932,11 @@ void CChunkedVolumeViewer::invalidateVis()
         return;
     }
     _genCacheDirty = true;
-    _surfaceChunkPrefetchCache = {};
 }
 
-void CChunkedVolumeViewer::invalidateVisRegion(const std::string& name, const cv::Rect& changedCells)
+void CChunkedVolumeViewer::invalidateVisRegion(const std::string&, const cv::Rect&)
 {
-    if (changedCells.empty() || name != _surfName || _surfName != "segmentation") {
-        invalidateVis();
-        return;
-    }
-
-    auto surf = _surfWeak.lock();
-    auto* quad = dynamic_cast<QuadSurface*>(surf.get());
-    if (!quad) {
-        invalidateVis();
-        return;
-    }
-
-    _genCacheDirty = true;
-
-    auto& cache = _surfaceChunkPrefetchCache;
-    if (!cache.valid || cache.surface != quad) {
-        return;
-    }
-
-    const int tx0 = changedCells.x / kSurfaceCellTileSize;
-    const int ty0 = changedCells.y / kSurfaceCellTileSize;
-    const int tx1 = (changedCells.x + changedCells.width - 1) / kSurfaceCellTileSize;
-    const int ty1 = (changedCells.y + changedCells.height - 1) / kSurfaceCellTileSize;
-    for (int ty = ty0; ty <= ty1; ++ty) {
-        for (int tx = tx0; tx <= tx1; ++tx) {
-            cache.tileKeys.erase(surfaceTileKey(tx, ty));
-        }
-    }
+    invalidateVis();
 }
 
 void CChunkedVolumeViewer::onSurfaceChanged(const std::string& name,
@@ -1144,7 +997,6 @@ void CChunkedVolumeViewer::onSurfaceChanged(const std::string& name,
     }
 
     _genCacheDirty = true;
-    _surfaceChunkPrefetchCache = {};
     _zOffWorldDir = {0, 0, 0};
     invalidateIntersect(name);
     if (!surf) {
@@ -1471,350 +1323,6 @@ bool CChunkedVolumeViewer::streamingCompositeUnsupported() const
            _compositeSettings.postRakingEnabled ||
            _compositeSettings.postRemoveSmallComponents ||
            _compositeSettings.useVolumeGradients;
-}
-
-void CChunkedVolumeViewer::prefetchPlaneHalo(
-    const cv::Vec3f& origin,
-    const cv::Vec3f& vxStep,
-    const cv::Vec3f& vyStep,
-    int startLevel,
-    const vc::render::ChunkedPlaneSampler::Options& options)
-{
-    const bool prefetchBase = shouldPrefetchRemoteVolumeHalo(_volume);
-    const bool prefetchOverlay = shouldPrefetchRemoteVolumeHalo(_overlayVolume);
-    if (_framebuffer.isNull() ||
-        (!prefetchBase && !prefetchOverlay))
-        return;
-
-    const int fbW = _framebuffer.width();
-    const int fbH = _framebuffer.height();
-    if (fbW <= 0 || fbH <= 0)
-        return;
-
-    const int halo = kChunkPrefetchHaloPx;
-    const int expandedW = fbW + 2 * halo;
-    std::unordered_set<vc::render::ChunkKey, vc::render::ChunkKeyHash> uniqueKeys;
-    auto collect = [&](vc::render::IChunkedArray& array,
-                       const cv::Vec3f& stripOrigin,
-                       int stripW,
-                       int stripH) {
-        if (stripW <= 0 || stripH <= 0)
-            return;
-        cv::Mat_<uint8_t> stripCoverage(stripH, stripW, uint8_t(0));
-        auto keys = vc::render::ChunkedPlaneSampler::collectPlaneDependencies(
-            array, startLevel, stripOrigin, vxStep, vyStep, stripCoverage, options);
-        uniqueKeys.insert(keys.begin(), keys.end());
-    };
-
-    std::vector<vc::render::ChunkKey> keys;
-    if (prefetchBase && _chunkArray) {
-        collect(*_chunkArray, origin - vxStep * float(halo) - vyStep * float(halo),
-                expandedW, halo);
-        collect(*_chunkArray, origin - vxStep * float(halo) + vyStep * float(fbH),
-                expandedW, halo);
-        collect(*_chunkArray, origin - vxStep * float(halo), halo, fbH);
-        collect(*_chunkArray, origin + vxStep * float(fbW), halo, fbH);
-
-        keys.reserve(uniqueKeys.size());
-        for (const auto& key : uniqueKeys)
-            keys.push_back(key);
-        _chunkArray->prefetchChunks(keys, false, kChunkPrefetchPriorityOffset);
-    }
-
-    if (!prefetchOverlay || !_overlayChunkArray || _overlayOpacity <= 0.0f)
-        return;
-    uniqueKeys.clear();
-    collect(*_overlayChunkArray, origin - vxStep * float(halo) - vyStep * float(halo),
-            expandedW, halo);
-    collect(*_overlayChunkArray, origin - vxStep * float(halo) + vyStep * float(fbH),
-            expandedW, halo);
-    collect(*_overlayChunkArray, origin - vxStep * float(halo), halo, fbH);
-    collect(*_overlayChunkArray, origin + vxStep * float(fbW), halo, fbH);
-    keys.clear();
-    keys.reserve(uniqueKeys.size());
-    for (const auto& key : uniqueKeys)
-        keys.push_back(key);
-    _overlayChunkArray->prefetchChunks(keys, false, kChunkPrefetchPriorityOffset);
-}
-
-void CChunkedVolumeViewer::prefetchPlaneNormalNeighbors(
-    PlaneSurface& plane,
-    int startLevel,
-    const vc::render::ChunkedPlaneSampler::Options& options)
-{
-    const bool prefetchBase = shouldSpeculativelyPrefetchVolume(_volume);
-    const bool prefetchOverlay = shouldSpeculativelyPrefetchVolume(_overlayVolume);
-    if (_framebuffer.isNull() || (!prefetchBase && !prefetchOverlay))
-        return;
-
-    const int fbW = _framebuffer.width();
-    const int fbH = _framebuffer.height();
-    if (fbW <= 0 || fbH <= 0)
-        return;
-
-    const cv::Vec3f vx = plane.basisX();
-    const cv::Vec3f vy = plane.basisY();
-    cv::Vec3f normal = plane.normal({0, 0, 0});
-    const float normalLen = static_cast<float>(cv::norm(normal));
-    if (normalLen <= 1e-6f)
-        return;
-    normal *= 1.0f / normalLen;
-
-    const float halfW = static_cast<float>(fbW) * 0.5f / _scale;
-    const float halfH = static_cast<float>(fbH) * 0.5f / _scale;
-    const cv::Vec3f origin = vx * (_surfacePtrX - halfW)
-                           + vy * (_surfacePtrY - halfH)
-                           + plane.origin()
-                           + normal * _zOff;
-    const cv::Vec3f vxStep = vx / _scale;
-    const cv::Vec3f vyStep = vy / _scale;
-
-    const int sampleStride = std::max(1, kNormalPrefetchSampleStridePx);
-    const int sampleW = std::max(1, (fbW + sampleStride - 1) / sampleStride + 1);
-    const int sampleH = std::max(1, (fbH + sampleStride - 1) / sampleStride + 1);
-    const cv::Vec3f sampleVxStep = vxStep * float(sampleStride);
-    const cv::Vec3f sampleVyStep = vyStep * float(sampleStride);
-
-    auto chunkDistance = [&](vc::render::IChunkedArray& array, int level) -> float {
-        if (level < 0 || level >= array.numLevels())
-            return 0.0f;
-        const auto chunkZyx = array.chunkShape(level);
-        const std::array<int, 3> chunkXyz{chunkZyx[2], chunkZyx[1], chunkZyx[0]};
-        const auto transform = array.levelTransform(level);
-        int axis = 0;
-        float best = std::abs(normal[0]);
-        for (int i = 1; i < 3; ++i) {
-            const float v = std::abs(normal[i]);
-            if (v > best) {
-                best = v;
-                axis = i;
-            }
-        }
-        const double levelScale = std::abs(transform.scaleFromLevel0[axis]);
-        if (chunkXyz[axis] <= 0 || levelScale <= 1e-12)
-            return 0.0f;
-        return static_cast<float>(double(chunkXyz[axis]) / levelScale);
-    };
-
-    auto collect = [&](vc::render::IChunkedArray& array, int level, float distance) {
-        if (distance <= 0.0f || level < 0 || level >= array.numLevels())
-            return;
-        std::unordered_set<vc::render::ChunkKey, vc::render::ChunkKeyHash> uniqueKeys;
-        cv::Mat_<uint8_t> coverage(sampleH, sampleW, uint8_t(0));
-        for (float dir : {-1.0f, 1.0f}) {
-            auto keys = vc::render::ChunkedPlaneSampler::collectPlaneDependencies(
-                array, level, origin + normal * (dir * distance),
-                sampleVxStep, sampleVyStep, coverage, options);
-            uniqueKeys.insert(keys.begin(), keys.end());
-        }
-
-        if (uniqueKeys.empty())
-            return;
-        std::vector<vc::render::ChunkKey> keys;
-        keys.reserve(uniqueKeys.size());
-        for (const auto& key : uniqueKeys)
-            keys.push_back(key);
-        array.prefetchChunks(keys, false, kChunkPrefetchPriorityOffset);
-    };
-
-    if (prefetchBase && _chunkArray && _chunkArray->numLevels() > 0) {
-        startLevel = std::clamp(startLevel, 0, _chunkArray->numLevels() - 1);
-        collect(*_chunkArray, startLevel, chunkDistance(*_chunkArray, startLevel));
-    }
-
-    if (!prefetchOverlay || !_overlayChunkArray || _overlayOpacity <= 0.0f)
-        return;
-    if (_overlayChunkArray->numLevels() <= 0)
-        return;
-    const int overlayLevel = std::clamp(startLevel, 0, _overlayChunkArray->numLevels() - 1);
-    collect(*_overlayChunkArray, overlayLevel, chunkDistance(*_overlayChunkArray, overlayLevel));
-}
-
-void CChunkedVolumeViewer::prefetchSurfaceHalo(
-    Surface& surf,
-    int startLevel,
-    const vc::render::ChunkedPlaneSampler::Options& options,
-    int fbW,
-    int fbH)
-{
-    const bool prefetchBase = shouldPrefetchRemoteVolumeHalo(_volume);
-    const bool prefetchOverlay = shouldPrefetchRemoteVolumeHalo(_overlayVolume);
-    if (fbW <= 0 || fbH <= 0 ||
-        (!prefetchBase && !prefetchOverlay))
-        return;
-
-    const int halo = kChunkPrefetchHaloPx;
-    const cv::Vec3f baseOffset(_surfacePtrX * _scale - float(fbW) * 0.5f,
-                               _surfacePtrY * _scale - float(fbH) * 0.5f,
-                               0.0f);
-    std::unordered_set<vc::render::ChunkKey, vc::render::ChunkKeyHash> uniqueKeys;
-
-    auto collect = [&](vc::render::IChunkedArray& array,
-                       int sceneX,
-                       int sceneY,
-                       int stripW,
-                       int stripH) {
-        if (stripW <= 0 || stripH <= 0)
-            return;
-
-        cv::Mat_<cv::Vec3f> coords;
-        cv::Mat_<cv::Vec3f> normals;
-        const cv::Vec3f offset = baseOffset + cv::Vec3f(float(sceneX), float(sceneY), 0.0f);
-        surf.gen(&coords, _zOff != 0.0f ? &normals : nullptr,
-                 cv::Size(stripW, stripH), {0, 0, 0}, _scale, offset);
-
-        applyPerPixelNormalOffset(coords, normals, _zOff);
-
-        cv::Mat_<uint8_t> coverage(stripH, stripW, uint8_t(0));
-        auto keys = vc::render::ChunkedPlaneSampler::collectCoordsDependencies(
-            array, startLevel, coords, coverage, options);
-        uniqueKeys.insert(keys.begin(), keys.end());
-    };
-
-    std::vector<vc::render::ChunkKey> keys;
-    if (prefetchBase && _chunkArray) {
-        collect(*_chunkArray, -halo, -halo, fbW + 2 * halo, halo);
-        collect(*_chunkArray, -halo, fbH, fbW + 2 * halo, halo);
-        collect(*_chunkArray, -halo, 0, halo, fbH);
-        collect(*_chunkArray, fbW, 0, halo, fbH);
-
-        keys.reserve(uniqueKeys.size());
-        for (const auto& key : uniqueKeys)
-            keys.push_back(key);
-        _chunkArray->prefetchChunks(keys, false, kChunkPrefetchPriorityOffset);
-    }
-
-    if (!prefetchOverlay || !_overlayChunkArray || _overlayOpacity <= 0.0f)
-        return;
-    uniqueKeys.clear();
-    collect(*_overlayChunkArray, -halo, -halo, fbW + 2 * halo, halo);
-    collect(*_overlayChunkArray, -halo, fbH, fbW + 2 * halo, halo);
-    collect(*_overlayChunkArray, -halo, 0, halo, fbH);
-    collect(*_overlayChunkArray, fbW, 0, halo, fbH);
-    keys.clear();
-    keys.reserve(uniqueKeys.size());
-    for (const auto& key : uniqueKeys)
-        keys.push_back(key);
-    _overlayChunkArray->prefetchChunks(keys, false, kChunkPrefetchPriorityOffset);
-}
-
-void CChunkedVolumeViewer::prefetchVisibleSurfaceChunks(int priorityOffset)
-{
-    if (!shouldSpeculativelyPrefetchVolume(_volume) ||
-        !_chunkArray || _framebuffer.isNull() || _framebuffer.width() <= 0 ||
-        _framebuffer.height() <= 0) {
-        return;
-    }
-
-    auto surf = _surfWeak.lock();
-    auto* quad = dynamic_cast<QuadSurface*>(surf.get());
-    if (!quad) {
-        _surfaceChunkPrefetchCache = {};
-        return;
-    }
-
-    const cv::Mat_<cv::Vec3f>* points = quad->rawPointsPtr();
-    if (!points || points->cols < 2 || points->rows < 2)
-        return;
-
-    const int level = renderStartLevel(true);
-    if (level < 0 || level >= _chunkArray->numLevels())
-        return;
-
-    const float halfW = static_cast<float>(_framebuffer.width()) * 0.5f / std::max(_scale, kMinScale);
-    const float halfH = static_cast<float>(_framebuffer.height()) * 0.5f / std::max(_scale, kMinScale);
-    const cv::Vec2f g0 = quad->ptrToGrid({_surfacePtrX - halfW, _surfacePtrY - halfH, 0.0f});
-    const cv::Vec2f g1 = quad->ptrToGrid({_surfacePtrX + halfW, _surfacePtrY + halfH, 0.0f});
-    const float minX = std::min(g0[0], g1[0]);
-    const float maxX = std::max(g0[0], g1[0]);
-    const float minY = std::min(g0[1], g1[1]);
-    const float maxY = std::max(g0[1], g1[1]);
-
-    cv::Rect visibleCells(
-        int(std::floor(minX)) - 1,
-        int(std::floor(minY)) - 1,
-        std::max(1, int(std::ceil(maxX)) - int(std::floor(minX)) + 3),
-        std::max(1, int(std::ceil(maxY)) - int(std::floor(minY)) + 3));
-    const cv::Rect cellBounds(0, 0, points->cols - 1, points->rows - 1);
-    visibleCells &= cellBounds;
-    if (visibleCells.empty())
-        return;
-
-    const float cellsPerPixelX =
-        float(visibleCells.width) / float(std::max(1, _framebuffer.width()));
-    const float cellsPerPixelY =
-        float(visibleCells.height) / float(std::max(1, _framebuffer.height()));
-    const int padX = std::max(1, int(std::ceil(float(kChunkPrefetchHaloPx) * cellsPerPixelX)) + 2);
-    const int padY = std::max(1, int(std::ceil(float(kChunkPrefetchHaloPx) * cellsPerPixelY)) + 2);
-    cv::Rect paddedCells(
-        visibleCells.x - padX,
-        visibleCells.y - padY,
-        visibleCells.width + padX * 2,
-        visibleCells.height + padY * 2);
-    paddedCells &= cellBounds;
-    if (paddedCells.empty())
-        return;
-
-    auto& cache = _surfaceChunkPrefetchCache;
-    if (!cache.valid || cache.surface != quad || cache.level != level ||
-        cache.sampling != _samplingMethod) {
-        cache = {};
-        cache.surface = quad;
-        cache.level = level;
-        cache.sampling = _samplingMethod;
-    }
-
-    auto collectKeysForCells = [&](const cv::Rect& cells,
-                                   std::unordered_set<vc::render::ChunkKey,
-                                                      vc::render::ChunkKeyHash>& keys) {
-        if (cells.empty())
-            return;
-        const int tx0 = cells.x / kSurfaceCellTileSize;
-        const int ty0 = cells.y / kSurfaceCellTileSize;
-        const int tx1 = (cells.x + cells.width - 1) / kSurfaceCellTileSize;
-        const int ty1 = (cells.y + cells.height - 1) / kSurfaceCellTileSize;
-        for (int ty = ty0; ty <= ty1; ++ty) {
-            for (int tx = tx0; tx <= tx1; ++tx) {
-                const std::uint64_t key = surfaceTileKey(tx, ty);
-                auto it = cache.tileKeys.find(key);
-                if (it == cache.tileKeys.end()) {
-                    cv::Rect tileCells(tx * kSurfaceCellTileSize,
-                                       ty * kSurfaceCellTileSize,
-                                       kSurfaceCellTileSize,
-                                       kSurfaceCellTileSize);
-                    tileCells &= cellBounds;
-                    it = cache.tileKeys.emplace(
-                        key,
-                        collectSurfaceCellChunkKeys(*_chunkArray, *quad, tileCells, level, _samplingMethod)).first;
-                }
-                keys.insert(it->second.begin(), it->second.end());
-            }
-        }
-    };
-
-    std::unordered_set<vc::render::ChunkKey, vc::render::ChunkKeyHash> visibleKeys;
-    std::unordered_set<vc::render::ChunkKey, vc::render::ChunkKeyHash> speculativeKeys;
-    collectKeysForCells(visibleCells, visibleKeys);
-    collectKeysForCells(paddedCells, speculativeKeys);
-    for (const auto& key : visibleKeys)
-        speculativeKeys.erase(key);
-
-    cache.valid = true;
-    cache.prefetchedCellRect = rectContains(cache.prefetchedCellRect, paddedCells)
-        ? cache.prefetchedCellRect
-        : paddedCells;
-
-    std::vector<vc::render::ChunkKey> keys;
-    keys.reserve(visibleKeys.size());
-    for (const auto& key : visibleKeys)
-        keys.push_back(key);
-    _chunkArray->prefetchChunks(keys, false, priorityOffset);
-
-    keys.clear();
-    keys.reserve(speculativeKeys.size());
-    for (const auto& key : speculativeKeys)
-        keys.push_back(key);
-    _chunkArray->prefetchChunks(keys, false, kChunkPrefetchPriorityOffset);
 }
 
 struct CChunkedVolumeViewer::RenderContext {
@@ -2232,7 +1740,6 @@ void CChunkedVolumeViewer::submitRender(const char* reason, std::source_location
     if (_overlayChunkArray)
         _overlayChunkArray->beginViewRequest();
 
-    prefetchVisibleSurfaceChunks();
 
     RenderContext ctx;
     ctx.serial = ++_renderSerial;
@@ -2307,28 +1814,6 @@ void CChunkedVolumeViewer::finishRenderOnMainThread(std::shared_ptr<RenderResult
     _framebuffer = std::move(result->framebuffer);
     syncCameraTransform();
     scheduleIntersectionRender("stable render finished");
-    {
-        if (auto surf = _surfWeak.lock()) {
-            const vc::render::ChunkedPlaneSampler::Options options(_samplingMethod, 32);
-            if (auto* plane = dynamic_cast<PlaneSurface*>(surf.get())) {
-                const int startLevel = renderStartLevel(false);
-                const cv::Vec3f vx = plane->basisX();
-                const cv::Vec3f vy = plane->basisY();
-                const cv::Vec3f n = plane->normal({0, 0, 0});
-                const float halfW = static_cast<float>(_framebuffer.width()) * 0.5f / _scale;
-                const float halfH = static_cast<float>(_framebuffer.height()) * 0.5f / _scale;
-                const cv::Vec3f origin = vx * (_surfacePtrX - halfW)
-                                       + vy * (_surfacePtrY - halfH)
-                                       + plane->origin()
-                                       + n * _zOff;
-                prefetchPlaneHalo(origin, vx / _scale, vy / _scale, startLevel, options);
-                prefetchPlaneNormalNeighbors(*plane, startLevel, options);
-            } else {
-                prefetchSurfaceHalo(*surf, renderStartLevel(true), options,
-                                    _framebuffer.width(), _framebuffer.height());
-            }
-        }
-    }
     emit overlaysUpdated();
     _view->viewport()->update();
     updateStatusLabel();
@@ -2467,7 +1952,6 @@ void CChunkedVolumeViewer::panByF(float dx, float dy)
         _surfacePtrX = std::clamp(_surfacePtrX, _contentMinU, _contentMaxU);
         _surfacePtrY = std::clamp(_surfacePtrY, _contentMinV, _contentMaxV);
     }
-    prefetchVisibleSurfaceChunks();
     scheduleRender("pan");
     refreshSameWrapAnnotationOverlay();
     emit overlaysUpdated();
@@ -2495,7 +1979,6 @@ void CChunkedVolumeViewer::zoomStepsAt(int steps, const QPointF& scenePos)
     recalcPyramidLevel();
     _genCacheDirty = true;
     resizeFramebuffer();
-    prefetchVisibleSurfaceChunks();
     scheduleRender("zoom");
     refreshSameWrapAnnotationOverlay();
     emit overlaysUpdated();

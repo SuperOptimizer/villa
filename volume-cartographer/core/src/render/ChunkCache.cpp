@@ -121,13 +121,6 @@ std::array<int, 3> ChunkCache::chunkShape(int level) const
     return state_->levels_.at(static_cast<std::size_t>(level)).chunkShape;
 }
 
-std::array<int, 3> ChunkCache::prefetchShape(int level) const
-{
-    if (state_->options_.archive)
-        return {MatterArchive::kChunk, MatterArchive::kChunk, MatterArchive::kChunk};
-    return chunkShape(level);
-}
-
 ChunkDtype ChunkCache::dtype() const
 {
     return state_->dtype_;
