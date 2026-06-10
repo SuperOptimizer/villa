@@ -414,6 +414,16 @@ std::shared_ptr<MatterArchive> applyMatterCache(OpenedChunkedZarr& opened,
                        opened.dtype == ChunkDtype::UInt8, opened.shapes.size());
         return nullptr;
     }
+    // the region assembler assumes cubic source chunks whose edge divides 256;
+    // anything else (legal zarr, no known producer) falls back to the raw cache.
+    for (const auto& cs : opened.chunkShapes) {
+        if (cs[0] != cs[1] || cs[1] != cs[2] || cs[0] <= 0 ||
+            MatterArchive::kChunk % cs[0] != 0) {
+            Logger()->info("mca cache: skipped (non-cubic or non-256-divisor chunks {}x{}x{})",
+                           cs[0], cs[1], cs[2]);
+            return nullptr;
+        }
+    }
 
     std::shared_ptr<MatterArchive> archive;
     try {

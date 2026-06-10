@@ -1551,6 +1551,15 @@ void Volume::invalidateCache()
 {
     std::lock_guard<std::mutex> lock(cacheMutex_);
     chunkedCache_.reset();
+    // every caller is a write path: the persistent local mca archive (re-encoded
+    // copies of source chunks) is stale now — drop it so reads rebuild from the
+    // edited zarr instead of serving pre-write bytes. Remote archives are
+    // unaffected (remote volumes are immutable).
+    if (!isRemote_ && !path_.empty()) {
+        std::error_code ec;
+        std::filesystem::remove_all(
+            path_.parent_path() / (path_.filename().string() + ".mcacache"), ec);
+    }
 }
 
 // ============================================================================
