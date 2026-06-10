@@ -253,7 +253,15 @@ auto main(int argc, char* argv[]) -> int
         }
     }
 
-    CWindow aWin(cacheSizeGB, benchOptions);
-    aWin.show();
-    return QApplication::exec();
+    int rc = 0;
+    {
+        CWindow aWin(cacheSizeGB, benchOptions);
+        aWin.show();
+        rc = QApplication::exec();
+    }
+    // Skip DSO finalizers: gnutls/libtasn1 destructors free through mimalloc after
+    // its own teardown, segfaulting in _dl_fini on every otherwise-clean exit.
+    std::cout.flush();
+    std::cerr.flush();
+    _exit(rc);
 }
