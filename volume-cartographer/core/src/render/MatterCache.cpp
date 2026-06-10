@@ -8,6 +8,7 @@
 #include <cstring>
 #include <chrono>
 #include <future>
+#include <set>
 #include <unordered_map>
 
 #include <filesystem>
@@ -101,7 +102,9 @@ bool MatterArchive::setPriors(const std::uint16_t* plo, const std::uint16_t* phi
 
 bool MatterArchive::hasChunk(int lod, int cz, int cy, int cx) const
 {
-    return mc_archive_chunk_coverage(impl_->a, lod, cz, cy, cx) == MC_PRESENT;
+    // PRESENT (has data) OR ZERO (fetched, all-air) both count as cached — the
+    // region was visited and never needs re-fetching. Only ABSENT means "fetch".
+    return mc_archive_chunk_coverage(impl_->a, lod, cz, cy, cx) != MC_ABSENT;
 }
 
 void MatterArchive::decodeBlock(int lod, int cz, int cy, int cx, int bz, int by, int bx,
@@ -357,6 +360,27 @@ bool MatterCacheFetcher::prefetchShard(const ChunkKey& key, const ShardSink&)
     const int srcCy = (key.iy / blkPerRegion * kMca) / srcEdge_;
     const int srcCx = (key.ix / blkPerRegion * kMca) / srcEdge_;
 
+    // Skip the (expensive) shard download entirely if every region it covers is
+    // already in the .mca — e.g. re-running prefetch over an already-warmed cache.
+    {
+        const FetchBatch sb = source_->shardBatch(ChunkKey{lod_, srcCz, srcCy, srcCx});
+        const int subPerRegion = std::max(1, kMca / srcEdge_);   // src chunks per region axis
+        const int regZ0 = (sb.originChunk[0] * srcEdge_) / kMca;
+        const int regY0 = (sb.originChunk[1] * srcEdge_) / kMca;
+        const int regX0 = (sb.originChunk[2] * srcEdge_) / kMca;
+        const int regN = std::max(1, sb.edgeChunks / subPerRegion);
+        const int rzMax = (levelShape_[0] + kMca - 1) / kMca;
+        const int ryMax = (levelShape_[1] + kMca - 1) / kMca;
+        const int rxMax = (levelShape_[2] + kMca - 1) / kMca;
+        bool allPresent = true;
+        for (int z = regZ0; z < regZ0 + regN && z < rzMax && allPresent; ++z)
+            for (int y = regY0; y < regY0 + regN && y < ryMax && allPresent; ++y)
+                for (int x = regX0; x < regX0 + regN && x < rxMax; ++x)
+                    if (!archive_->hasChunk(lod_, z, y, x)) { allPresent = false; break; }
+        if (allPresent)
+            return true;   // nothing to download
+    }
+
     std::atomic<bool> ok{true};
     if (srcEdge_ != kMca) {
         // 128^3 source: regions need 2x2x2 coalescing — use the normal path per
@@ -373,9 +397,11 @@ bool MatterCacheFetcher::prefetchShard(const ChunkKey& key, const ShardSink&)
         return ok.load();
     }
 
-    // collect the shard's inner chunks (1:1 with mca regions), then parallel-encode.
+    // collect the shard's PRESENT inner chunks (1:1 with mca regions), and track
+    // which region positions were delivered so the rest can be marked all-air.
     struct Region { int cz, cy, cx; std::vector<std::byte> vox; };
     std::vector<Region> regions;
+    std::set<std::array<int, 3>> present;
     {
         std::mutex mu;
         source_->prefetchShard(
@@ -384,13 +410,37 @@ bool MatterCacheFetcher::prefetchShard(const ChunkKey& key, const ShardSink&)
                 const int regCz = (sk.iz * srcEdge_) / kMca;
                 const int regCy = (sk.iy * srcEdge_) / kMca;
                 const int regCx = (sk.ix * srcEdge_) / kMca;
+                std::lock_guard<std::mutex> lk(mu);
+                present.insert({regCz, regCy, regCx});
                 if (archive_->hasChunk(lod_, regCz, regCy, regCx))
                     return;
                 if (bytes.size() != static_cast<std::size_t>(kMca) * kMca * kMca)
                     return;
-                std::lock_guard<std::mutex> lk(mu);
                 regions.push_back({regCz, regCy, regCx, std::move(bytes)});
             });
+
+        // Every region the shard covers but did NOT deliver is all-air: record it
+        // as ZERO so a re-run skips it instead of re-downloading the shard. (Air
+        // padding at coarse levels is common.) Append a zero buffer once.
+        const FetchBatch sb = source_->shardBatch(ChunkKey{lod_, srcCz, srcCy, srcCx});
+        const int regZ0 = (sb.originChunk[0] * srcEdge_) / kMca;
+        const int regY0 = (sb.originChunk[1] * srcEdge_) / kMca;
+        const int regX0 = (sb.originChunk[2] * srcEdge_) / kMca;
+        const int regN = std::max(1, sb.edgeChunks / std::max(1, kMca / srcEdge_));
+        const int rzMax = (levelShape_[0] + kMca - 1) / kMca;
+        const int ryMax = (levelShape_[1] + kMca - 1) / kMca;
+        const int rxMax = (levelShape_[2] + kMca - 1) / kMca;
+        static const std::vector<std::byte> zeroRegion(
+            static_cast<std::size_t>(kMca) * kMca * kMca, std::byte{0});
+        for (int z = regZ0; z < regZ0 + regN && z < rzMax; ++z)
+            for (int y = regY0; y < regY0 + regN && y < ryMax; ++y)
+                for (int x = regX0; x < regX0 + regN && x < rxMax; ++x) {
+                    if (present.count({z, y, x}) || archive_->hasChunk(lod_, z, y, x))
+                        continue;
+                    archive_->appendChunkRaw(
+                        lod_, z, y, x,
+                        reinterpret_cast<const std::uint8_t*>(zeroRegion.data()));
+                }
     }
     if (regions.empty())
         return ok.load();
