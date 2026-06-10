@@ -107,8 +107,10 @@ struct LineAnnotationController::LineAnnotationSession {
     uint64_t fiberSequence = 0;
     std::string fiberFileName;
     std::string fiberManualHvTag;
+    std::vector<std::string> fiberTags;
     bool suppressFiberSave = false;
     bool suppressGeneratedViews = false;
+    bool controlPointsDirtySinceOptimization = false;
     std::function<void(LineAnnotationSession&)> optimizationSucceededCallback;
 };
 
@@ -258,6 +260,45 @@ std::optional<std::string> normalizedFiberJsonFileNameInput(const QString& input
         return std::nullopt;
     }
     return fileName.toStdString();
+}
+
+std::optional<std::string> normalizedFiberTagInput(const QString& input, QString* error)
+{
+    const QString tag = input.trimmed();
+    if (tag.isEmpty()) {
+        if (error) {
+            *error = QObject::tr("Enter a tag name.");
+        }
+        return std::nullopt;
+    }
+    return tag.toStdString();
+}
+
+void addUniqueSorted(std::vector<std::string>& values, const std::string& value)
+{
+    if (value.empty()) {
+        return;
+    }
+    if (std::find(values.begin(), values.end(), value) != values.end()) {
+        return;
+    }
+    values.push_back(value);
+    std::sort(values.begin(), values.end());
+}
+
+std::vector<std::string> normalizedFiberTagsFromJson(const nlohmann::json& tags)
+{
+    std::vector<std::string> result;
+    if (!tags.is_array()) {
+        throw std::runtime_error("tags must be an array");
+    }
+    for (const auto& tag : tags) {
+        if (!tag.is_string()) {
+            throw std::runtime_error("tags entries must be strings");
+        }
+        addUniqueSorted(result, QString::fromStdString(tag.get<std::string>()).trimmed().toStdString());
+    }
+    return result;
 }
 
 cv::Vec3d interpolatedPointAtLinePosition(const std::vector<cv::Vec3d>& points,
@@ -637,7 +678,7 @@ LineAnnotationController::OptimizationTaskResult optimizeLineWithSampler(
         config.tangentGuideMode = directionMode == LineAnnotationController::InitialDirectionMode::ZInOut
             ? vc::lasagna::LineOptimizationConfig::TangentGuideMode::ProjectVectorOntoTangentPlane
             : vc::lasagna::LineOptimizationConfig::TangentGuideMode::CrossVectorWithNormal;
-        if (initialLinePoints.size() >= 2) {
+        if (!forceFullOptimization && initialLinePoints.size() >= 2) {
             std::vector<int> fixedIndices;
             fixedIndices.reserve(task.controlPoints.size());
             int displayFrameAnchorIndex = static_cast<int>(initialLinePoints.size() / 2);
@@ -925,6 +966,33 @@ void LineAnnotationController::launchSession(LineAnnotationController::SourceKin
         }
         startOptimization(session, true);
     });
+    connect(dialog,
+            &LineAnnotationDialog::reoptimizationModeChanged,
+            this,
+            [this, surfaceName](LineAnnotationDialog::ReoptimizationMode mode) {
+                if (mode != LineAnnotationDialog::ReoptimizationMode::AutoReoptimize) {
+                    return;
+                }
+                auto* pane = paneForSurface(surfaceName);
+                if (!pane || !pane->session) {
+                    return;
+                }
+                auto& session = *pane->session;
+                if (!session.controlPointsDirtySinceOptimization) {
+                    return;
+                }
+                if (session.taskState == LineAnnotationSession::TaskState::Running) {
+                    showError(tr("Line optimization is already running."));
+                    return;
+                }
+                if (session.optimizedLine.points.empty() || session.controlPoints.empty()) {
+                    return;
+                }
+                if (!ensureDatasetForSession(session)) {
+                    return;
+                }
+                startOptimization(session, true);
+            });
     connect(dialog, &QObject::destroyed, this, [this, surfaceName]() {
         cleanupSurfaceName(surfaceName);
     });
@@ -961,6 +1029,7 @@ void LineAnnotationController::openFiber(uint64_t fiberId)
     session->fiberSequence = it->sequence;
     session->fiberFileName = it->fileName;
     session->fiberManualHvTag = it->manualHvTag;
+    session->fiberTags = it->tags;
     session->focusedLinePosition = static_cast<double>(it->linePoints.size() / 2);
     session->focusedControlPoint = it->controlPoints.empty()
         ? std::optional<cv::Vec3d>{}
@@ -1207,6 +1276,55 @@ void LineAnnotationController::setFiberManualHvTag(uint64_t fiberId, const QStri
     emitFiberSummaries();
 }
 
+void LineAnnotationController::setFiberTag(uint64_t fiberId, const QString& tag, bool enabled)
+{
+    QString validationError;
+    const auto normalizedTag = normalizedFiberTagInput(tag, &validationError);
+    if (!normalizedTag) {
+        showError(validationError);
+        return;
+    }
+
+    auto it = std::find_if(_fibers.begin(), _fibers.end(), [fiberId](const StoredFiber& fiber) {
+        return fiber.id == fiberId;
+    });
+    if (it == _fibers.end()) {
+        showError(tr("Fiber %1 is not loaded.").arg(fiberId));
+        return;
+    }
+
+    addKnownFiberTags({*normalizedTag});
+    const std::vector<std::string> previousTags = it->tags;
+    if (enabled) {
+        addUniqueSorted(it->tags, *normalizedTag);
+    } else {
+        it->tags.erase(std::remove(it->tags.begin(), it->tags.end(), *normalizedTag),
+                       it->tags.end());
+    }
+    if (it->tags == previousTags) {
+        emitFiberSummaries();
+        return;
+    }
+
+    it->needsSave = false;
+    try {
+        saveFiber(*it);
+    } catch (const std::exception& ex) {
+        it->tags = previousTags;
+        showError(tr("Could not save fiber %1: %2")
+                      .arg(fiberId)
+                      .arg(QString::fromStdString(ex.what())));
+        return;
+    }
+
+    for (const auto& pane : _panes) {
+        if (pane.session && pane.session->fiberId == fiberId) {
+            pane.session->fiberTags = it->tags;
+        }
+    }
+    emitFiberSummaries();
+}
+
 void LineAnnotationController::recalculateFiberHvClassification(uint64_t fiberId)
 {
     auto it = std::find_if(_fibers.begin(), _fibers.end(), [fiberId](const StoredFiber& fiber) {
@@ -1318,6 +1436,7 @@ void LineAnnotationController::createAtlasFromFiber(uint64_t fiberId)
         }
         input.controlPoints = fiberIt->controlPoints;
         input.linePoints = fiberIt->linePoints;
+        vc::atlas::validateFiberInputControlPoints(input);
         atlasDebug("fiber line_points=" + std::to_string(input.linePoints.size()) +
                    " control_points=" + std::to_string(input.controlPoints.size()));
 
@@ -1547,6 +1666,7 @@ bool LineAnnotationController::acceptIntersectionSameWindingChoice()
             }
             input.controlPoints = fiber.controlPoints;
             input.linePoints = fiber.linePoints;
+            vc::atlas::validateFiberInputControlPoints(input);
             return input;
         };
         const vc::atlas::FiberInput sourceInput = makeInput(*sourceIt);
@@ -2859,12 +2979,18 @@ std::vector<LineAnnotationController::FiberSummary> LineAnnotationController::fi
             fiber.hvClassification.automaticCertainty,
             vc3d::line_annotation::fiberHvTagToString(fiber.hvClassification.automaticTag),
             fiber.manualHvTag,
+            fiber.tags,
         });
     }
     std::sort(summaries.begin(), summaries.end(), [](const FiberSummary& a, const FiberSummary& b) {
         return a.id < b.id;
     });
     return summaries;
+}
+
+std::vector<std::string> LineAnnotationController::knownFiberTags() const
+{
+    return _knownFiberTags;
 }
 
 std::vector<vc::atlas::FiberPolyline> LineAnnotationController::fiberSnapshots() const
@@ -3005,6 +3131,7 @@ void LineAnnotationController::handleLineSeed(const std::string& surfaceName,
     session.focusedLinePosition = 0.0;
     session.focusedControlPoint = seedPoint;
     session.controlPoints = {{0.0, seedPoint, true, -1}};
+    session.controlPointsDirtySinceOptimization = false;
     startOptimization(session);
 }
 
@@ -3064,6 +3191,24 @@ void LineAnnotationController::handleGeneratedControlPoint(const std::string& su
 
     session.focusedLinePosition = linePosition;
     session.focusedControlPoint = clicked;
+    const bool autoReoptimize =
+        !pane->dialog ||
+        pane->dialog->reoptimizationMode() ==
+            LineAnnotationDialog::ReoptimizationMode::AutoReoptimize;
+    if (!autoReoptimize) {
+        const std::string noReoptEventName = editedExistingControl
+            ? "control_edit_no_reopt"
+            : "control_add_no_reopt";
+        writeLineDebugJson(noReoptEventName,
+                           session.controlPoints,
+                           linePointsToJson(session.optimizedLine));
+        session.controlPointsDirtySinceOptimization = true;
+        if (pane->dialog) {
+            pane->dialog->setGeneratedControlPoints(generatedControlMarkers(session.controlPoints));
+        }
+        return;
+    }
+
     std::vector<cv::Vec3d> currentLinePoints;
     currentLinePoints.reserve(session.optimizedLine.points.size());
     for (const auto& point : session.optimizedLine.points) {
@@ -3201,7 +3346,19 @@ void LineAnnotationController::handleGeneratedControlPointDelete(const std::stri
     writeLineDebugJson("control_delete",
                        session.controlPoints,
                        linePointsToJson(session.optimizedLine));
-    startOptimization(session, true);
+    const bool autoReoptimize =
+        !pane->dialog ||
+        pane->dialog->reoptimizationMode() ==
+            LineAnnotationDialog::ReoptimizationMode::AutoReoptimize;
+    if (autoReoptimize) {
+        startOptimization(session, true);
+        return;
+    }
+
+    session.controlPointsDirtySinceOptimization = true;
+    if (pane->dialog) {
+        pane->dialog->setGeneratedControlPoints(generatedControlMarkers(session.controlPoints));
+    }
 }
 
 bool LineAnnotationController::ensureDatasetForSession(LineAnnotationSession& session)
@@ -3282,6 +3439,9 @@ void LineAnnotationController::startOptimization(LineAnnotationSession& session,
     auto* watcher = new QFutureWatcher<OptimizationTaskResult>(this);
     session.watcher = watcher;
     const std::string surfaceName = session.surfaceName;
+    if (auto* pane = paneForSurface(surfaceName); pane && pane->dialog) {
+        pane->dialog->setOptimizationBusy(true);
+    }
     connect(watcher,
             &QFutureWatcher<OptimizationTaskResult>::finished,
             this,
@@ -3368,6 +3528,7 @@ void LineAnnotationController::finishOptimization(const std::string& surfaceName
         session.optimizationReport = task.result.report;
         session.optimizedLine = std::move(task.result.line);
         session.controlPoints = std::move(task.controlPoints);
+        session.controlPointsDirtySinceOptimization = false;
         for (auto& control : session.controlPoints) {
             double bestDistance = std::numeric_limits<double>::infinity();
             int bestIndex = -1;
@@ -3380,12 +3541,12 @@ void LineAnnotationController::finishOptimization(const std::string& surfaceName
                 }
             }
             if (bestIndex >= 0) {
+                const cv::Vec3d controlVolumePoint = control.volumePoint;
                 control.optimizedIndex = bestIndex;
                 control.linePosition = static_cast<double>(bestIndex);
-                control.volumePoint = session.optimizedLine.points[static_cast<size_t>(bestIndex)].position;
                 const bool matchesFocusedControl = session.focusedControlPoint.has_value() &&
-                    std::sqrt((control.volumePoint - *session.focusedControlPoint).dot(
-                        control.volumePoint - *session.focusedControlPoint)) <= 1.0e-6;
+                    std::sqrt((controlVolumePoint - *session.focusedControlPoint).dot(
+                        controlVolumePoint - *session.focusedControlPoint)) <= 1.0e-6;
                 if (std::abs(session.focusedLinePosition - control.linePosition) <= 0.5 ||
                     matchesFocusedControl) {
                     session.focusedLinePosition = control.linePosition;
@@ -3405,6 +3566,9 @@ void LineAnnotationController::finishOptimization(const std::string& surfaceName
         if (!session.suppressGeneratedViews) {
             if (!materializeGeneratedViews(session)) {
                 session.taskState = LineAnnotationSession::TaskState::Failed;
+                if (pane->dialog) {
+                    pane->dialog->setOptimizationBusy(false);
+                }
                 return;
             }
         }
@@ -3425,11 +3589,17 @@ void LineAnnotationController::finishOptimization(const std::string& surfaceName
         if (callback) {
             callback(session);
         }
+        if (pane->dialog) {
+            pane->dialog->setOptimizationBusy(false);
+        }
         return;
     }
 
     session.taskState = LineAnnotationSession::TaskState::Failed;
     session.error = task.error;
+    if (pane->dialog) {
+        pane->dialog->setOptimizationBusy(false);
+    }
     showError(tr("Lasagna line optimization failed: %1")
                   .arg(QString::fromStdString(task.error)));
 }
@@ -3833,6 +4003,7 @@ void LineAnnotationController::loadFibersForCurrentPackage()
     for (const auto& path : fiberFiles) {
         try {
             if (auto fiber = loadFiberFile(path)) {
+                addKnownFiberTags(fiber->tags);
                 if (fiber->needsSave) {
                     try {
                         fiber->needsSave = false;
@@ -3866,6 +4037,13 @@ void LineAnnotationController::loadFibersForCurrentPackage()
 void LineAnnotationController::emitFiberSummaries()
 {
     emit fibersChanged(fiberSummaries());
+}
+
+void LineAnnotationController::addKnownFiberTags(const std::vector<std::string>& tags)
+{
+    for (const auto& tag : tags) {
+        addUniqueSorted(_knownFiberTags, tag);
+    }
 }
 
 fs::path LineAnnotationController::fibersDir() const
@@ -4063,6 +4241,7 @@ LineAnnotationController::makeIntersectionLineSession(
     session->fiberSequence = fiber.sequence;
     session->fiberFileName = fiber.fileName;
     session->fiberManualHvTag = fiber.manualHvTag;
+    session->fiberTags = fiber.tags;
     session->focusedLinePosition = std::clamp(
         focusLinePosition,
         0.0,
@@ -4165,12 +4344,14 @@ void LineAnnotationController::saveSessionAsFiber(LineAnnotationSession& session
         }
         fiber.hvClassification = vc3d::line_annotation::classifyFiberHv(fiber.controlPoints);
         fiber.manualHvTag = session.fiberManualHvTag;
+        fiber.tags = session.fiberTags;
         saveFiber(fiber);
         session.fiberId = fiber.id;
         session.fiberUsername = fiber.username;
         session.fiberStartedAt = fiber.startedAt;
         session.fiberSequence = fiber.sequence;
         session.fiberFileName = fiber.fileName;
+        session.fiberTags = fiber.tags;
         const uint64_t savedFiberId = fiber.id;
         const uint64_t savedGeneration = fiber.generation;
 
@@ -4187,6 +4368,7 @@ void LineAnnotationController::saveSessionAsFiber(LineAnnotationSession& session
         } else {
             *it = std::move(fiber);
         }
+        addKnownFiberTags(session.fiberTags);
         emitFiberSummaries();
         emit fiberSaved(savedFiberId, savedGeneration);
     } catch (const std::exception& ex) {
@@ -4216,6 +4398,7 @@ void LineAnnotationController::saveFiber(const StoredFiber& fiber) const
     root["sequence"] = fiber.sequence;
     root["filename"] = fiber.fileName;
     root["generation"] = fiber.generation;
+    root["tags"] = fiber.tags;
     root["hv_classification"] = {
         {"z_distance", fiber.hvClassification.zDistance},
         {"control_point_length", fiber.hvClassification.fiberLength},
@@ -4314,6 +4497,14 @@ std::optional<LineAnnotationController::StoredFiber> LineAnnotationController::l
     fiber.linePoints.reserve(linePoints.size());
     for (const auto& point : linePoints) {
         fiber.linePoints.push_back(pointFromJson(point));
+    }
+    vc::atlas::FiberInput atlasFiberInput;
+    atlasFiberInput.controlPoints = fiber.controlPoints;
+    atlasFiberInput.linePoints = fiber.linePoints;
+    vc::atlas::validateFiberInputControlPoints(atlasFiberInput);
+
+    if (root.contains("tags")) {
+        fiber.tags = normalizedFiberTagsFromJson(root.at("tags"));
     }
 
     fiber.hvClassification = vc3d::line_annotation::classifyFiberHv(fiber.controlPoints);
