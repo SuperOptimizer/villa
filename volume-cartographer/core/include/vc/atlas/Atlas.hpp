@@ -1,6 +1,7 @@
 #pragma once
 
 #include <filesystem>
+#include <exception>
 #include <memory>
 #include <optional>
 #include <cstdint>
@@ -8,6 +9,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include <nlohmann/json.hpp>
 #include <opencv2/core/types.hpp>
 
 class QuadSurface;
@@ -22,7 +24,7 @@ namespace vc::atlas {
 
 struct AtlasMetadata {
     std::string type = "vc3d_atlas";
-    int version = 3;
+    int version = 4;
     std::string name;
     std::filesystem::path baseMeshPath;
     std::filesystem::path sourceBaseMeshPath;
@@ -89,6 +91,7 @@ struct FiberInput {
     std::filesystem::path fiberPath;
     std::vector<cv::Vec3d> controlPoints;
     std::vector<cv::Vec3d> linePoints;
+    std::vector<int> controlLineIndices;
 };
 
 struct SurfaceCandidate {
@@ -139,6 +142,30 @@ struct AtlasFiberSearchSets {
     std::vector<std::filesystem::path> targetFiberPaths;
 };
 
+struct AtlasDirectoryInfo {
+    std::filesystem::path path;
+    std::string name;
+};
+
+struct LasagnaAtlasObject {
+    std::string id;
+    std::filesystem::path fiberPath;
+    std::filesystem::path mappingPath;
+    std::filesystem::path fiberRelativePath;
+    std::filesystem::path mappingRelativePath;
+    int windingOffset = 0;
+};
+
+struct LasagnaAtlasExport {
+    Atlas atlas;
+    std::filesystem::path atlasDir;
+    std::filesystem::path volpkgRoot;
+    std::filesystem::path basePath;
+    std::filesystem::path baseRelativePath;
+    std::vector<LasagnaAtlasObject> objects;
+    nlohmann::json compactJson;
+};
+
 std::string sanitizeAtlasName(std::string name);
 std::string atlasFiberPathKey(const std::filesystem::path& path);
 std::vector<std::string> atlasMappedFiberPathKeys(const Atlas& atlas);
@@ -147,6 +174,11 @@ FiberRuntimeIdentityMap makeFiberRuntimeIdentityMap(
 AtlasFiberSearchSets atlasFiberSearchSets(
     const Atlas& atlas,
     const FiberRuntimeIdentityMap& runtimeIds);
+std::vector<AtlasDirectoryInfo> discoverAtlasDirectories(
+    const std::filesystem::path& volpkgRoot);
+LasagnaAtlasExport loadLasagnaAtlasExport(
+    const std::filesystem::path& atlasDir,
+    const std::filesystem::path& volpkgRoot = {});
 std::filesystem::path uniqueAtlasDirectory(const std::filesystem::path& volpkgRoot,
                                            const std::string& baseName);
 std::filesystem::path initShellDirectoryFromManifest(
@@ -179,6 +211,12 @@ int atlasWindingForColumn(double atlasU, int periodColumns, int zeroWindingColum
 double actualAtlasU(const AtlasAnchor& anchor,
                     const FiberMapping& fiber,
                     int periodColumns);
+std::optional<cv::Vec3d> atlasBasePointAt(double atlasU,
+                                          double atlasV,
+                                          const QuadSurface& baseSurface);
+std::optional<cv::Vec3d> atlasAnchorBasePoint(const AtlasAnchor& anchor,
+                                              const FiberMapping& fiber,
+                                              const QuadSurface& baseSurface);
 AtlasDisplayRange atlasDisplayRange(const Atlas& atlas, int baseColumns);
 void layoutAtlasObjects(Atlas& atlas, int periodColumns);
 cv::Vec2f atlasGridToSurfaceCoords(double atlasU,
@@ -188,6 +226,19 @@ cv::Vec2f atlasGridToSurfaceCoords(double atlasU,
 std::shared_ptr<QuadSurface> repeatedAtlasDisplaySurface(const QuadSurface& baseSurface,
                                                         int unwrapCount,
                                                         int startColumn = 0);
+
+void validateFiberInputControlPoints(FiberInput& fiber);
+bool atlasLoadErrorRequiresRebuild(const std::exception& ex);
+Atlas rebuildAtlasFromSourceFibers(const std::filesystem::path& atlasDir,
+                                   const std::filesystem::path& volpkgRoot,
+                                   const vc::lasagna::NormalSampler& normalSampler,
+                                   const LineMappingOptions& options = {});
+Atlas rebuildAtlasFromSourceFibers(const std::filesystem::path& atlasDir,
+                                   const std::filesystem::path& volpkgRoot,
+                                   const QuadSurface& baseSurface,
+                                   SurfacePatchIndex& baseIndex,
+                                   const vc::lasagna::NormalSampler& normalSampler,
+                                   const LineMappingOptions& options = {});
 
 FiberMapping mapFiberToBaseSurface(const FiberInput& fiber,
                                    const QuadSurface& baseSurface,

@@ -51,6 +51,37 @@ class FitServiceQueueTest(unittest.TestCase):
 		self.assertEqual(queue.snapshot(j1.job_id)["output_name"], "sheet_042")
 		self.assertEqual(queue.snapshot_response()["jobs"][0]["output_name"], "sheet_042")
 
+	def test_single_result_archive_child_uses_requested_output_name(self):
+		self.assertEqual(
+			fit_service._result_archive_child_name("selected_segment.tifxyz", 1, "atlas_result_v002.tifxyz"),
+			"atlas_result_v002.tifxyz",
+		)
+
+	def test_normalize_single_tifxyz_output_rewrites_path_and_meta(self):
+		with tempfile.TemporaryDirectory() as td:
+			out = fit_service.Path(td)
+			child = out / "winding_0000.tifxyz"
+			child.mkdir()
+			(child / "meta.json").write_text(
+				fit_service.json.dumps({"uuid": "winding_0000.tifxyz", "name": "winding_0000.tifxyz"}),
+				encoding="utf-8",
+			)
+
+			final = fit_service._normalize_single_tifxyz_output(out, "atlas_v003.tifxyz")
+
+			self.assertEqual(final, out / "atlas_v003.tifxyz")
+			self.assertFalse(child.exists())
+			self.assertTrue(final.is_dir())
+			meta = fit_service.json.loads((final / "meta.json").read_text(encoding="utf-8"))
+			self.assertEqual(meta["uuid"], "atlas_v003.tifxyz")
+			self.assertEqual(meta["name"], "atlas_v003.tifxyz")
+
+	def test_multi_result_archive_keeps_child_names(self):
+		self.assertEqual(
+			fit_service._result_archive_child_name("layer_0000.tifxyz", 2, "combined.tifxyz"),
+			"layer_0000.tifxyz",
+		)
+
 	def test_reorder_waiting_jobs_changes_execution_order(self):
 		queue = fit_service._JobQueue()
 		seen = []
@@ -300,6 +331,85 @@ class FitServiceObjectStoreTest(unittest.TestCase):
 				})
 				self.assertNotIn("external_surfaces", body["config"])
 				self.assertEqual(body["_job_spec_"]["linked_surfaces"], [seg_ref])
+			finally:
+				fit_service._object_store_dir = old_store
+
+	def test_atlas_objects_upload_and_job_spec_resolution(self):
+		with tempfile.TemporaryDirectory() as td:
+			old_store = fit_service._object_store_dir
+			fit_service._object_store_dir = fit_service.Path(td)
+			try:
+				line_json = b'{"type":"vc3d_fiber","version":1,"line_points":[[1,2,3]],"control_points":[]}'
+				line_ref = {
+					"type": "line",
+					"name": "fibers/fiber_a.json",
+					"hash": fit_service._hash_bytes(line_json),
+					"format": "vc3d_fiber_json",
+				}
+				map_json = b'{"type":"vc3d_atlas_fiber_mapping","version":4,"line_anchors":[]}'
+				map_ref = {
+					"type": "line-map",
+					"name": "atlas/mappings/fibers/fiber_a.json",
+					"hash": fit_service._hash_bytes(map_json),
+					"format": "vc3d_atlas_fiber_mapping_json",
+				}
+				base_files = {"x.tif": b"x", "y.tif": b"y", "z.tif": b"z", "meta.json": b"{}"}
+				base_ref = {
+					"type": "atlas-base",
+					"name": "atlas/base_mesh.tifxyz",
+					"hash": fit_service._segment_manifest_hash(base_files),
+					"format": "tifxyz",
+				}
+				atlas_obj = {
+					"type": "lasagna_atlas",
+					"version": 1,
+					"name": "atlas",
+					"base": {"ref": base_ref, "path": None},
+					"metadata": {"zero_winding_column": 0, "period_columns": 3},
+					"objects": {"line": [{"id": "fibers/fiber_a.json", "ref": line_ref, "path": None}]},
+					"maps": [{
+						"object_type": "line",
+						"object_id": "fibers/fiber_a.json",
+						"object_ref": line_ref,
+						"map_ref": map_ref,
+						"map_path": None,
+						"winding_offset": -2,
+					}],
+				}
+				atlas_json = fit_service.json.dumps(atlas_obj).encode("utf-8")
+				atlas_ref = {
+					"type": "atlas",
+					"name": "atlas/atlas.json",
+					"hash": fit_service._hash_bytes(atlas_json),
+					"format": "lasagna_atlas_json",
+				}
+				for ref, data in ((line_ref, line_json), (map_ref, map_json), (atlas_ref, atlas_json)):
+					stored = fit_service._store_uploaded_object({
+						"object": ref,
+						"data": fit_service.base64.b64encode(data).decode("ascii"),
+					})
+					self.assertEqual({k: stored[k] for k in ("type", "name", "hash")}, {k: ref[k] for k in ("type", "name", "hash")})
+				fit_service._store_uploaded_object({
+					"object": base_ref,
+					"files": {
+						name: fit_service.base64.b64encode(data).decode("ascii")
+						for name, data in base_files.items()
+					},
+				})
+
+				body = fit_service._body_with_resolved_job_spec({
+					"job_spec": {
+						"atlas": atlas_ref,
+						"config": {"args": {"model-init": "atlas"}},
+					}
+				})
+
+				resolved = body["config"]["atlas"]
+				self.assertTrue(fit_service.Path(resolved["base"]["path"]).is_dir())
+				self.assertTrue(fit_service.Path(resolved["objects"]["line"][0]["path"]).is_file())
+				self.assertTrue(fit_service.Path(resolved["maps"][0]["map_path"]).is_file())
+				self.assertEqual(resolved["maps"][0]["winding_offset"], -2)
+				self.assertEqual(body["_job_spec_"]["atlas"], atlas_ref)
 			finally:
 				fit_service._object_store_dir = old_store
 
