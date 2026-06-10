@@ -27,6 +27,15 @@ extern "C" {
 
 namespace vc::render {
 
+// shared all-zero 256^3 region buffer (air): appended to mark a region ZERO.
+static const std::vector<std::byte>& kZeroRegion()
+{
+    static const std::vector<std::byte> z(
+        static_cast<std::size_t>(MatterArchive::kChunk) * MatterArchive::kChunk *
+            MatterArchive::kChunk,
+        std::byte{0});
+    return z;
+}
 
 struct MatterArchive::Impl {
     mc_archive* a = nullptr;
@@ -160,26 +169,21 @@ bool MatterCacheFetcher::ensureRegion(int regCz, int regCy, int regCx,
     downloadedBytes = 0;
     const std::uint64_t rk = regionKey(regCz, regCy, regCx);
 
-    // Single-flight claim: wait out any in-flight assembly of this region; if it's
-    // already resolved, return immediately; otherwise claim it (InFlight) and assemble.
+    // Single-flight: `inFlight_` holds ONLY the regions currently being assembled,
+    // so it is self-bounding (no resolved-state cache that grows forever). The
+    // archive's hasChunk is the source of truth for "already done".
     {
         std::unique_lock<std::mutex> lk(regMu_);
         for (;;) {
-            auto it = regions_.find(rk);
-            if (it == regions_.end())
-                break;   // not claimed -> we'll claim it below
-            if (it->second == RegionState::InFlight) {
-                regCv_.wait(lk);   // another thread is assembling it; wait for publish
+            if (archive_->hasChunk(lod_, regCz, regCy, regCx))
+                return true;   // already present (this run or a previous one)
+            if (inFlight_.count(rk)) {
+                regCv_.wait(lk);   // another thread is assembling it; recheck on wake
                 continue;
             }
-            return it->second == RegionState::Present;
+            break;   // not present, not in flight -> we claim it
         }
-        // Persisted from a previous run? (cheap index probe under the lock is fine.)
-        if (archive_->hasChunk(lod_, regCz, regCy, regCx)) {
-            regions_[rk] = RegionState::Present;
-            return true;
-        }
-        regions_[rk] = RegionState::InFlight;   // claim
+        inFlight_.insert(rk);
     }
 
     // ---- we own this region: assemble + encode OUTSIDE the lock ----
@@ -261,13 +265,17 @@ bool MatterCacheFetcher::ensureRegion(int regCz, int regCy, int regCx,
     // any sub-fetch error means the assembled region may have zero-filled holes:
     // appending it would PERSIST the corruption. Unclaim the region instead so a
     // later fetch retries once the source recovers.
+    // unclaim helper: drop the in-flight mark and wake waiters (who re-check
+    // hasChunk). Used on both success and transient failure.
+    auto unclaim = [&] {
+        std::lock_guard<std::mutex> lk(regMu_);
+        inFlight_.erase(rk);
+        regCv_.notify_all();
+    };
+
     if (failed) {
         downloadedBytes = fetchedBytes.load();
-        {
-            std::lock_guard<std::mutex> lk(regMu_);
-            regions_.erase(rk);
-        }
-        regCv_.notify_all();
+        unclaim();
         Logger()->warn("mca region l{} ({},{},{}): sub-fetch failed; will retry",
                        lod_, regCz, regCy, regCx);
         return false;
@@ -275,14 +283,10 @@ bool MatterCacheFetcher::ensureRegion(int regCz, int regCy, int regCx,
 
     const auto t1 = std::chrono::steady_clock::now();
     downloadedBytes = fetchedBytes.load();
-    if (anyData && !archive_->appendChunkRaw(lod_, regCz, regCy, regCx, region.data())) {
-        // archive write failed (disk full?): publishing Present would serve zeros
-        // forever. Unclaim so a later fetch retries.
-        {
-            std::lock_guard<std::mutex> lk(regMu_);
-            regions_.erase(rk);
-        }
-        regCv_.notify_all();
+    // Append the assembled region — data OR all-air. An all-air append records the
+    // ZERO sentinel, so hasChunk returns true next time and it is never re-fetched.
+    if (!archive_->appendChunkRaw(lod_, regCz, regCy, regCx, region.data())) {
+        unclaim();   // archive write failed (disk full?) -> let a later fetch retry
         Logger()->warn("mca region l{} ({},{},{}): archive append failed; will retry",
                        lod_, regCz, regCy, regCx);
         return false;
@@ -294,13 +298,10 @@ bool MatterCacheFetcher::ensureRegion(int regCz, int regCy, int regCx,
                    lod_, regCz, regCy, regCx,
                    ms(t1 - t0).count(), ms(t2 - t1).count(), anyData.load());
 
-    // publish the result + wake everyone waiting on this region.
-    {
-        std::lock_guard<std::mutex> lk(regMu_);
-        regions_[rk] = anyData ? RegionState::Present : RegionState::Absent;
-    }
-    regCv_.notify_all();
-    return anyData;
+    unclaim();
+    // the region is now in the archive (data, or the ZERO sentinel for air);
+    // either way it is present and decodes correctly.
+    return true;
 }
 
 ChunkFetchResult MatterCacheFetcher::fetch(const ChunkKey& key)
@@ -389,15 +390,14 @@ bool MatterCacheFetcher::prefetchShard(const ChunkKey& key, const ShardSink&)
     // Cheap index probe: if the source shard is ALL AIR, mark every region ZERO
     // and skip the multi-hundred-MB download. Common for air-padded coarse levels.
     if (auto air = source_->shardAllAir(ChunkKey{lod_, srcCz, srcCy, srcCx}); air && *air) {
-        static const std::vector<std::byte> zeroRegion(
-            static_cast<std::size_t>(kMca) * kMca * kMca, std::byte{0});
+
         for (int z = regZ0; z < rz1; ++z)
             for (int y = regY0; y < ry1; ++y)
                 for (int x = regX0; x < rx1; ++x)
                     if (!archive_->hasChunk(lod_, z, y, x))
                         archive_->appendChunkRaw(
                             lod_, z, y, x,
-                            reinterpret_cast<const std::uint8_t*>(zeroRegion.data()));
+                            reinterpret_cast<const std::uint8_t*>(kZeroRegion().data()));
         return true;
     }
 
@@ -442,8 +442,7 @@ bool MatterCacheFetcher::prefetchShard(const ChunkKey& key, const ShardSink&)
         // Every region the shard covers but did NOT deliver is all-air: record it
         // as ZERO so a re-run skips it instead of re-downloading the shard. (Air
         // padding at coarse levels is common.) Append a zero buffer once.
-        static const std::vector<std::byte> zeroRegion(
-            static_cast<std::size_t>(kMca) * kMca * kMca, std::byte{0});
+
         for (int z = regZ0; z < rz1; ++z)
             for (int y = regY0; y < ry1; ++y)
                 for (int x = regX0; x < rx1; ++x) {
@@ -451,7 +450,7 @@ bool MatterCacheFetcher::prefetchShard(const ChunkKey& key, const ShardSink&)
                         continue;
                     archive_->appendChunkRaw(
                         lod_, z, y, x,
-                        reinterpret_cast<const std::uint8_t*>(zeroRegion.data()));
+                        reinterpret_cast<const std::uint8_t*>(kZeroRegion().data()));
                 }
     }
     if (regions.empty())
@@ -636,23 +635,20 @@ bool MatterStreamFetcher::ensureChunk(int cz, int cy, int cx, std::size_t& downl
                              (static_cast<std::uint64_t>(cy & 0x1FFFFF) << 21) |
                              (static_cast<std::uint64_t>(cx & 0x1FFFFF));
 
+    // self-bounding single-flight: inFlight_ holds only chunks being mirrored now;
+    // hasChunk (present OR ZERO sentinel for air) is the source of truth.
     {
         std::unique_lock<std::mutex> lk(regMu_);
         for (;;) {
-            auto it = regions_.find(rk);
-            if (it == regions_.end())
-                break;
-            if (it->second == RegionState::InFlight) {
+            if (archive_->hasChunk(lod_, cz, cy, cx))
+                return true;   // mirrored already (data or air-marked this/prior run)
+            if (inFlight_.count(rk)) {
                 regCv_.wait(lk);
                 continue;
             }
-            return it->second == RegionState::Present;
+            break;
         }
-        if (archive_->hasChunk(lod_, cz, cy, cx)) {   // mirrored in a previous run
-            regions_[rk] = RegionState::Present;
-            return true;
-        }
-        regions_[rk] = RegionState::InFlight;
+        inFlight_.insert(rk);
     }
 
     bool present = false;
@@ -665,6 +661,11 @@ bool MatterStreamFetcher::ensureChunk(int cz, int cy, int cx, std::size_t& downl
                 error = "appendChunkCompressed failed";
             else
                 present = true;
+        } else {
+            // remote chunk is air: mark it ZERO so we never re-probe the remote.
+            archive_->appendChunkRaw(
+                lod_, cz, cy, cx,
+                reinterpret_cast<const std::uint8_t*>(kZeroRegion().data()));
         }
     } catch (const std::exception& e) {
         error = e.what();
@@ -674,10 +675,7 @@ bool MatterStreamFetcher::ensureChunk(int cz, int cy, int cx, std::size_t& downl
 
     {
         std::lock_guard<std::mutex> lk(regMu_);
-        if (error.empty())
-            regions_[rk] = present ? RegionState::Present : RegionState::Absent;
-        else
-            regions_.erase(rk);   // transient failure: let a later fetch retry
+        inFlight_.erase(rk);   // transient failure leaves hasChunk false -> retries
     }
     regCv_.notify_all();
     return present;

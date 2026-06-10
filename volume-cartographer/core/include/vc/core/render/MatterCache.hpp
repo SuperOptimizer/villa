@@ -20,6 +20,7 @@
 #include <utility>
 #include <vector>
 #include <unordered_map>
+#include <unordered_set>
 #include <mutex>
 #include <condition_variable>
 
@@ -148,10 +149,11 @@ private:
     // Per-256^3-region single-flight: the FIRST thread to touch a region assembles +
     // encodes it; every other thread requesting any 16^3 block of that same region waits
     // for that one assembly instead of redundantly re-fetching + re-encoding it.
-    enum class RegionState { InFlight, Present, Absent };
+    // Holds ONLY the regions currently in flight (self-bounding); the archive's
+    // hasChunk is the source of truth for "already done".
     std::mutex regMu_;
     std::condition_variable regCv_;
-    std::unordered_map<std::uint64_t, RegionState> regions_;   // region key -> state
+    std::unordered_set<std::uint64_t> inFlight_;
 };
 
 // MatterRemoteSource — index/blob access to a REMOTE .mca over HTTPS/S3 (libs3):
@@ -206,10 +208,10 @@ private:
     std::shared_ptr<MatterArchive> archive_;
     int lod_ = 0;
 
-    enum class RegionState { InFlight, Present, Absent };
+    // self-bounding single-flight (see MatterCacheFetcher): only in-flight chunks.
     std::mutex regMu_;
     std::condition_variable regCv_;
-    std::unordered_map<std::uint64_t, RegionState> regions_;
+    std::unordered_set<std::uint64_t> inFlight_;
 };
 
 }  // namespace vc::render
