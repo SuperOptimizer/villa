@@ -638,6 +638,10 @@ void ChunkCache::pruneDownloadHistoryLocked(State& state, std::chrono::steady_cl
 
 void ChunkCache::touchLocked(State& state, const ChunkKey& key, Entry& entry)
 {
+    // mca mode: entries are byteless status memos; mc_cache owns residency and
+    // eviction, so there is no byte-LRU to maintain — skip the list churn.
+    if (state.options_.archive)
+        return;
     if (entry.status == EntryStatus::InFlight)
         return;
     if (entry.inLru)
@@ -649,6 +653,21 @@ void ChunkCache::touchLocked(State& state, const ChunkKey& key, Entry& entry)
 
 void ChunkCache::enforceCapacityLocked(const std::shared_ptr<State>& state)
 {
+    // mca mode: no decoded bytes here (mc_cache holds them), and no byte-LRU. The
+    // only thing to bound is the status-memo count; the memos are reconstructible
+    // from the archive, so drop the resolved ones wholesale past the cap.
+    if (state->options_.archive) {
+        if (state->entries_.size() <= state->options_.metadataEntryCapacity)
+            return;
+        for (auto it = state->entries_.begin(); it != state->entries_.end();) {
+            if (it->second.status == EntryStatus::InFlight)
+                ++it;   // never drop an in-flight claim
+            else
+                it = state->entries_.erase(it);
+        }
+        return;
+    }
+
     while ((state->decodedBytes_ > state->options_.decodedByteCapacity ||
             state->entries_.size() > state->options_.metadataEntryCapacity) &&
            !state->lru_.empty()) {
