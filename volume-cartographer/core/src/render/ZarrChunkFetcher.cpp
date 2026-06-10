@@ -1,6 +1,5 @@
 #include "vc/core/render/ZarrChunkFetcher.hpp"
-#include "vc/core/render/MatterArchive.hpp"
-#include "vc/core/render/MatterCacheFetcher.hpp"
+#include "vc/core/render/MatterCache.hpp"
 #include "vc/core/types/VcDataset.hpp"
 #include "vc/core/util/Logging.hpp"
 

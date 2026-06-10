@@ -2,7 +2,7 @@
 
 #include <utils/thread_pool.hpp>
 
-#include "vc/core/render/MatterArchive.hpp"
+#include "vc/core/render/MatterCache.hpp"
 #include "vc/core/util/Logging.hpp"
 
 #include <algorithm>
