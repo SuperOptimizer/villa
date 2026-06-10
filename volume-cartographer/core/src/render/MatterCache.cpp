@@ -3,6 +3,8 @@
 
 #include <algorithm>
 #include <atomic>
+#include <thread>
+#include <mutex>
 #include <cstring>
 #include <chrono>
 #include <future>
@@ -342,38 +344,75 @@ FetchBatch MatterCacheFetcher::shardBatch(const ChunkKey& key) const
 bool MatterCacheFetcher::prefetchShard(const ChunkKey& key, const ShardSink&)
 {
     // c3d: a 256^3 mca region IS one source chunk; the source shard holds many of
-    // them. Download the whole shard once, then encode every covered region. The
-    // sink is unused (we persist into the .mca, not back to a chunk cache).
+    // them. Download the whole shard once, collect its inner chunks, then encode
+    // them into the .mca in PARALLEL — one thread per inner chunk (each c3d decode
+    // + mc encode is single-threaded; appendChunkRaw is lock-free across threads).
     const int blkPerRegion = kMca / kBlk;
     const int srcCz = (key.iz / blkPerRegion * kMca) / srcEdge_;
     const int srcCy = (key.iy / blkPerRegion * kMca) / srcEdge_;
     const int srcCx = (key.ix / blkPerRegion * kMca) / srcEdge_;
 
-    bool ok = true;
-    source_->prefetchShard(
-        ChunkKey{lod_, srcCz, srcCy, srcCx},
-        [&](const ChunkKey& sk, std::vector<std::byte>&& bytes) {
-            // sk is a source chunk index; for c3d srcEdge_==256==kMca, so it maps
-            // 1:1 to an mca region. Encode it straight in.
-            const int regCz = (sk.iz * srcEdge_) / kMca;
-            const int regCy = (sk.iy * srcEdge_) / kMca;
-            const int regCx = (sk.ix * srcEdge_) / kMca;
-            if (srcEdge_ != kMca) {
-                // 128^3 source: would need 2x2x2 coalescing per region — fall back
-                // to the normal assemble path for this region.
+    std::atomic<bool> ok{true};
+    if (srcEdge_ != kMca) {
+        // 128^3 source: regions need 2x2x2 coalescing — use the normal path per
+        // region (still benefits from the source's one-GET shard download).
+        source_->prefetchShard(
+            ChunkKey{lod_, srcCz, srcCy, srcCx},
+            [&](const ChunkKey& sk, std::vector<std::byte>&&) {
+                const int regCz = (sk.iz * srcEdge_) / kMca;
+                const int regCy = (sk.iy * srcEdge_) / kMca;
+                const int regCx = (sk.ix * srcEdge_) / kMca;
                 std::size_t dl = 0;
                 ensureRegion(regCz, regCy, regCx, dl);
-                return;
+            });
+        return ok.load();
+    }
+
+    // collect the shard's inner chunks (1:1 with mca regions), then parallel-encode.
+    struct Region { int cz, cy, cx; std::vector<std::byte> vox; };
+    std::vector<Region> regions;
+    {
+        std::mutex mu;
+        source_->prefetchShard(
+            ChunkKey{lod_, srcCz, srcCy, srcCx},
+            [&](const ChunkKey& sk, std::vector<std::byte>&& bytes) {
+                const int regCz = (sk.iz * srcEdge_) / kMca;
+                const int regCy = (sk.iy * srcEdge_) / kMca;
+                const int regCx = (sk.ix * srcEdge_) / kMca;
+                if (archive_->hasChunk(lod_, regCz, regCy, regCx))
+                    return;
+                if (bytes.size() != static_cast<std::size_t>(kMca) * kMca * kMca)
+                    return;
+                std::lock_guard<std::mutex> lk(mu);
+                regions.push_back({regCz, regCy, regCx, std::move(bytes)});
+            });
+    }
+    if (regions.empty())
+        return ok.load();
+
+    std::atomic<std::size_t> next{0};
+    // bound the inner encode team: the caller already runs several shard drivers,
+    // so a full hardware_concurrency() team per shard would oversubscribe badly.
+    const unsigned nThreads = std::min<unsigned>(
+        std::min<unsigned>(8u, std::max(1u, std::thread::hardware_concurrency())),
+        regions.size());
+    std::vector<std::thread> team;
+    for (unsigned t = 0; t < nThreads; ++t)
+        team.emplace_back([&] {
+            for (;;) {
+                const std::size_t i = next.fetch_add(1, std::memory_order_relaxed);
+                if (i >= regions.size())
+                    return;
+                const Region& r = regions[i];
+                if (!archive_->appendChunkRaw(
+                        lod_, r.cz, r.cy, r.cx,
+                        reinterpret_cast<const std::uint8_t*>(r.vox.data())))
+                    ok.store(false);
             }
-            if (archive_->hasChunk(lod_, regCz, regCy, regCx))
-                return;
-            if (bytes.size() != static_cast<std::size_t>(kMca) * kMca * kMca)
-                return;
-            if (!archive_->appendChunkRaw(lod_, regCz, regCy, regCx,
-                                          reinterpret_cast<const std::uint8_t*>(bytes.data())))
-                ok = false;
         });
-    return ok;
+    for (auto& th : team)
+        th.join();
+    return ok.load();
 }
 
 

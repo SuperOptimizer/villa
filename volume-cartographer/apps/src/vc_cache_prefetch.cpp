@@ -167,51 +167,51 @@ int main(int argc, char** argv)
     const int nThreads = vm["threads"].as<int>() > 0 ? vm["threads"].as<int>() : 16;
     auto* cc = static_cast<vc::render::ChunkCache*>(cache);
 
+    // Build ONE shard queue across all levels, in level order, with no barrier
+    // between levels: workers flow from one level's shards straight into the next.
+    // Each shard is downloaded once (parallel GET) and its inner chunks encoded
+    // in parallel inside prefetchShardBlocking.
+    struct Shard { int level, rz0, ry0, rx0; };
+    std::vector<Shard> shards;
+    std::size_t totalRegions = 0;
     for (const int level : levels) {
         const auto shape = cache->shape(level);
         const int rz = (shape[0] + kRegion - 1) / kRegion;
         const int ry = (shape[1] + kRegion - 1) / kRegion;
         const int rx = (shape[2] + kRegion - 1) / kRegion;
-        const std::size_t total = std::size_t(rz) * ry * rx;
-
-        // shard edge in regions (zarr shard). One work cell = one shard.
+        totalRegions += std::size_t(rz) * ry * rx;
         const auto fb = cc->shardBatch(level, 0, 0, 0);
         const int b = std::max(1, fb.edgeChunks / kBlocksPerRegion);
-        const int ccz = (rz + b - 1) / b, ccy = (ry + b - 1) / b, ccx = (rx + b - 1) / b;
-        const std::size_t cells = std::size_t(ccz) * ccy * ccx;
+        for (int z = 0; z < rz; z += b)
+            for (int y = 0; y < ry; y += b)
+                for (int x = 0; x < rx; x += b)
+                    shards.push_back({level, z, y, x});
         std::cout << "level " << level << ": " << shape[0] << "x" << shape[1] << "x"
-                  << shape[2] << " -> " << total << " regions (" << cells << " shard cells, "
-                  << "batch=" << b << ")\n";
+                  << shape[2] << "  (" << (std::size_t(rz) * ry * rx) << " regions, batch=" << b
+                  << ")\n";
+    }
+    std::cout << shards.size() << " shards across " << levels.size() << " level(s), "
+              << totalRegions << " regions, " << nThreads << " threads\n";
 
-        std::atomic<std::size_t> nextCell{0};
-        std::atomic<std::size_t> doneRegions{0};
+    {
+        std::atomic<std::size_t> next{0};
         std::vector<std::thread> team;
-        for (int t = 0; t < nThreads; ++t) {
+        for (int t = 0; t < nThreads; ++t)
             team.emplace_back([&] {
                 for (;;) {
-                    const std::size_t i = nextCell.fetch_add(1, std::memory_order_relaxed);
-                    if (i >= cells)
+                    const std::size_t i = next.fetch_add(1, std::memory_order_relaxed);
+                    if (i >= shards.size())
                         return;
-                    std::size_t rest = i;
-                    const int cx = static_cast<int>(rest % ccx); rest /= ccx;
-                    const int cy = static_cast<int>(rest % ccy);
-                    const int cz = static_cast<int>(rest / ccy);
-                    const int rz0 = cz * b, ry0 = cy * b, rx0 = cx * b;
-                    cc->prefetchShardBlocking(level, rz0 * kBlocksPerRegion,
-                                              ry0 * kBlocksPerRegion, rx0 * kBlocksPerRegion);
-                    const int rzN = std::min(rz0 + b, rz) - rz0;
-                    const int ryN = std::min(ry0 + b, ry) - ry0;
-                    const int rxN = std::min(rx0 + b, rx) - rx0;
-                    doneRegions.fetch_add(std::size_t(rzN) * ryN * rxN, std::memory_order_relaxed);
+                    const Shard& s = shards[i];
+                    cc->prefetchShardBlocking(s.level, s.rz0 * kBlocksPerRegion,
+                                              s.ry0 * kBlocksPerRegion, s.rx0 * kBlocksPerRegion);
                 }
             });
-        }
-        // progress
-        while (nextCell.load() < cells) {
+        while (next.load() < shards.size()) {
             std::this_thread::sleep_for(std::chrono::milliseconds(500));
             const auto stats = cc->stats();
-            std::printf("\r  %zu/%zu regions  net %s/s  disk %s   ",
-                        doneRegions.load(), total,
+            std::printf("\r  %zu/%zu shards  net %s/s  disk %s   ",
+                        std::min(next.load(), shards.size()), shards.size(),
                         fmtBytes(stats.remoteDownloadBytesPerSecond).c_str(),
                         fmtBytes(double(stats.persistentCacheBytes)).c_str());
             std::fflush(stdout);
