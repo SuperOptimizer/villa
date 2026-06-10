@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <array>
 #include <functional>
 #include <string>
 #include <utility>
@@ -56,10 +57,41 @@ struct ChunkFetchResult {
     std::size_t downloadedBytes = 0;
 };
 
+// The source's natural batch (a zarr shard) enclosing a chunk: a sequential
+// prefetch pulls the whole batch in ONE parallel download instead of N GETs.
+struct FetchBatch {
+    std::array<int, 3> originChunk{};   // first chunk index (z,y,x) of the batch
+    int edgeChunks = 1;                 // chunks per axis (1 = unsharded)
+};
+
+// Sink for prefetchShard: receives each present inner chunk's key + raw bytes
+// (decompressed source chunk). Called from the prefetching thread.
+using ShardSink = std::function<void(const ChunkKey&, std::vector<std::byte>&&)>;
+
 class IChunkFetcher {
 public:
     virtual ~IChunkFetcher() = default;
     virtual ChunkFetchResult fetch(const ChunkKey& key) = 0;
+
+    // The shard extent enclosing `key` (geometry only, no I/O). Default: the
+    // chunk is its own batch (unsharded). `key` is in native chunk coords.
+    virtual FetchBatch shardBatch(const ChunkKey& key) const
+    {
+        return FetchBatch{{key.iz, key.iy, key.ix}, 1};
+    }
+
+    // Download the whole shard enclosing `key` (one parallel GET) and feed each
+    // present inner chunk to `sink`. Returns false on a transient error (caller
+    // retries), true otherwise (including an all-air shard). Default: fetch the
+    // single chunk. Used by background prefetch, never the interactive path.
+    virtual bool prefetchShard(const ChunkKey& key, const ShardSink& sink)
+    {
+        auto r = fetch(key);
+        if (r.status == ChunkFetchStatus::Found)
+            sink(key, std::move(r.bytes));
+        return r.status != ChunkFetchStatus::HttpError &&
+               r.status != ChunkFetchStatus::IoError;
+    }
 };
 
 } // namespace vc::render

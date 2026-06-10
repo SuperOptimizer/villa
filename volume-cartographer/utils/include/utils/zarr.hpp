@@ -331,6 +331,13 @@ public:
     /// Get a byte range from a key [offset, offset+length).
     [[nodiscard]] virtual std::optional<std::vector<std::byte>>
     get_partial(const std::string& key, std::size_t offset, std::size_t length) const;
+
+    /// Get the whole object using as much download parallelism as the store
+    /// supports (remote stores split it into concurrent ranged GETs). Default
+    /// falls back to get_if_exists. For fat objects (zarr shards) where a single
+    /// stream is connection-limited.
+    [[nodiscard]] virtual std::optional<std::vector<std::byte>>
+    get_parallel(const std::string& key) const { return get_if_exists(key); }
 };
 
 // ---------------------------------------------------------------------------

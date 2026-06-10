@@ -84,6 +84,14 @@ public:
     // touch the entry table.
     void warmChunkBlocking(int level, int iz, int iy, int ix);
 
+    // The shard extent (in chunk units) enclosing this chunk — geometry only.
+    FetchBatch shardBatch(int level, int iz, int iy, int ix) const;
+
+    // Download the source shard enclosing this chunk (one parallel GET) and
+    // persist every covered region into the cache, ON THE CALLING THREAD. The
+    // shard-at-a-time prefetch primitive; bypasses the interactive pool.
+    void prefetchShardBlocking(int level, int iz, int iy, int ix);
+
     Stats stats() const;
     void invalidate();
     void beginViewRequest();

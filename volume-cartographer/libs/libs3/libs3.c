@@ -1502,6 +1502,73 @@ drain:
     return final;
 }
 
+s3_status s3_get_parallel(s3_client *c, const char *url,
+                          uint64_t offset, uint64_t length,
+                          uint64_t part_size, size_t max_concurrency,
+                          s3_response *resp) {
+    if (!c || !url || !resp) return S3_ERR_INVALID_ARG;
+    memset(resp, 0, sizeof *resp);
+    if (part_size == 0) part_size = 8ull * 1024 * 1024;
+
+    /* whole object: size it with a HEAD */
+    if (length == 0) {
+        s3_response h; memset(&h, 0, sizeof h);
+        s3_status hr = s3_head(c, url, &h);
+        uint64_t total = h.content_length;
+        long hstatus = h.status;
+        s3_response_free(&h);
+        if (hr != S3_OK || hstatus != 200 || total == 0) {
+            resp->status = hstatus;
+            return hr != S3_OK ? hr : S3_ERR_HTTP;
+        }
+        if (offset >= total) { resp->status = 416; return S3_ERR_HTTP; }
+        length = total - offset;
+    }
+
+    /* one range -> plain ranged GET */
+    if (length <= part_size)
+        return s3_get_range(c, url, offset, length, resp);
+
+    const size_t nparts = (size_t)((length + part_size - 1) / part_size);
+    s3_range_req *reqs = calloc(nparts, sizeof *reqs);
+    s3_response  *outs = calloc(nparts, sizeof *outs);
+    uint8_t      *buf  = malloc(length);
+    if (!reqs || !outs || !buf) { free(reqs); free(outs); free(buf); return S3_ERR_OOM; }
+
+    for (size_t i = 0; i < nparts; i++) {
+        uint64_t po = offset + (uint64_t)i * part_size;
+        uint64_t pl = (i + 1 == nparts) ? (offset + length - po) : part_size;
+        reqs[i].url = url; reqs[i].offset = po; reqs[i].length = pl;
+    }
+
+    s3_status rc = s3_get_batch(c, reqs, nparts, max_concurrency, outs);
+
+    s3_status final = rc;
+    uint64_t got = 0;
+    int ok = (rc == S3_OK);
+    for (size_t i = 0; i < nparts && ok; i++) {
+        uint64_t pl = reqs[i].length;
+        if ((outs[i].status != 206 && outs[i].status != 200) ||
+            !outs[i].body || outs[i].body_len != pl) {
+            ok = 0; final = S3_ERR_HTTP; resp->status = outs[i].status;
+            break;
+        }
+        memcpy(buf + got, outs[i].body, pl);
+        got += pl;
+    }
+    for (size_t i = 0; i < nparts; i++) s3_response_free(&outs[i]);
+    free(reqs); free(outs);
+
+    if (ok) {
+        resp->body = buf; resp->body_len = length;
+        resp->content_length = length; resp->status = 206;
+        final = S3_OK;
+    } else {
+        free(buf);
+    }
+    return final;
+}
+
 s3_status s3_delete(s3_client *c, const char *url, s3_response *resp) {
     return do_request(c, url, M_DELETE, NULL, 0, NULL, 0, NULL, NULL, NULL, NULL, resp);
 }

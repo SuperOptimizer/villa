@@ -25,6 +25,8 @@
 #include <filesystem>
 #include <iostream>
 #include <sstream>
+#include <thread>
+#include <atomic>
 #include <string>
 #include <vector>
 
@@ -162,41 +164,60 @@ int main(int argc, char** argv)
     constexpr int kBlocksPerRegion = 16;
     const auto t0 = std::chrono::steady_clock::now();
 
+    const int nThreads = vm["threads"].as<int>() > 0 ? vm["threads"].as<int>() : 16;
+    auto* cc = static_cast<vc::render::ChunkCache*>(cache);
+
     for (const int level : levels) {
         const auto shape = cache->shape(level);
         const int rz = (shape[0] + kRegion - 1) / kRegion;
         const int ry = (shape[1] + kRegion - 1) / kRegion;
         const int rx = (shape[2] + kRegion - 1) / kRegion;
         const std::size_t total = std::size_t(rz) * ry * rx;
-        std::cout << "level " << level << ": " << shape[0] << "x" << shape[1] << "x"
-                  << shape[2] << " -> " << total << " regions\n";
 
-        // one region-corner block key per 256^3 region; prefetchChunks snaps and
-        // dedups anyway, and one fetch warms the whole region.
-        std::vector<vc::render::ChunkKey> batch;
-        std::size_t done = 0;
-        constexpr std::size_t kBatch = 64;
-        auto flush = [&] {
-            if (batch.empty())
-                return;
-            cache->prefetchChunks(batch, /*wait=*/true);
-            done += batch.size();
-            batch.clear();
-            const auto stats = static_cast<vc::render::ChunkCache*>(cache)->stats();
+        // shard edge in regions (zarr shard). One work cell = one shard.
+        const auto fb = cc->shardBatch(level, 0, 0, 0);
+        const int b = std::max(1, fb.edgeChunks / kBlocksPerRegion);
+        const int ccz = (rz + b - 1) / b, ccy = (ry + b - 1) / b, ccx = (rx + b - 1) / b;
+        const std::size_t cells = std::size_t(ccz) * ccy * ccx;
+        std::cout << "level " << level << ": " << shape[0] << "x" << shape[1] << "x"
+                  << shape[2] << " -> " << total << " regions (" << cells << " shard cells, "
+                  << "batch=" << b << ")\n";
+
+        std::atomic<std::size_t> nextCell{0};
+        std::atomic<std::size_t> doneRegions{0};
+        std::vector<std::thread> team;
+        for (int t = 0; t < nThreads; ++t) {
+            team.emplace_back([&] {
+                for (;;) {
+                    const std::size_t i = nextCell.fetch_add(1, std::memory_order_relaxed);
+                    if (i >= cells)
+                        return;
+                    std::size_t rest = i;
+                    const int cx = static_cast<int>(rest % ccx); rest /= ccx;
+                    const int cy = static_cast<int>(rest % ccy);
+                    const int cz = static_cast<int>(rest / ccy);
+                    const int rz0 = cz * b, ry0 = cy * b, rx0 = cx * b;
+                    cc->prefetchShardBlocking(level, rz0 * kBlocksPerRegion,
+                                              ry0 * kBlocksPerRegion, rx0 * kBlocksPerRegion);
+                    const int rzN = std::min(rz0 + b, rz) - rz0;
+                    const int ryN = std::min(ry0 + b, ry) - ry0;
+                    const int rxN = std::min(rx0 + b, rx) - rx0;
+                    doneRegions.fetch_add(std::size_t(rzN) * ryN * rxN, std::memory_order_relaxed);
+                }
+            });
+        }
+        // progress
+        while (nextCell.load() < cells) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(500));
+            const auto stats = cc->stats();
             std::printf("\r  %zu/%zu regions  net %s/s  disk %s   ",
-                        done, total, fmtBytes(stats.remoteDownloadBytesPerSecond).c_str(),
+                        doneRegions.load(), total,
+                        fmtBytes(stats.remoteDownloadBytesPerSecond).c_str(),
                         fmtBytes(double(stats.persistentCacheBytes)).c_str());
             std::fflush(stdout);
-        };
-        for (int z = 0; z < rz; ++z)
-            for (int y = 0; y < ry; ++y)
-                for (int x = 0; x < rx; ++x) {
-                    batch.push_back({level, z * kBlocksPerRegion, y * kBlocksPerRegion,
-                                     x * kBlocksPerRegion});
-                    if (batch.size() >= kBatch)
-                        flush();
-                }
-        flush();
+        }
+        for (auto& th : team)
+            th.join();
         std::printf("\n");
     }
 

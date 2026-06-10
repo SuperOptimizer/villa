@@ -138,6 +138,13 @@ public:
     [[nodiscard]] HttpResponse get_range(std::string_view url,
                                           std::size_t offset, std::size_t length) const;
 
+    // GET the whole object with download parallelism: splits it into ~part_size
+    // ranges fetched concurrently (<= max_concurrency at once). Saturates
+    // bandwidth a single stream can't. part_size 0 -> 8 MiB, concurrency 0 -> 16.
+    [[nodiscard]] HttpResponse get_parallel(std::string_view url,
+                                            std::size_t part_size = 0,
+                                            std::size_t max_concurrency = 0) const;
+
     // HEAD request (metadata only)
     [[nodiscard]] HttpResponse head(std::string_view url) const;
 

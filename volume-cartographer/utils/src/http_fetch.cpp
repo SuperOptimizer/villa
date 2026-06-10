@@ -147,6 +147,15 @@ HttpResponse HttpClient::get_range(std::string_view url,
     return toResponse(r);
 }
 
+HttpResponse HttpClient::get_parallel(std::string_view url, std::size_t part_size,
+                                      std::size_t max_concurrency) const
+{
+    s3_response r{};
+    s3_get_parallel(client(client_), std::string(url).c_str(), 0, 0,
+                    part_size, max_concurrency, &r);
+    return toResponse(r);
+}
+
 HttpResponse HttpClient::head(std::string_view url) const
 {
     s3_response r{};

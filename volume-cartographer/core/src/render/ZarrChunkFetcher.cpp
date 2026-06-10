@@ -103,6 +103,17 @@ public:
         throw HttpStatusError(response.status_code, key);
     }
 
+    std::optional<std::vector<std::byte>>
+    get_parallel(const std::string& key) const override
+    {
+        auto response = client_.get_parallel(makeUrl(key));
+        if (response.ok())
+            return std::move(response.body);
+        if (response.not_found())
+            return std::nullopt;
+        throw HttpStatusError(response.status_code, key);
+    }
+
     void set(const std::string&, std::span<const std::byte>) override
     {
         throw std::runtime_error("HTTP zarr store is read-only");
@@ -174,6 +185,60 @@ public:
             result.message = e.what();
         }
         return result;
+    }
+
+    // geometry-only shard extent (no download): the source's natural batch.
+    FetchBatch shardBatch(const ChunkKey& key) const override
+    {
+        const auto& meta = array_->metadata();
+        if (!meta.shard_config)
+            return FetchBatch{{key.iz, key.iy, key.ix}, 1};
+        const int per = static_cast<int>(meta.sub_chunks_per_shard(0));   // assume cubic
+        if (per <= 1)
+            return FetchBatch{{key.iz, key.iy, key.ix}, 1};
+        return FetchBatch{{(key.iz / per) * per, (key.iy / per) * per, (key.ix / per) * per},
+                          per};
+    }
+
+    // Parallel-download the shard enclosing `key` (one fat object, many sockets),
+    // then hand each present inner chunk to `sink(ChunkKey, bytes)`. Absent inner
+    // chunks are skipped (air). One GET amortized over per^3 chunks.
+    bool prefetchShard(const ChunkKey& key, const ShardSink& sink) override
+    {
+        const FetchBatch b = shardBatch(key);
+        if (b.edgeChunks <= 1) {   // unsharded: just fetch the one chunk
+            auto r = fetch(key);
+            if (r.status == ChunkFetchStatus::Found)
+                sink(key, std::move(r.bytes));
+            return r.status != ChunkFetchStatus::HttpError &&
+                   r.status != ChunkFetchStatus::IoError;
+        }
+        const int per = b.edgeChunks;
+        const std::array<std::size_t, 3> corner{
+            static_cast<std::size_t>(b.originChunk[0]),
+            static_cast<std::size_t>(b.originChunk[1]),
+            static_cast<std::size_t>(b.originChunk[2])};
+        utils::ShardBytes shard;
+        try {
+            auto s = array_->read_whole_shard(corner);
+            if (!s || s->empty())
+                return true;   // shard absent -> all air, nothing to do
+            shard = std::move(*s);
+        } catch (const std::exception&) {
+            return false;   // transient download error -> let caller retry
+        }
+        for (int z = 0; z < per; ++z)
+            for (int y = 0; y < per; ++y)
+                for (int x = 0; x < per; ++x) {
+                    const std::array<std::size_t, 3> ii{corner[0] + z, corner[1] + y,
+                                                        corner[2] + x};
+                    auto c = array_->extract_inner_chunk(shard.span(), ii);
+                    if (c && !c->empty())
+                        sink(ChunkKey{key.level, static_cast<int>(ii[0]),
+                                      static_cast<int>(ii[1]), static_cast<int>(ii[2])},
+                             std::move(*c));
+                }
+        return true;
     }
 
 private:

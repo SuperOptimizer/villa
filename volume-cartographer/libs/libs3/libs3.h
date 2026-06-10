@@ -252,6 +252,20 @@ s3_status s3_get_to_file(s3_client *c, const char *url, FILE *sink, s3_response 
 s3_status s3_get_range(s3_client *c, const char *url,
                        uint64_t offset, uint64_t length, s3_response *resp);
 
+/*
+ * Parallel single-object download. Fetches [offset, offset+length) of `url`
+ * (length 0 = the whole object, sized via a HEAD) by splitting it into
+ * ~`part_size`-byte ranges fetched concurrently (<= `max_concurrency` at once)
+ * and assembling them in order into resp->body. One fat object, many sockets:
+ * saturates bandwidth that a single TCP stream cannot. part_size 0 -> 8 MiB,
+ * max_concurrency 0 -> 16. resp->status is 200/206 on success; any failed part
+ * yields S3_ERR_HTTP (resp still freed-by-caller via s3_response_free).
+ */
+s3_status s3_get_parallel(s3_client *c, const char *url,
+                          uint64_t offset, uint64_t length,
+                          uint64_t part_size, size_t max_concurrency,
+                          s3_response *resp);
+
 s3_status s3_head(s3_client *c, const char *url, s3_response *resp);
 
 s3_status s3_put(s3_client *c, const char *url,

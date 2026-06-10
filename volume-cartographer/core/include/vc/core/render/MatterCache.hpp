@@ -119,6 +119,13 @@ public:
     // fetch one 16^3 block (key is in 16^3-chunk coords). Returns the decoded 4096 bytes.
     ChunkFetchResult fetch(const ChunkKey& key) override;
 
+    // Shard extent enclosing this 16^3-block key, in 16^3-block units.
+    FetchBatch shardBatch(const ChunkKey& key) const override;
+
+    // Download the source shard enclosing this region (one parallel GET) and
+    // encode each covered 256^3 region into the .mca. The prefetch fast path.
+    bool prefetchShard(const ChunkKey& key, const ShardSink& sink) override;
+
     static constexpr int kMca = MatterArchive::kChunk;   // 256
     static constexpr int kBlk = MatterArchive::kBlock;    // 16
 

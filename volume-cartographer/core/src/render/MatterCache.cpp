@@ -321,6 +321,61 @@ ChunkFetchResult MatterCacheFetcher::fetch(const ChunkKey& key)
     return result;
 }
 
+FetchBatch MatterCacheFetcher::shardBatch(const ChunkKey& key) const
+{
+    // key is in 16^3-block coords; translate to the source chunk, ask the source
+    // for its shard extent, translate back to block units.
+    const int blkPerRegion = kMca / kBlk;
+    const int regCz = key.iz / blkPerRegion;
+    const int regCy = key.iy / blkPerRegion;
+    const int regCx = key.ix / blkPerRegion;
+    const int srcCz = (regCz * kMca) / srcEdge_;
+    const int srcCy = (regCy * kMca) / srcEdge_;
+    const int srcCx = (regCx * kMca) / srcEdge_;
+    const FetchBatch sb = source_->shardBatch(ChunkKey{lod_, srcCz, srcCy, srcCx});
+    const int blkPerSrc = srcEdge_ / kBlk;
+    return FetchBatch{{sb.originChunk[0] * blkPerSrc, sb.originChunk[1] * blkPerSrc,
+                       sb.originChunk[2] * blkPerSrc},
+                      sb.edgeChunks * blkPerSrc};
+}
+
+bool MatterCacheFetcher::prefetchShard(const ChunkKey& key, const ShardSink&)
+{
+    // c3d: a 256^3 mca region IS one source chunk; the source shard holds many of
+    // them. Download the whole shard once, then encode every covered region. The
+    // sink is unused (we persist into the .mca, not back to a chunk cache).
+    const int blkPerRegion = kMca / kBlk;
+    const int srcCz = (key.iz / blkPerRegion * kMca) / srcEdge_;
+    const int srcCy = (key.iy / blkPerRegion * kMca) / srcEdge_;
+    const int srcCx = (key.ix / blkPerRegion * kMca) / srcEdge_;
+
+    bool ok = true;
+    source_->prefetchShard(
+        ChunkKey{lod_, srcCz, srcCy, srcCx},
+        [&](const ChunkKey& sk, std::vector<std::byte>&& bytes) {
+            // sk is a source chunk index; for c3d srcEdge_==256==kMca, so it maps
+            // 1:1 to an mca region. Encode it straight in.
+            const int regCz = (sk.iz * srcEdge_) / kMca;
+            const int regCy = (sk.iy * srcEdge_) / kMca;
+            const int regCx = (sk.ix * srcEdge_) / kMca;
+            if (srcEdge_ != kMca) {
+                // 128^3 source: would need 2x2x2 coalescing per region — fall back
+                // to the normal assemble path for this region.
+                std::size_t dl = 0;
+                ensureRegion(regCz, regCy, regCx, dl);
+                return;
+            }
+            if (archive_->hasChunk(lod_, regCz, regCy, regCx))
+                return;
+            if (bytes.size() != static_cast<std::size_t>(kMca) * kMca * kMca)
+                return;
+            if (!archive_->appendChunkRaw(lod_, regCz, regCy, regCx,
+                                          reinterpret_cast<const std::uint8_t*>(bytes.data())))
+                ok = false;
+        });
+    return ok;
+}
+
 
 // ============================================================================
 // MatterRemoteSource

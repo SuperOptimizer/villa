@@ -297,6 +297,31 @@ void ChunkCache::warmChunkBlocking(int level, int iz, int iy, int ix)
     }
 }
 
+FetchBatch ChunkCache::shardBatch(int level, int iz, int iy, int ix) const
+{
+    auto state = state_;
+    if (level < 0 || level >= static_cast<int>(state->fetchers_.size()) ||
+        !state->fetchers_[static_cast<std::size_t>(level)])
+        return FetchBatch{{iz, iy, ix}, 1};
+    return state->fetchers_[static_cast<std::size_t>(level)]->shardBatch(
+        ChunkKey{level, iz, iy, ix});
+}
+
+void ChunkCache::prefetchShardBlocking(int level, int iz, int iy, int ix)
+{
+    auto state = state_;
+    if (level < 0 || level >= static_cast<int>(state->fetchers_.size()) ||
+        !state->fetchers_[static_cast<std::size_t>(level)])
+        return;
+    try {
+        // sink is a no-op: mca fetchers persist into the .mca themselves.
+        state->fetchers_[static_cast<std::size_t>(level)]->prefetchShard(
+            ChunkKey{level, iz, iy, ix}, [](const ChunkKey&, std::vector<std::byte>&&) {});
+    } catch (const std::exception& e) {
+        Logger()->warn("prefetchShardBlocking l{} ({},{},{}): {}", level, iz, iy, ix, e.what());
+    }
+}
+
 ChunkCache::Stats ChunkCache::stats() const
 {
     auto state = state_;

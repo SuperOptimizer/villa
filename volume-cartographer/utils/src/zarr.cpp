@@ -2170,6 +2170,17 @@ ZarrArray::read_whole_shard(std::span<const std::size_t> chunk_indices) const {
         shard_idx[d] = chunk_indices[d] / ips;
     }
     auto key = chunk_key(shard_idx);
+
+    // Store-backed (HTTP/S3): one parallel download of the whole shard object.
+    // The prefetch fast path — a shard holds 16^3 inner chunks, so this turns
+    // thousands of ranged GETs into one fat object pulled over many sockets.
+    if (store_) {
+        auto full_key = array_key_.empty() ? key : array_key_ + "/" + key;
+        auto bytes = store_->get_parallel(full_key);
+        if (!bytes || bytes->empty()) return std::nullopt;
+        return ShardBytes::from_vector(std::move(*bytes));
+    }
+
     auto p = root_ / key;
     std::lock_guard lock(shard_mutex_for(p));
 #if !defined(_WIN32)
