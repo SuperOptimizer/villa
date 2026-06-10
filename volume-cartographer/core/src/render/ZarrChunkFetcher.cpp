@@ -187,6 +187,18 @@ public:
         return result;
     }
 
+    std::optional<bool> shardAllAir(const ChunkKey& key) override
+    {
+        const std::array<std::size_t, 3> idx{static_cast<std::size_t>(key.iz),
+                                             static_cast<std::size_t>(key.iy),
+                                             static_cast<std::size_t>(key.ix)};
+        try {
+            return array_->shard_all_air(idx);
+        } catch (const std::exception&) {
+            return std::nullopt;
+        }
+    }
+
     // geometry-only shard extent (no download): the source's natural batch.
     FetchBatch shardBatch(const ChunkKey& key) const override
     {

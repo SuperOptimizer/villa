@@ -720,6 +720,14 @@ public:
     extract_inner_chunk(std::span<const std::byte> shard_data,
                         std::span<const std::size_t> inner_indices) const;
 
+    /// Cheap all-air probe for the shard containing `chunk_indices`: reads ONLY
+    /// the shard's index footer (n_inner * 16 bytes at the start, a small ranged
+    /// GET over a remote store) and returns true iff every inner chunk is missing.
+    /// Lets a prefetcher skip the full shard download for air-padded regions.
+    /// nullopt = could not determine (not sharded, or index unreadable).
+    [[nodiscard]] std::optional<bool>
+    shard_all_air(std::span<const std::size_t> chunk_indices) const;
+
     // -- Members -------------------------------------------------------------
 private:
     std::filesystem::path root_;

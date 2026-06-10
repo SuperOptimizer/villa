@@ -2215,6 +2215,70 @@ ZarrArray::read_whole_shard(std::span<const std::size_t> chunk_indices) const {
 #endif
 }
 
+std::optional<bool>
+ZarrArray::shard_all_air(std::span<const std::size_t> chunk_indices) const {
+    if (!is_sharded()) return std::nullopt;
+    const auto ndim = meta_.ndim();
+    std::vector<std::size_t> shard_idx(ndim);
+    for (std::size_t d = 0; d < ndim; ++d)
+        shard_idx[d] = chunk_indices[d] / meta_.sub_chunks_per_shard(d);
+    auto key = chunk_key(shard_idx);
+    const auto n_inner = meta_.total_sub_chunks_per_shard();
+    const std::size_t index_size = n_inner * 16;   // index is at the START
+
+    // fetch only the index footer.
+    std::vector<std::byte> index_bytes;
+    if (store_) {
+        auto full_key = array_key_.empty() ? key : array_key_ + "/" + key;
+        auto got = store_->get_partial(full_key, 0, index_size);
+        if (!got) return true;   // shard object absent -> all air
+        if (got->size() < index_size) return std::nullopt;
+        index_bytes = std::move(*got);
+    } else {
+        auto p = root_ / key;
+        std::error_code ec;
+        if (!std::filesystem::exists(p, ec)) return true;   // no shard file -> air
+        std::ifstream f(p, std::ios::binary);
+        if (!f) return std::nullopt;
+        index_bytes.resize(index_size);
+        f.read(reinterpret_cast<char*>(index_bytes.data()),
+               static_cast<std::streamsize>(index_size));
+        if (!f) return std::nullopt;
+    }
+
+    // decode the index exactly as extract_inner_chunk does (codecs + endianness).
+    const auto& sc = *meta_.shard_config;
+    std::span<const std::byte> index_data = index_bytes;
+    std::vector<std::byte> decoded_index;
+    if (!sc.index_codecs.empty()) {
+        decoded_index.assign(index_bytes.begin(), index_bytes.end());
+        for (const auto& ic : sc.index_codecs) {
+            if (ic.name == "bytes") {
+                if (ic.configuration && ic.configuration->is_object()) {
+                    auto* e = json_find(*ic.configuration, "endian");
+                    if (e && e->is_string() && e->get_string() == "big" &&
+                        detail::is_little_endian())
+                        detail::byteswap_inplace(decoded_index, 8);
+                    else if (e && e->is_string() && e->get_string() == "little" &&
+                             !detail::is_little_endian())
+                        detail::byteswap_inplace(decoded_index, 8);
+                }
+            } else if (codec_.decompress) {
+                auto it = registry_.find(ic.name);
+                if (it != registry_.end() && it->second.decompress)
+                    decoded_index = it->second.decompress(decoded_index, index_size);
+            }
+        }
+        index_data = decoded_index;
+    }
+
+    auto index = detail::ShardIndex::deserialize(index_data, n_inner);
+    for (const auto& e : index.entries)
+        if (!e.is_missing())
+            return false;   // at least one inner chunk has data
+    return true;
+}
+
 // ---------------------------------------------------------------------------
 // open_remote
 // ---------------------------------------------------------------------------

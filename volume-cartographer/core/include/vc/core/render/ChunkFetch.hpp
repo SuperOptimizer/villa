@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <array>
 #include <functional>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -92,6 +93,11 @@ public:
         return r.status != ChunkFetchStatus::HttpError &&
                r.status != ChunkFetchStatus::IoError;
     }
+
+    // Cheap probe: is the shard enclosing `key` entirely air? Reads only the
+    // shard index (a small ranged GET), letting a prefetcher skip the full
+    // download for air-padded regions. nullopt = unknown (caller must download).
+    virtual std::optional<bool> shardAllAir(const ChunkKey& /*key*/) { return std::nullopt; }
 };
 
 } // namespace vc::render
