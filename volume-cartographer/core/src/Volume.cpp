@@ -1663,6 +1663,20 @@ static bool readVolumeZYXWithPolicy(Volume& volume,
     if (level < 0)
         throw std::out_of_range("Volume::read level must be non-negative");
 
+    // local volumes: read the zarr directly — exact bytes, not the lossy mca
+    // render cache. (Remote reads go through the cache; negative offsets keep the
+    // chunked path, which understands out-of-bounds fill.)
+    if (!volume.isRemote() && volume.hasScaleLevel(level) &&
+        offsetZYX[0] >= 0 && offsetZYX[1] >= 0 && offsetZYX[2] >= 0) {
+        auto array = openLocalZarrArrayForRead(
+            zarrArrayPathForLevel(volume.path(), level), sizeof(T));
+        readZarrRegionZYX(array, out,
+                          {static_cast<size_t>(offsetZYX[0]),
+                           static_cast<size_t>(offsetZYX[1]),
+                           static_cast<size_t>(offsetZYX[2])});
+        return true;
+    }
+
     auto* cache = volume.chunkedCache();
     if (volume.hasScaleLevel(level)) {
         readFromChunkedArrayZYX(out, offsetZYX, *cache, level);

@@ -179,6 +179,7 @@ bool MatterCacheFetcher::ensureRegion(int regCz, int regCy, int regCx,
     // region voxel origin
     const int vz0 = regCz * kMca, vy0 = regCy * kMca, vx0 = regCx * kMca;
     std::atomic<bool> anyData{false};
+    std::atomic<bool> failed{false};
     std::atomic<std::size_t> fetchedBytes{0};
 
     // fetch one source chunk + copy it into its (sz,sy,sx) sub-offset of the region.
@@ -201,10 +202,17 @@ bool MatterCacheFetcher::ensureRegion(int regCz, int regCy, int regCx,
         } catch (const std::exception& e) {
             Logger()->warn("MatterCacheFetcher: source fetch failed l{} ({},{},{}): {}",
                            lod_, scz, scy, scx, e.what());
+            failed = true;   // transient: do NOT bake zeros into the archive
+            return;
+        }
+        if (sub.status == ChunkFetchStatus::HttpError ||
+            sub.status == ChunkFetchStatus::IoError ||
+            sub.status == ChunkFetchStatus::DecodeError) {
+            failed = true;   // transient: do NOT bake zeros into the archive
             return;
         }
         if (sub.status != ChunkFetchStatus::Found || sub.bytes.empty())
-            return;   // missing/air sub-chunk -> stays zero in the region
+            return;   // genuinely missing/air sub-chunk -> stays zero in the region
         fetchedBytes += sub.bytes.size();
 
         // copy the source chunk (srcEdge_^3, z,y,x raster, u8) into the region at
@@ -236,6 +244,21 @@ bool MatterCacheFetcher::ensureRegion(int regCz, int regCy, int regCx,
                     subs.push_back(std::async(std::launch::async, fetchSub, sz, sy, sx));
         for (auto& f : subs)
             f.get();
+    }
+
+    // any sub-fetch error means the assembled region may have zero-filled holes:
+    // appending it would PERSIST the corruption. Unclaim the region instead so a
+    // later fetch retries once the source recovers.
+    if (failed) {
+        downloadedBytes = fetchedBytes.load();
+        {
+            std::lock_guard<std::mutex> lk(regMu_);
+            regions_.erase(rk);
+        }
+        regCv_.notify_all();
+        Logger()->warn("mca region l{} ({},{},{}): sub-fetch failed; will retry",
+                       lod_, regCz, regCy, regCx);
+        return false;
     }
 
     const auto t1 = std::chrono::steady_clock::now();

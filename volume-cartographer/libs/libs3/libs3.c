@@ -740,6 +740,13 @@ s3_status s3_credentials_from_env(s3_credentials *out) {
 static bool try_export_creds_ex(const char *profile, s3_credentials *a,
                                 time_t *expiry_out) {
     if (expiry_out) *expiry_out = 0;
+    /* profile reaches a shell via popen: reject anything outside the AWS
+       profile-name alphabet so a hostile $AWS_PROFILE cannot inject commands. */
+    if (profile)
+        for (const char *c = profile; *c; ++c)
+            if (!(isalnum((unsigned char)*c) || *c=='-' || *c=='_' || *c=='.' ||
+                  *c=='+' || *c=='@' || *c=='/'))
+                return false;
     char cmd[256];
     if (profile && profile[0])
         snprintf(cmd, sizeof cmd,
