@@ -80,6 +80,9 @@ const char* __tsan_default_suppressions(void)
 const char* __lsan_default_suppressions(void)
 {
     return
+        // matter-compressor keeps a per-thread encode staging buffer (reused
+        // across appends, never freed at thread exit by design).
+        "leak:mc_buf_put\n"
         "leak:libfontconfig\n"
         "leak:libpango\n"
         "leak:libgtk-3\n"

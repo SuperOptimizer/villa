@@ -263,5 +263,5 @@ auto main(int argc, char* argv[]) -> int
     // its own teardown, segfaulting in _dl_fini on every otherwise-clean exit.
     std::cout.flush();
     std::cerr.flush();
-    _exit(rc);
+    std::_Exit(rc);
 }
