@@ -2,6 +2,7 @@
 
 #include <utils/thread_pool.hpp>
 
+#include "vc/core/render/MatterArchive.hpp"
 #include "vc/core/util/Logging.hpp"
 
 #include <algorithm>
@@ -11,6 +12,7 @@
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 
 namespace vc::render {
@@ -119,6 +121,13 @@ std::array<int, 3> ChunkCache::chunkShape(int level) const
     return state_->levels_.at(static_cast<std::size_t>(level)).chunkShape;
 }
 
+std::array<int, 3> ChunkCache::prefetchShape(int level) const
+{
+    if (state_->options_.archive)
+        return {MatterArchive::kChunk, MatterArchive::kChunk, MatterArchive::kChunk};
+    return chunkShape(level);
+}
+
 ChunkDtype ChunkCache::dtype() const
 {
     return state_->dtype_;
@@ -150,17 +159,27 @@ ChunkResult ChunkCache::tryGetChunk(int level, int iz, int iy, int ix)
     if (!isValidKey(*state, key))
         return ChunkResult{ChunkStatus::AllFill, state->dtype_, {}, {}, {}};
 
+    const ChunkKey ek = entryKey(*state, key);
     std::unique_lock lock(state->mutex_);
-    auto it = state->entries_.find(key);
+    auto it = state->entries_.find(ek);
     if (it != state->entries_.end()) {
         if (it->second.status == EntryStatus::InFlight) {
             return ChunkResult{ChunkStatus::MissQueued, state->dtype_, state->levels_[level].chunkShape, {}, {}};
         }
-        return resultFromEntryLocked(*state, key, it->second);
+        auto result = resultFromEntryLocked(*state, ek, it->second);
+        if (result.status == ChunkStatus::Data && state->options_.archive) {
+            // mca mode: the region is in the archive; decode the block via mc_cache.
+            lock.unlock();
+            return refetchDataUnlocked(*state, key);
+        }
+        return result;
     }
 
-    state->entries_.emplace(key, Entry{});
-    queueFetchLocked(state, key, state->generation_, 0);
+    state->entries_.emplace(ek, Entry{});
+    std::vector<PendingFetch> pending;
+    queueFetchLocked(state, ek, state->generation_, 0, pending);
+    lock.unlock();
+    submitFetches(state, pending);
     return ChunkResult{ChunkStatus::MissQueued, state->dtype_, state->levels_[level].chunkShape, {}, {}};
 }
 
@@ -180,37 +199,69 @@ ChunkResult ChunkCache::getChunkBlocking(int level, int iz, int iy, int ix)
     if (!isValidKey(*state, key))
         return ChunkResult{ChunkStatus::AllFill, state->dtype_, {}, {}, {}};
 
+    const ChunkKey ek = entryKey(*state, key);
     std::unique_lock lock(state->mutex_);
-    auto [it, inserted] = state->entries_.emplace(key, Entry{});
-    if (inserted)
-        queueFetchLocked(state, key, state->generation_, 0);
-    waitForResolvedLocked(*state, lock, key);
-    it = state->entries_.find(key);
+    auto [it, inserted] = state->entries_.emplace(ek, Entry{});
+    if (inserted) {
+        std::vector<PendingFetch> pending;
+        queueFetchLocked(state, ek, state->generation_, 0, pending);
+        lock.unlock();
+        submitFetches(state, pending);
+        lock.lock();
+    }
+    waitForResolvedLocked(*state, lock, ek);
+    it = state->entries_.find(ek);
     if (it == state->entries_.end())
         return ChunkResult{ChunkStatus::Error, state->dtype_, state->levels_[level].chunkShape, {}, "chunk invalidated"};
-    return resultFromEntryLocked(*state, key, it->second);
+    auto result = resultFromEntryLocked(*state, ek, it->second);
+    if (result.status == ChunkStatus::Data && state->options_.archive) {
+        lock.unlock();
+        return refetchDataUnlocked(*state, key);
+    }
+    return result;
 }
 
 void ChunkCache::prefetchChunks(const std::vector<ChunkKey>& keys, bool wait, int priorityOffset)
 {
     auto state = state_;
+    // mca mode: fetching ONE block warms its whole 256^3 region, so snap prefetch
+    // keys to region corners and dedupe — callers enumerate at block granularity
+    // (4096 keys per region) and queueing them all is pure queue/lock churn.
+    std::vector<ChunkKey> snapped;
+    const std::vector<ChunkKey>* effective = &keys;
+    if (state->options_.archive) {
+        constexpr int kB = 16;   // blocks per region axis
+        std::unordered_set<ChunkKey, ChunkKeyHash> dedup;
+        dedup.reserve(keys.size() / 64 + 8);
+        for (const auto& k : keys) {
+            const ChunkKey corner{k.level, k.iz & ~(kB - 1), k.iy & ~(kB - 1), k.ix & ~(kB - 1)};
+            if (dedup.insert(corner).second)
+                snapped.push_back(corner);
+        }
+        effective = &snapped;
+    }
+
+    std::vector<PendingFetch> pending;
     std::unique_lock lock(state->mutex_);
-    for (const auto& key : keys) {
+    for (const auto& key : *effective) {
         if (!isValidKey(*state, key))
             continue;
         auto [it, inserted] = state->entries_.emplace(key, Entry{});
         if (inserted) {
-            queueFetchLocked(state, key, state->generation_, priorityOffset);
+            queueFetchLocked(state, key, state->generation_, priorityOffset, pending);
         } else if (it->second.status == EntryStatus::InFlight &&
                    key.level + priorityOffset < it->second.basePriority) {
-            queueFetchLocked(state, key, state->generation_, priorityOffset);
+            queueFetchLocked(state, key, state->generation_, priorityOffset, pending);
         }
     }
+    lock.unlock();
+    submitFetches(state, pending);
     if (!wait)
         return;
 
+    lock.lock();
     state->cv_.wait(lock, [&] {
-        for (const auto& key : keys) {
+        for (const auto& key : *effective) {
             if (!isValidKey(*state, key))
                 continue;
             auto it = state->entries_.find(key);
@@ -254,8 +305,15 @@ ChunkCache::Stats ChunkCache::stats() const
             recentBytes += bytes;
         }
 
-        result.decodedBytes = state->decodedBytes_;
-        result.decodedByteCapacity = state->options_.decodedByteCapacity;
+        if (state->options_.archive) {
+            // mca mode: residency lives in mc_cache.
+            const auto cs = state->options_.archive->cacheStats();
+            result.decodedBytes = cs.usedBytes;
+            result.decodedByteCapacity = cs.capacityBytes;
+        } else {
+            result.decodedBytes = state->decodedBytes_;
+            result.decodedByteCapacity = state->options_.decodedByteCapacity;
+        }
         result.remoteFetchesInFlight = state->remoteFetchesInFlight_;
         result.remoteDownloadBytesPerSecond =
             static_cast<double>(recentBytes) /
@@ -263,7 +321,8 @@ ChunkCache::Stats ChunkCache::stats() const
         // "disk" cache size = the single on-disk volume.mca file (the only on-disk
         // cache). Throttled stat() of the file size (it grows as chunks are appended).
         result.persistentCacheBytes = state->cachedPersistentCacheBytes_;
-        mcaPath = state->options_.mcaPath;
+        if (state->options_.archive)
+            mcaPath = std::filesystem::path{state->options_.archive->path()};
         scanMcaBytes = mcaPath.has_value() &&
             (state->lastPersistentCacheSizeScan_ == std::chrono::steady_clock::time_point{} ||
              now - state->lastPersistentCacheSizeScan_ >= kPersistentCacheSizeScanInterval);
@@ -337,10 +396,44 @@ ChunkResult ChunkCache::resultFromEntryLocked(State& state, const ChunkKey& key,
     return result;
 }
 
+// mca mode: ChunkCache bookkeeping is per-256^3-REGION, keyed by the region's corner
+// block. Per-block state would only duplicate what the archive (region presence) and
+// mc_cache (block residency) already track. Legacy mode keys 1:1.
+ChunkKey ChunkCache::entryKey(const State& state, const ChunkKey& key)
+{
+    if (!state.options_.archive)
+        return key;
+    constexpr int kB = MatterArchive::kBlocksPerAxis;
+    return ChunkKey{key.level, key.iz & ~(kB - 1), key.iy & ~(kB - 1), key.ix & ~(kB - 1)};
+}
+
+// mca mode: a resolved Data entry holds no bytes — its region is proven present in
+// the archive (publish happens after the encode), so decode the 16^3 block straight
+// from the archive's mc_cache (a memcpy on hit), bypassing the fetcher stack.
+ChunkResult ChunkCache::refetchDataUnlocked(State& state, const ChunkKey& key)
+{
+    ChunkResult result;
+    result.dtype = state.dtype_;
+    result.shape = state.levels_[static_cast<std::size_t>(key.level)].chunkShape;
+
+    constexpr int kB = MatterArchive::kBlocksPerAxis;   // 16 blocks per 256^3 region
+    auto bytes = std::make_shared<std::vector<std::byte>>(
+        static_cast<std::size_t>(MatterArchive::kBlock) * MatterArchive::kBlock *
+        MatterArchive::kBlock);
+    state.options_.archive->decodeBlock(
+        key.level, key.iz / kB, key.iy / kB, key.ix / kB,
+        key.iz % kB, key.iy % kB, key.ix % kB,
+        reinterpret_cast<std::uint8_t*>(bytes->data()));
+    result.status = ChunkStatus::Data;
+    result.bytes = std::move(bytes);
+    return result;
+}
+
 void ChunkCache::queueFetchLocked(const std::shared_ptr<State>& state,
                                   const ChunkKey& key,
                                   std::uint64_t generation,
-                                  int priorityOffset)
+                                  int priorityOffset,
+                                  std::vector<PendingFetch>& out)
 {
     auto it = state->entries_.find(key);
     if (it == state->entries_.end())
@@ -349,16 +442,35 @@ void ChunkCache::queueFetchLocked(const std::shared_ptr<State>& state,
     entry.status = EntryStatus::InFlight;
     entry.basePriority = key.level + priorityOffset;
     const auto epochBias = state->viewEpoch_;
-    entry.priority = entry.basePriority - epochBias * kViewEpochPriorityStride;
+    std::int64_t prio = entry.basePriority - epochBias * kViewEpochPriorityStride;
+    if (state->options_.archive) {
+        // Interleave 16^3 block tasks across 256^3 mca regions: rank 0 of every region
+        // sorts ahead of rank 1 of any region, so the worker pool claims DISTINCT
+        // regions concurrently instead of piling onto one region's single-flight wait.
+        const int rank = ((key.iz & 15) * 16 + (key.iy & 15)) * 16 + (key.ix & 15);
+        prio = prio * 4096 + rank;
+    }
+    entry.priority = prio;
     const std::uint64_t fetchSerial = state->nextFetchSerial_++;
     entry.fetchSerial = fetchSerial;
 
-    const auto priority = entry.priority;
+    out.push_back(PendingFetch{entry.priority, key, generation, fetchSerial});
+}
+
+void ChunkCache::submitFetches(const std::shared_ptr<State>& state,
+                               const std::vector<PendingFetch>& pending)
+{
+    if (pending.empty())
+        return;
+    auto& pool = chunkWorkerPool(state->options_.maxConcurrentReads);
     std::weak_ptr<State> weakState = state;
-    chunkWorkerPool(state->options_.maxConcurrentReads).submit(priority, [weakState, key, generation, fetchSerial] {
-        if (auto state = weakState.lock())
-            fetchAndStore(state, key, generation, fetchSerial);
-    });
+    for (const auto& p : pending) {
+        pool.submit(p.priority, [weakState, key = p.key, generation = p.generation,
+                                 fetchSerial = p.fetchSerial] {
+            if (auto state = weakState.lock())
+                fetchAndStore(state, key, generation, fetchSerial);
+        });
+    }
 }
 
 void ChunkCache::fetchAndStore(const std::shared_ptr<State>& state,
@@ -372,6 +484,9 @@ void ChunkCache::fetchAndStore(const std::shared_ptr<State>& state,
             return;
         auto it = state->entries_.find(key);
         if (it == state->entries_.end() || it->second.fetchSerial != fetchSerial)
+            return;
+        // already resolved (e.g. by a sibling block of the same mca region) — no-op.
+        if (it->second.status != EntryStatus::InFlight)
             return;
     }
 
@@ -412,9 +527,14 @@ void ChunkCache::fetchAndStore(const std::shared_ptr<State>& state,
         std::lock_guard lock(state->mutex_);
         if (trackedRemoteFetch && state->remoteFetchesInFlight_ > 0)
             --state->remoteFetchesInFlight_;
-        if (trackedRemoteFetch && fetch.status == ChunkFetchStatus::Found && !fetch.bytes.empty()) {
+        // mca mode: count only bytes the fetcher actually pulled from the source —
+        // blocks served out of the on-disk archive are NOT downloads.
+        const std::size_t downloaded = state->options_.archive
+            ? fetch.downloadedBytes
+            : (fetch.status == ChunkFetchStatus::Found ? fetch.bytes.size() : 0);
+        if (trackedRemoteFetch && downloaded > 0) {
             const auto now = std::chrono::steady_clock::now();
-            state->remoteDownloadHistory_.emplace_back(now, fetch.bytes.size());
+            state->remoteDownloadHistory_.emplace_back(now, downloaded);
             pruneDownloadHistoryLocked(*state, now);
         }
         if (generation != state->generation_)
@@ -455,14 +575,21 @@ void ChunkCache::storeFetchResultLocked(const std::shared_ptr<State>& state,
             entry.error = "decoded chunk byte size does not match full chunk shape";
             break;
         }
-        if (state->options_.detectAllFillChunks && isAllFill(*state, fetch.bytes)) {
+        // mca mode: this entry stands for a whole region but the fetched bytes are
+        // only its corner block — an all-fill corner says nothing about the region.
+        if (!state->options_.archive &&
+            state->options_.detectAllFillChunks && isAllFill(*state, fetch.bytes)) {
             entry.status = EntryStatus::AllFill;
             break;
         }
         entry.status = EntryStatus::Data;
-        entry.decodedBytes = fetch.bytes.size();
-        entry.bytes = std::make_shared<const std::vector<std::byte>>(std::move(fetch.bytes));
-        state->decodedBytes_ += entry.decodedBytes;
+        if (!state->options_.archive) {
+            // legacy mode only: retain decoded bytes here. In mca mode the resident
+            // copy is mc_cache's; this entry is just the resolved-status memo.
+            entry.decodedBytes = fetch.bytes.size();
+            entry.bytes = std::make_shared<const std::vector<std::byte>>(std::move(fetch.bytes));
+            state->decodedBytes_ += entry.decodedBytes;
+        }
         break;
     }
     case ChunkFetchStatus::Missing:
@@ -583,6 +710,14 @@ void ChunkCache::notifyListeners(const std::shared_ptr<State>& state)
     std::vector<ChunkReadyCallback> callbacks;
     {
         std::lock_guard lock(state->mutex_);
+        // Throttle: blocks resolve at thousands/s under load; per-block callbacks
+        // flood the UI event loop with repaint scheduling. Notify at most ~30 Hz,
+        // but ALWAYS on drain (no fetch in flight) so the final state renders.
+        const auto now = std::chrono::steady_clock::now();
+        if (state->remoteFetchesInFlight_ > 0 &&
+            now - state->lastListenerNotify_ < std::chrono::milliseconds(33))
+            return;
+        state->lastListenerNotify_ = now;
         callbacks.reserve(state->callbacks_.size());
         for (const auto& [id, cb] : state->callbacks_) {
             (void)id;

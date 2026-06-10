@@ -17,6 +17,8 @@
 
 namespace vc::render {
 
+class MatterArchive;
+
 class ChunkCache final : public IChunkedArray {
 public:
     struct LevelInfo {
@@ -36,10 +38,11 @@ public:
         // destroyed when a viewer is closed.
         std::size_t maxConcurrentReads = 16;
         bool detectAllFillChunks = true;
-        // The single on-disk volume.mca path (the only on-disk cache). Used solely to
-        // report its file size as the "disk" cache-size stat; the actual mca read/write
-        // is owned by the MatterCacheFetcher decorating the fetchers.
-        std::optional<std::filesystem::path> mcaPath;
+        // The per-volume .mca archive when the mca cache is on. Decoded blocks then
+        // live in the archive's mc_cache (the only resident cache) — entries here are
+        // status-only and resolved Data blocks are pulled back through the fetcher.
+        // Null = legacy mode (non-uint8 volumes): entries retain decoded bytes.
+        std::shared_ptr<MatterArchive> archive;
     };
 
     struct Stats {
@@ -64,6 +67,7 @@ public:
     int numLevels() const override;
     std::array<int, 3> shape(int level) const override;
     std::array<int, 3> chunkShape(int level) const override;
+    std::array<int, 3> prefetchShape(int level) const override;
     ChunkDtype dtype() const override;
     double fillValue() const override;
     LevelTransform levelTransform(int level) const override;
@@ -133,13 +137,28 @@ private:
         std::deque<std::pair<std::chrono::steady_clock::time_point, std::size_t>> remoteDownloadHistory_;
         std::chrono::steady_clock::time_point lastPersistentCacheSizeScan_{};
         std::size_t cachedPersistentCacheBytes_ = 0;
+        std::chrono::steady_clock::time_point lastListenerNotify_{};
     };
 
     static ChunkResult resultFromEntryLocked(State& state, const ChunkKey& key, Entry& entry);
+    static ChunkKey entryKey(const State& state, const ChunkKey& key);
+    static ChunkResult refetchDataUnlocked(State& state, const ChunkKey& key);
+    // Fetch submission is split: queueFetchLocked records the claim under the state
+    // mutex; submitFetches dispatches to the worker pool OUTSIDE it (the pool has its
+    // own lock — submitting under the state mutex serializes workers against callers).
+    struct PendingFetch {
+        std::int64_t priority = 0;
+        ChunkKey key;
+        std::uint64_t generation = 0;
+        std::uint64_t fetchSerial = 0;
+    };
     static void queueFetchLocked(const std::shared_ptr<State>& state,
                                  const ChunkKey& key,
                                  std::uint64_t generation,
-                                 int priorityOffset);
+                                 int priorityOffset,
+                                 std::vector<PendingFetch>& out);
+    static void submitFetches(const std::shared_ptr<State>& state,
+                              const std::vector<PendingFetch>& pending);
     static void fetchAndStore(const std::shared_ptr<State>& state,
                               ChunkKey key,
                               std::uint64_t generation,

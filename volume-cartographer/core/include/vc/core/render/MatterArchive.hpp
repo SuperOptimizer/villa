@@ -1,25 +1,20 @@
 #pragma once
 
 // MatterArchive — RAII C++ wrapper around the matter-compressor (.mca) appendable,
-// persistent, crash-safe archive. Used as VC3D's on-disk render cache: remote chunks
-// are fetched at the volume's native chunking, re-encoded into ONE .mca per volume
-// (all chunks at all LODs), and served back as decoded voxels.
+// persistent, crash-safe archive plus its in-RAM decoded-block cache (mc_cache).
+// Used as VC3D's render cache: remote chunks are fetched at the volume's native
+// chunking, re-encoded into ONE .mca per volume (all chunks at all LODs), and served
+// back as decoded 16^3 blocks through mc_cache (sharded CLOCK/NRU eviction).
 //
 // Storage/encode unit: 256^3 chunk (matter-compressor's contiguous on-disk unit).
-// Decode/serve unit:    16^3 block (mc's native decode granularity) -> this is what
-//                       the resident chunk cache should key on.
+// Decode/serve unit:    16^3 block (mc's native decode granularity).
 //
-// Thread-safety: the underlying mc writer is lock-free for concurrent appends, BUT mc's
-// codec quality is process-global state, so this wrapper serializes encode/decode under
-// a single quality. Appends from multiple threads are safe; this class guards the
-// quality set + writer/reader handle lifecycle with a mutex.
+// Thread-safety: appends, decodes and cache reads are all safe from many threads.
 
-#include <array>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
-#include <mutex>
 #include <string>
-#include <vector>
 
 namespace vc::render {
 
@@ -30,9 +25,11 @@ public:
     static constexpr int kBlocksPerAxis = kChunk / kBlock;   // 16
 
     // Open (or create) a persistent appendable archive at `path` for a volume whose
-    // LOD0 edge is `dim0` voxels (will be chunk-aligned up to a multiple of 256),
-    // encoded at `quality`. Throws std::runtime_error on failure.
-    MatterArchive(std::string path, int dim0, float quality);
+    // LOD0 edge is `dim0` voxels (chunk-aligned up to a multiple of 256), encoded at
+    // `quality`, with an mc_cache resident-block budget of `cacheBytes`. A stale
+    // archive (older format version / different dim) is deleted and recreated.
+    // Throws std::runtime_error on failure.
+    MatterArchive(std::string path, int dim0, float quality, std::size_t cacheBytes);
     ~MatterArchive();
 
     MatterArchive(const MatterArchive&) = delete;
@@ -46,13 +43,16 @@ public:
     // Is a chunk present in the archive (without decoding)?
     bool hasChunk(int lod, int cz, int cy, int cx) const;
 
-    // Decode one 16^3 block (bz,by,bx in [0,16)) of chunk (cz,cy,cx) at `lod` into
-    // `dst` (16^3 = 4096 bytes). Missing/air -> zeroed. Thread-safe.
+    // Get one 16^3 block (bz,by,bx in [0,16)) of chunk (cz,cy,cx) at `lod` into
+    // `dst` (16^3 = 4096 bytes), via mc_cache (decode on miss). Thread-safe.
     void decodeBlock(int lod, int cz, int cy, int cx, int bz, int by, int bx,
                      std::uint8_t* dst4096) const;
 
-    // Decode a whole 256^3 chunk into `dst` (256^3 = 16.7M bytes). Missing -> zeroed.
-    void decodeChunk(int lod, int cz, int cy, int cx, std::uint8_t* dst) const;
+    struct CacheStats {
+        std::uint64_t hits = 0, misses = 0, evictions = 0;
+        std::size_t usedBytes = 0, capacityBytes = 0;
+    };
+    CacheStats cacheStats() const;
 
     int   dim0() const { return dim0_; }
     float quality() const { return quality_; }

@@ -21,15 +21,19 @@ struct ChunkKey {
 struct ChunkKeyHash {
     std::size_t operator()(const ChunkKey& key) const noexcept
     {
-        std::size_t seed = 0;
-        auto combine = [&seed](int value) {
-            seed ^= std::hash<int>{}(value) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
-        };
-        combine(key.level);
-        combine(key.iz);
-        combine(key.iy);
-        combine(key.ix);
-        return seed;
+        // Keys pack losslessly into 64 bits (volumes are at most 2^20 voxels per
+        // axis and <=8 LODs): 1 spare | 3 level | 20 iz | 20 iy | 20 ix. One
+        // mix (splitmix64 finalizer) replaces four chained hash_combine rounds.
+        std::uint64_t k = (static_cast<std::uint64_t>(key.level & 7) << 60) |
+                          (static_cast<std::uint64_t>(key.iz & 0xFFFFF) << 40) |
+                          (static_cast<std::uint64_t>(key.iy & 0xFFFFF) << 20) |
+                          static_cast<std::uint64_t>(key.ix & 0xFFFFF);
+        k ^= k >> 33;
+        k *= 0xFF51AFD7ED558CCDULL;
+        k ^= k >> 33;
+        k *= 0xC4CEB9FE1A85EC53ULL;
+        k ^= k >> 33;
+        return static_cast<std::size_t>(k);
     }
 };
 
@@ -46,6 +50,10 @@ struct ChunkFetchResult {
     std::vector<std::byte> bytes;
     int httpStatus = 0;
     std::string message;
+    // Bytes actually pulled from the underlying source by THIS call (0 when served
+    // from a local cache, e.g. an already-present mca region). Caching fetchers set
+    // it so download stats don't count cache hits as network traffic.
+    std::size_t downloadedBytes = 0;
 };
 
 class IChunkFetcher {

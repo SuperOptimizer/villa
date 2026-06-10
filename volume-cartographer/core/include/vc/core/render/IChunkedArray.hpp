@@ -48,6 +48,10 @@ public:
     virtual int numLevels() const = 0;
     virtual std::array<int, 3> shape(int level) const = 0;
     virtual std::array<int, 3> chunkShape(int level) const = 0;
+    // Granularity at which speculative prefetch should enumerate keys (keys stay in
+    // chunkShape units, snapped to this stride). Defaults to chunkShape; mca-backed
+    // caches return the 256^3 region — fetching ONE block warms the whole region.
+    virtual std::array<int, 3> prefetchShape(int level) const { return chunkShape(level); }
     virtual ChunkDtype dtype() const = 0;
     virtual double fillValue() const = 0;
     virtual LevelTransform levelTransform(int level) const = 0;

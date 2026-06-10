@@ -1470,7 +1470,9 @@ vc::render::IChunkedArray* Volume::chunkedCache()
     if (!chunkedCache_) {
         vc::render::ChunkCache::Options options;
         options.decodedByteCapacity = cacheBudgetHot_;
-        options.maxConcurrentReads = ioThreads_ > 0 ? static_cast<std::size_t>(ioThreads_) : 16;
+        // mca region workers spend most of their time blocked on the network GET,
+        // so oversubscribe the cores; CPU (c3d decode + mc encode) caps usefulness.
+        options.maxConcurrentReads = ioThreads_ > 0 ? static_cast<std::size_t>(ioThreads_) : 48;
         chunkedCache_ = createChunkCache(std::move(options));
         if (!chunkedCache_) {
             throw std::runtime_error("Volume::chunkedCache failed to create chunk cache");
@@ -1516,9 +1518,11 @@ std::shared_ptr<vc::render::ChunkCache> Volume::createChunkCache(
             return q ? std::strtof(q, nullptr) : 8.0f;
         }();
         const auto mcaPath = cacheDir / "volume.mca";
-        mcaOn = vc::render::applyMatterCache(opened, mcaPath, quality, mcaLevels);
-        if (mcaOn)
-            options.mcaPath = mcaPath;   // report the .mca size as the "disk" cache stat
+        // the resident decoded-block cache is mc_cache inside the archive; the
+        // ChunkCache byte budget becomes its budget.
+        options.archive = vc::render::applyMatterCache(
+            opened, mcaPath, quality, options.decodedByteCapacity, mcaLevels);
+        mcaOn = options.archive != nullptr;
     }
 
     return std::make_shared<vc::render::ChunkCache>(

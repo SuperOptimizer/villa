@@ -44,9 +44,11 @@ public:
     static constexpr int kBlk = MatterArchive::kBlock;    // 16
 
 private:
-    // ensure the 256^3 region (regCz,regCy,regCx) is present in the .mca, encoding it from
-    // the source on a miss. Returns false if the source had no data for the region.
-    bool ensureRegion(int regCz, int regCy, int regCx);
+    // ensure the 256^3 region (regCz,regCy,regCx) is present in the .mca, encoding it
+    // from the source on a miss. Returns false if the source had no data for the
+    // region. `downloadedBytes` receives the bytes THIS call pulled from the source
+    // (0 when the region was already present or another thread assembled it).
+    bool ensureRegion(int regCz, int regCy, int regCx, std::size_t& downloadedBytes);
 
     std::shared_ptr<IChunkFetcher> source_;
     std::shared_ptr<MatterArchive> archive_;

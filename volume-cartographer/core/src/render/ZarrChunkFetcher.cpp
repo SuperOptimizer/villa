@@ -403,26 +403,27 @@ OpenedChunkedZarr openHttpZarrPyramid(const std::string& url)
 // and rewrite the level chunkShapes to mca's native 16^3 so the resident cache resides
 // 4KB blocks. uint8 only (mca is u8) — returns false (leaves `opened` untouched) for any
 // other dtype. `levelInfoOut` receives the 16^3-granular LevelInfo on success.
-bool applyMatterCache(OpenedChunkedZarr& opened,
-                      const std::filesystem::path& mcaPath,
-                      float quality,
-                      std::vector<ChunkCache::LevelInfo>& levelInfoOut)
+std::shared_ptr<MatterArchive> applyMatterCache(OpenedChunkedZarr& opened,
+                                                const std::filesystem::path& mcaPath,
+                                                float quality,
+                                                std::size_t cacheBytes,
+                                                std::vector<ChunkCache::LevelInfo>& levelInfoOut)
 {
     if (opened.dtype != ChunkDtype::UInt8 || opened.shapes.empty()) {
         Logger()->info("mca cache: skipped (dtype={} uint8={} levels={})",
                        static_cast<int>(opened.dtype),
                        opened.dtype == ChunkDtype::UInt8, opened.shapes.size());
-        return false;
+        return nullptr;
     }
 
     const int dim0 = std::max({opened.shapes[0][0], opened.shapes[0][1], opened.shapes[0][2]});
     std::shared_ptr<MatterArchive> archive;
     try {
-        archive = std::make_shared<MatterArchive>(mcaPath.string(), dim0, quality);
+        archive = std::make_shared<MatterArchive>(mcaPath.string(), dim0, quality, cacheBytes);
     } catch (const std::exception& e) {
         Logger()->warn("mca cache: failed to open {} ({}); falling back to raw cache",
                        mcaPath.string(), e.what());
-        return false;
+        return nullptr;
     }
     Logger()->info("mca cache enabled at {} (dim0={}, q={})", mcaPath.string(), dim0, quality);
 
@@ -439,7 +440,7 @@ bool applyMatterCache(OpenedChunkedZarr& opened,
                                 opened.transforms[i]});
     }
     opened.fetchers = std::move(mcaFetchers);
-    return true;
+    return archive;
 }
 
 std::unique_ptr<ChunkCache> createChunkCache(

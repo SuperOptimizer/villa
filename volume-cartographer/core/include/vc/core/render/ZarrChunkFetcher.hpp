@@ -37,12 +37,14 @@ std::unique_ptr<ChunkCache> createChunkCache(
 
 // Wrap an opened pyramid with a persistent matter-compressor (.mca) cache: each level's
 // source fetcher is decorated to fetch native chunks, re-encode 256^3 regions into the
-// shared .mca, and serve decoded 16^3 blocks. On success, `opened.fetchers` is replaced
-// and `levelInfoOut` holds the 16^3-granular LevelInfo. Returns false (no change) if the
-// volume isn't uint8 or the archive can't be opened. The .mca persists across runs.
-bool applyMatterCache(OpenedChunkedZarr& opened,
-                      const std::filesystem::path& mcaPath,
-                      float quality,
-                      std::vector<ChunkCache::LevelInfo>& levelInfoOut);
+// shared .mca, and serve decoded 16^3 blocks out of its mc_cache (`cacheBytes` resident
+// budget). On success, `opened.fetchers` is replaced, `levelInfoOut` holds the
+// 16^3-granular LevelInfo, and the shared archive is returned. Returns null (no change)
+// if the volume isn't uint8 or the archive can't be opened. The .mca persists across runs.
+std::shared_ptr<MatterArchive> applyMatterCache(OpenedChunkedZarr& opened,
+                                                const std::filesystem::path& mcaPath,
+                                                float quality,
+                                                std::size_t cacheBytes,
+                                                std::vector<ChunkCache::LevelInfo>& levelInfoOut);
 
 } // namespace vc::render
