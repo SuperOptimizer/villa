@@ -2060,6 +2060,28 @@ void ZarrArray::write_chunk_raw(std::span<const std::size_t> idx,
     detail::write_file_bytes(p, data);
 }
 
+// Fetch (or return the cached) full index table of a remote shard: one ranged GET
+// of total_sub_chunks_per_shard()*16 bytes from the shard start, shared by every
+// subsequent chunk read in that shard. A concurrent first touch may fetch the same
+// small table more than once; last insert wins (the tables are identical).
+std::shared_ptr<const std::vector<std::byte>>
+ZarrArray::shard_index_for(const std::string& full_key) const {
+    {
+        std::lock_guard lock(shard_index_cache_->mu);
+        auto it = shard_index_cache_->map.find(full_key);
+        if (it != shard_index_cache_->map.end())
+            return it->second;
+    }
+    const std::size_t index_bytes = meta_.total_sub_chunks_per_shard() * 16;
+    auto data = store_->get_partial(full_key, 0, index_bytes);
+    if (!data || data->size() < index_bytes)
+        return nullptr;   // missing shard (or short read): don't cache negatives
+    auto index = std::make_shared<const std::vector<std::byte>>(std::move(*data));
+    std::lock_guard lock(shard_index_cache_->mu);
+    shard_index_cache_->map[full_key] = index;
+    return index;
+}
+
 std::optional<std::vector<std::byte>>
 ZarrArray::read_inner_chunk_from_shard(std::span<const std::size_t> chunk_indices) const {
     if (!is_sharded()) return std::nullopt;
@@ -2091,12 +2113,12 @@ ZarrArray::read_inner_chunk_from_shard(std::span<const std::size_t> chunk_indice
     auto key = chunk_key(shard_idx);
     if (store_) {
         auto full_key = array_key_.empty() ? key : array_key_ + "/" + key;
-        auto entry = store_->get_partial(full_key, index_offset, 16);
-        if (!entry || entry->size() < 16) return std::nullopt;
+        auto index = shard_index_for(full_key);
+        if (!index || index->size() < index_offset + 16) return std::nullopt;
 
         std::uint64_t offset = 0, nbytes = 0;
-        std::memcpy(&offset, entry->data(), 8);
-        std::memcpy(&nbytes, entry->data() + 8, 8);
+        std::memcpy(&offset, index->data() + index_offset, 8);
+        std::memcpy(&nbytes, index->data() + index_offset + 8, 8);
         if (is_missing_or_empty(offset, nbytes)) return std::nullopt;
         if (offset > std::numeric_limits<std::size_t>::max() ||
             nbytes > std::numeric_limits<std::size_t>::max())

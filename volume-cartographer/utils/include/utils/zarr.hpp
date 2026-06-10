@@ -736,6 +736,19 @@ private:
         std::size_t h = std::hash<std::string>{}(p.native());
         return (*shard_write_mutexes_)[h % kShardMutexStripes];
     }
+
+    // Remote shard-index cache: the shard index table (16 B per inner chunk, at the
+    // start of the shard) is fetched ONCE per shard instead of one ranged GET per
+    // chunk read — halves the round trips per remote chunk.
+    struct ShardIndexCache {
+        std::mutex mu;
+        std::unordered_map<std::string,
+                           std::shared_ptr<const std::vector<std::byte>>> map;
+    };
+    mutable std::shared_ptr<ShardIndexCache> shard_index_cache_ =
+        std::make_shared<ShardIndexCache>();
+    [[nodiscard]] std::shared_ptr<const std::vector<std::byte>>
+    shard_index_for(const std::string& full_key) const;
 };
 
 // ---------------------------------------------------------------------------
