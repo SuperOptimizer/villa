@@ -1,7 +1,11 @@
 #include "vc/core/render/McVolumeArray.hpp"
 
 #include "mc_volume.h"
+#include "mc_render.h"
 
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <vector>
 
 namespace vc::render {
@@ -142,6 +146,80 @@ IChunkedArray::Stats McVolumeArray::stats() const
     out.persistentCacheBytes = static_cast<std::size_t>(s.disk_bytes);
     out.remoteFetchesInFlight = static_cast<std::size_t>(s.regions_inflight);
     return out;
+}
+
+void McVolumeArray::render(const float* ptsXYZ, const float* normalsXYZ,
+                           int w, int h, int comp, float t0, float t1, float dt,
+                           float alphaMin, float alphaOpacity,
+                           float voxPerPixel, std::uint8_t* out)
+{
+    const std::size_t n = static_cast<std::size_t>(w) * static_cast<std::size_t>(h);
+
+    // mc_volume sample sources for every level (non-blocking: absent regions
+    // sample as 0 and kick an async transcode — the interactive render path).
+    mc_sample_lods lods = mc_volume_sample_lods(vol_, 0);
+    const int L = mc_render_pick_lod(&lods, voxPerPixel > 0.f ? voxPerPixel : 1.f);
+    // Power-of-two pyramid: each level is 2^L smaller. The remote level SHAPE is
+    // padded up to whole 4096-chunks (e.g. z 77824 -> 8192 at L4 instead of the
+    // true 4864) so the shape ratio is NOT the scale; the downsample factor is
+    // exactly 2^L. c_L = (c_0 + 0.5)/2^L - 0.5 (half-voxel-center correct).
+    const float s = static_cast<float>(1 << L);
+
+    // VC points are (x,y,z); mc wants (z,y,x). Invalid (<0 / NaN) points pass
+    // through unchanged so mc_render emits 0 there.
+    std::vector<float> pts(n * 3);
+    std::vector<float> nrm;
+    auto remap = [&](float c) { return (c + 0.5f) / s - 0.5f; };
+    for (std::size_t i = 0; i < n; ++i) {
+        const float x = ptsXYZ[i * 3 + 0], y = ptsXYZ[i * 3 + 1], z = ptsXYZ[i * 3 + 2];
+        const bool bad = !(x >= 0.f) || !(y >= 0.f) || !(z >= 0.f) ||
+                         std::isnan(x) || std::isnan(y) || std::isnan(z);
+        pts[i * 3 + 0] = bad ? -1.f : remap(z);   // z
+        pts[i * 3 + 1] = bad ? -1.f : remap(y);   // y
+        pts[i * 3 + 2] = bad ? -1.f : remap(x);   // x
+    }
+    const float* nrmPtr = nullptr;
+    if (normalsXYZ && comp != 0 /*MC_COMP_NONE*/) {
+        nrm.resize(n * 3);
+        for (std::size_t i = 0; i < n; ++i) {     // normals are directions: just swap, no remap
+            nrm[i * 3 + 0] = normalsXYZ[i * 3 + 2];   // z
+            nrm[i * 3 + 1] = normalsXYZ[i * 3 + 1];   // y
+            nrm[i * 3 + 2] = normalsXYZ[i * 3 + 0];   // x
+        }
+        nrmPtr = nrm.data();
+    }
+
+    mc_render_params p{};
+    p.filter = MC_FILTER_TRILINEAR;
+    p.comp = static_cast<mc_comp>(comp);
+    // composite range is in LOD-0 voxels; scale to the sampled level's pitch.
+    p.t0 = t0 / s; p.t1 = t1 / s; p.dt = (dt > 0.f ? dt : 1.f) / s;
+    p.alpha_min = alphaMin;
+    p.alpha_opacity = alphaOpacity > 0.f ? alphaOpacity : 1.f;
+
+    mc_render_points_par(&lods.lods[L], pts.data(), nrmPtr, w, h, &p, out, 0);
+
+    static const bool dbg = getenv("MCV_LOG") != nullptr;
+    if (dbg && w > 4 && h > 4) {
+        // measure how much the INPUT coord moves per-pixel along a center row
+        // vs down a center column. Streaks => one of these deltas ~ 0.
+        const int cy = h / 2, cx = w / 2;
+        auto P = [&](int yy, int xx, int k){ return ptsXYZ[(std::size_t(yy)*w+xx)*3+k]; };
+        float drow[3], dcol[3];
+        for (int k = 0; k < 3; ++k) {
+            drow[k] = P(cy, cx+1, k) - P(cy, cx, k);
+            dcol[k] = P(cy+1, cx, k) - P(cy, cx, k);
+        }
+        std::size_t nz = 0; for (std::size_t i = 0; i < n; ++i) if (out[i]) ++nz;
+        const bool quad = (nrmPtr != nullptr) || (P(0,0,2) != P(cy,cx,2) && false);
+        fprintf(stderr, "[mcv-render] %dx%d L=%d nz=%zu vpp=%.2f | "
+                "center_xyz(%.0f,%.0f,%.0f) d/col_xyz(%.3f,%.3f,%.3f) "
+                "d/row_xyz(%.3f,%.3f,%.3f) nrm=%d\n",
+                w, h, L, nz, voxPerPixel,
+                P(cy,cx,0), P(cy,cx,1), P(cy,cx,2),
+                dcol[0],dcol[1],dcol[2], drow[0],drow[1],drow[2], nrmPtr?1:0);
+        (void)quad;
+    }
 }
 
 } // namespace vc::render

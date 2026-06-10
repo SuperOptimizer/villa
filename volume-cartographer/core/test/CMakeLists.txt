@@ -67,8 +67,6 @@ vc_add_test(NAME test_smoke LIBS doctest::doctest)
 
 vc_add_test(NAME test_appendmask_render)
 
-vc_add_test(NAME test_chunked_plane_sampler_fallback)
-
 vc_add_test(NAME test_volume_chunk_errors)
 
 vc_add_test(NAME test_segmentation_autosave_state
@@ -215,17 +213,6 @@ target_link_libraries(bench_volume_sample PRIVATE doctest::doctest vc_core)
 if(VC_RUN_BENCHES)
     add_test(NAME bench_volume_sample COMMAND bench_volume_sample)
     set_property(GLOBAL APPEND PROPERTY VC_TEST_TARGETS bench_volume_sample)
-endif()
-
-add_executable(bench_chunked_plane_sampler bench_chunked_plane_sampler.cpp)
-target_link_libraries(bench_chunked_plane_sampler PRIVATE doctest::doctest vc_core)
-# Perf guard for the slice sampler hot path. Like bench_volume_sample it
-# carries only a loose wall-clock assertion, so it stays out of default
-# ctest unless the user opts in via VC_RUN_BENCHES; the target is always
-# built and runnable manually.
-if(VC_RUN_BENCHES)
-    add_test(NAME bench_chunked_plane_sampler COMMAND bench_chunked_plane_sampler)
-    set_property(GLOBAL APPEND PROPERTY VC_TEST_TARGETS bench_chunked_plane_sampler)
 endif()
 
 add_executable(bench_lasagna_line_edit bench_lasagna_line_edit.cpp)
@@ -398,8 +385,6 @@ vc_add_test(NAME test_volume_local)
 
 vc_add_test(NAME test_zarr_helpers)
 
-vc_add_test(NAME test_chunked_plane_sampler)
-
 vc_add_test(NAME test_slicing)
 
 vc_add_test(NAME test_volume_pkg)
@@ -425,8 +410,6 @@ vc_add_test(NAME test_volume_pyramid)
 vc_add_test(NAME test_chunk_cache_persist)
 
 vc_add_test(NAME test_zarr_chunk_fetcher)
-
-vc_add_test(NAME test_chunked_plane_sampler_more)
 
 vc_add_test(NAME test_slicing_more)
 

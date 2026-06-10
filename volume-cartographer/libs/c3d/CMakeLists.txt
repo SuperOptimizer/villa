@@ -17,6 +17,12 @@ target_compile_features(c3d PRIVATE c_std_23)
 target_compile_options(c3d PRIVATE
     -fno-math-errno
     -fno-trapping-math
+    # c3d runs SINGLE-THREADED. Callers (tracer batch encode, mc_volume's
+    # 24-thread prefetch) drive parallelism themselves; letting each c3d call
+    # spawn an OpenMP team of nproc multiplies threads (24*16=384 in prefetch).
+    # -fno-openmp overrides the global -fopenmp; c3d's omp_ calls are all
+    # #ifdef _OPENMP-guarded with serial fallbacks, so the pragmas become no-ops.
+    -fno-openmp
     # Upstream vendored code — we don't own the style, silence the noise.
     -w
 )

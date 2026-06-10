@@ -234,10 +234,11 @@ namespace perf {
     constexpr int RAM_CACHE_SIZE_GB_DEFAULT = 10;
     constexpr bool PREFETCH_VOLUME_DEFAULT = false;
     constexpr auto PREFETCH_LEVELS_DEFAULT = "";   // empty = all levels, coarsest first
-    // shard drivers. Each shard is ALREADY internally parallel (parallel ranged
-    // download + multi-thread encode), so a couple overlapping shards saturate
-    // the pipe; more just thrash bandwidth and starve interactive fetches.
-    constexpr int PREFETCH_THREADS_DEFAULT = 2;
+    // shard drivers. Each driver thread batch-downloads a whole shard's present
+    // chunks in ONE parallel s3_get_batch (up to 32 concurrent GETs over pooled
+    // connections), so the download parallelism lives in libs3, not the thread
+    // count. A few drivers saturate bandwidth; more just contend. 4 is plenty.
+    constexpr int PREFETCH_THREADS_DEFAULT = 4;
 
     // When true the disk cache stores c3d-compressed sharded zarr (smaller,
     // lossy).  When false it stores source chunk bytes unchanged at the

@@ -1,5 +1,4 @@
 #include "CWindow.hpp"
-#include "VolumePrefetcher.hpp"
 #include <utils/http_fetch.hpp>
 
 #include "RenderBenchRecorder.hpp"
@@ -1865,32 +1864,9 @@ void CWindow::setVolume(std::shared_ptr<Volume> newvol)
     // CState handles cache budget and volume ID resolution, and emits volumeChanged
     _state->setCurrentVolume(newvol);
 
-    // background cache prefetch for the newly loaded volume (Settings -> Cache).
-    if (!_volumePrefetcher)
-        _volumePrefetcher = std::make_unique<VolumePrefetcher>();
-    _volumePrefetcher->stop();
-    {
-        using namespace vc3d::settings;
-        QSettings settings(vc3d::settingsFilePath(), QSettings::IniFormat);
-        if (newvol &&
-            settings.value(perf::PREFETCH_VOLUME, perf::PREFETCH_VOLUME_DEFAULT).toBool()) {
-            std::vector<int> levels;
-            // comma-containing INI values round-trip as QStringList; join first.
-            const auto spec =
-                settings.value(perf::PREFETCH_LEVELS, perf::PREFETCH_LEVELS_DEFAULT)
-                    .toStringList()
-                    .join(',');
-            for (const auto& part : spec.split(',', Qt::SkipEmptyParts)) {
-                bool ok = false;
-                const int l = part.trimmed().toInt(&ok);
-                if (ok)
-                    levels.push_back(l);
-            }
-            const int threads =
-                settings.value(perf::PREFETCH_THREADS, perf::PREFETCH_THREADS_DEFAULT).toInt();
-            _volumePrefetcher->start(newvol, std::move(levels), threads);
-        }
-    }
+    // No GUI prefetch: mc_volume serves the render path on demand (interactive
+    // try_block + its own async transcode workers). Bulk prefetch lives in the
+    // vc_cache_prefetch CLI tool.
 
     const bool growthVolumeValid = _state->hasVpkg() && !_state->segmentationGrowthVolumeId().empty() &&
                                    _state->vpkg()->hasVolume(_state->segmentationGrowthVolumeId());
@@ -4628,12 +4604,6 @@ void CWindow::saveWindowState()
 
 void CWindow::closeEvent(QCloseEvent* event)
 {
-    // Stop the background prefetch first: abortAll makes any in-flight S3
-    // transfer return promptly so the worker join is instant.
-    if (_volumePrefetcher && _volumePrefetcher->running()) {
-        utils::HttpClient::abortAll();
-        _volumePrefetcher->stop();
-    }
     // Flush a render-bench recording (if any) before teardown.
     if (_benchRecorder && _benchRecorder->attached()) {
         _benchRecorder->save();

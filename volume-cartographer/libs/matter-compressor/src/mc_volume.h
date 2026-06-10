@@ -17,6 +17,12 @@
 #define MC_VOLUME_H
 #include <stdint.h>
 #include <stddef.h>
+#include "mc_sample.h"
+#include "mc_render.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 typedef struct mc_volume mc_volume;
 
@@ -50,6 +56,21 @@ void mc_volume_prefetch_shard(mc_volume *v, int lod, int cz, int cy, int cx);
 // polled to abort early.
 void mc_volume_prefetch_level(mc_volume *v, int lod, int nthreads, volatile int *cancel);
 
+// Register a callback fired (from a worker thread) each time a background
+// transcode completes a region — lets an interactive client schedule a repaint.
+// `cb` must be cheap and thread-safe (e.g. set a flag / post to the UI loop).
+typedef void (*mc_volume_ready_fn)(void *ud);
+void mc_volume_set_ready_cb(mc_volume *v, mc_volume_ready_fn cb, void *ud);
+
+// Sampling source over one level (see mc_sample.h / mc_render.h).
+// blocking=0: try_block semantics — absent regions sample as 0 and kick one
+//             deduped background transcode (interactive render path).
+// blocking=1: absent regions are transcoded synchronously first (batch path).
+mc_sample_src mc_volume_sample_src(mc_volume *v, int lod, int blocking);
+// All levels at once, for LOD-matched rendering (mc_render_plane_lod /
+// mc_render_quad_lod pick the level from the render scale).
+mc_sample_lods mc_volume_sample_lods(mc_volume *v, int blocking);
+
 typedef struct {
     uint64_t cache_hits, cache_misses;   // mc_cache residency
     uint64_t disk_bytes;                 // .mca append cursor
@@ -57,5 +78,9 @@ typedef struct {
     uint64_t regions_inflight;           // single-flight depth right now
 } mc_volume_stats;
 void mc_volume_get_stats(const mc_volume *v, mc_volume_stats *out);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

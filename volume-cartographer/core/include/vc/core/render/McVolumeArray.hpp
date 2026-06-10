@@ -54,6 +54,17 @@ public:
     Stats stats() const override;
     void prefetchShardBlocking(int level, int iz, int iy, int ix) override;
 
+    // Render a W*H image directly via matter-compressor's mc_render, bypassing
+    // any per-chunk C++ sampler. `ptsXYZ` is W*H*3 floats in VC's (x,y,z) order
+    // (e.g. from Surface::gen()); `normalsXYZ` is W*H*3 (x,y,z) unit normals or
+    // null (required when compositing). `comp` selects the reduction along the
+    // normal: 0=none(slice) 1=min 2=mean 3=max 4=alpha. `t0..t1` step `dt` is the
+    // composite slab in voxels. `voxPerPixel` picks the LOD. `out` is W*H bytes.
+    void render(const float* ptsXYZ, const float* normalsXYZ, int w, int h,
+                int comp, float t0, float t1, float dt,
+                float alphaMin, float alphaOpacity,
+                float voxPerPixel, std::uint8_t* out);
+
 private:
     explicit McVolumeArray(mc_volume* v, int numLevels,
                            std::array<int, 3> shape0);

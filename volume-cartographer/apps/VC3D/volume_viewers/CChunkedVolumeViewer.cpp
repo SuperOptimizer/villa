@@ -6,6 +6,7 @@
 #include "ViewerManager.hpp"
 #include "overlays/SegmentationOverlayController.hpp"
 #include "vc/core/render/Colormaps.hpp"
+#include "vc/core/render/McVolumeArray.hpp"
 #include "vc/core/render/PostProcess.hpp"
 #include "render/ChunkCache.hpp"
 #include "vc/core/types/Volume.hpp"
@@ -1437,10 +1438,8 @@ CChunkedVolumeViewer::RenderResult CChunkedVolumeViewer::renderFrame(RenderConte
     }
 
     cv::Mat_<uint8_t> values(ctx.fbH, ctx.fbW, uint8_t(0));
-    cv::Mat_<uint8_t> coverage(ctx.fbH, ctx.fbW, uint8_t(0));
     cv::Mat_<uint8_t> overlayValues;
-    cv::Mat_<uint8_t> overlayCoverage;
-    const vc::render::ChunkedPlaneSampler::Options options(ctx.samplingMethod, 32);
+    const bool planeView = dynamic_cast<PlaneSurface*>(ctx.surf.get()) != nullptr;
 
     auto streamingCompositeUnsupported = [&]() {
         return !isSupportedStreamingCompositeMethod(ctx.compositeSettings.params.method) ||
@@ -1452,252 +1451,142 @@ CChunkedVolumeViewer::RenderResult CChunkedVolumeViewer::renderFrame(RenderConte
                ctx.compositeSettings.useVolumeGradients;
     };
 
-    auto samplePlane = [&](const cv::Vec3f& origin,
-                           const cv::Vec3f& vxStep,
-                           const cv::Vec3f& vyStep,
-                           const cv::Vec3f& normal,
-                           cv::Mat_<uint8_t>& dst,
-                           cv::Mat_<uint8_t>& cov,
-                           vc::render::IChunkedArray& array) {
-        const bool wantComposite = ctx.compositeSettings.planeEnabled && !streamingCompositeUnsupported();
-        if (!wantComposite) {
-            vc::render::ChunkedPlaneSampler::samplePlaneFineToCoarse(
-                array, ctx.startLevel, origin, vxStep, vyStep, dst, cov, options);
-            return;
-        }
+    // mc_render composite params from VC's settings. comp=NONE -> a slice; an
+    // enabled-and-supported composite maps method -> reduction and the layer
+    // counts to a [t0,t1] slab in LOD-0 voxels. plane and quad use their own
+    // layer/enabled fields. Invalid/unsupported composite -> a plain slice.
+    const bool composite = planeView ? ctx.compositeSettings.planeEnabled
+                                     : ctx.compositeSettings.enabled;
+    const bool wantComposite = composite && !streamingCompositeUnsupported();
+    int comp = 0; // MC_COMP_NONE
+    if (wantComposite) {
+        const std::string& m = ctx.compositeSettings.params.method;
+        if (m == "min")       comp = 1;
+        else if (m == "mean") comp = 2;
+        else if (m == "max")  comp = 3;
+        else if (m == "alpha")comp = 4;
+    }
+    const int front  = planeView ? ctx.compositeSettings.planeLayersFront
+                                 : ctx.compositeSettings.layersFront;
+    const int behind = planeView ? ctx.compositeSettings.planeLayersBehind
+                                 : ctx.compositeSettings.layersBehind;
+    const float zStep = ctx.compositeSettings.reverseDirection ? -1.0f : 1.0f;
+    const float t0 = wantComposite ? float(-std::max(0, behind)) * zStep : 0.0f;
+    const float t1 = wantComposite ? float( std::max(0, front )) * zStep : 0.0f;
+    const float voxPerPixel = ctx.scale > 0.0f ? 1.0f / ctx.scale : 1.0f;
 
-        const int front = std::max(0, ctx.compositeSettings.planeLayersFront);
-        const int behind = std::max(0, ctx.compositeSettings.planeLayersBehind);
-        const int numLayers = front + behind + 1;
-        const int zStart = -behind;
-        const float zStep = ctx.compositeSettings.reverseDirection ? -1.0f : 1.0f;
-        const auto compositeOptions = vc::render::ChunkedPlaneSampler::Options(vc::Sampling::Nearest, options.tileSize);
-        std::vector<cv::Mat_<uint8_t>> layerValues;
-        std::vector<cv::Mat_<uint8_t>> layerCoverage;
-        layerValues.reserve(numLayers);
-        layerCoverage.reserve(numLayers);
-        for (int i = 0; i < numLayers; ++i) {
-            layerValues.emplace_back(dst.rows, dst.cols, uint8_t(0));
-            layerCoverage.emplace_back(dst.rows, dst.cols, uint8_t(0));
-            const cv::Vec3f layerOrigin = origin + normal * (float(zStart + i) * zStep);
-            vc::render::ChunkedPlaneSampler::samplePlaneFineToCoarse(
-                array, ctx.startLevel, layerOrigin, vxStep, vyStep,
-                layerValues.back(), layerCoverage.back(), compositeOptions);
-        }
-        LayerStack stack;
-        stack.values.resize(numLayers);
-        for (int y = 0; y < dst.rows; ++y) {
-            auto* dstRow = dst.ptr<uint8_t>(y);
-            auto* covRow = cov.ptr<uint8_t>(y);
-            for (int x = 0; x < dst.cols; ++x) {
-                stack.validCount = 0;
-                for (int i = 0; i < numLayers; ++i) {
-                    if (!layerCoverage[i](y, x))
-                        continue;
-                    const float value = static_cast<float>(layerValues[i](y, x));
-                    if (value < static_cast<float>(ctx.compositeSettings.params.isoCutoff))
-                        continue;
-                    stack.values[stack.validCount++] = value;
-                }
-                if (stack.validCount > 0) {
-                    dstRow[x] = static_cast<uint8_t>(std::clamp(
-                        compositeLayerStack(stack, ctx.compositeSettings.params), 0.0f, 255.0f));
-                    covRow[x] = 1;
-                }
-            }
-        }
-    };
+    // surf->gen() builds the W*H world-coord grid (and normals when compositing
+    // or offset along z); mc_render samples/composites it directly. genCache
+    // memoizes the grid across repaints with identical geometry.
+    cv::Mat_<cv::Vec3f> coords;
+    cv::Mat_<cv::Vec3f> normals;
+    const cv::Vec3f offset(ctx.surfacePtrX * ctx.scale - float(ctx.fbW) * 0.5f,
+                           ctx.surfacePtrY * ctx.scale - float(ctx.fbH) * 0.5f,
+                           0.0f);
+    const bool needSurfaceNormals = ctx.zOff != 0.0f || comp != 0;
 
-    auto sampleCoords = [&](const cv::Mat_<cv::Vec3f>& coords,
-                            const cv::Mat_<cv::Vec3f>& normals,
-                            cv::Mat_<uint8_t>& dst,
-                            cv::Mat_<uint8_t>& cov,
-                            vc::render::IChunkedArray& array) {
-        const bool wantComposite = ctx.compositeSettings.enabled &&
-                                   !streamingCompositeUnsupported() &&
-                                   !normals.empty();
-        if (!wantComposite) {
-            vc::render::ChunkedPlaneSampler::sampleCoordsFineToCoarse(
-                array, ctx.startLevel, coords, dst, cov, options);
-            return;
+    bool genCacheHit = false;
+    if (ctx.genCache) {
+        std::lock_guard lock(ctx.genCache->mutex);
+        if (ctx.genCacheDirty) {
+            ctx.genCache->valid = false;
+            ctx.genCache->coords.release();
+            ctx.genCache->normals.release();
         }
+        genCacheHit =
+            ctx.genCache->valid &&
+            ctx.genCache->surface == ctx.surf.get() &&
+            ctx.genCache->fbW == ctx.fbW &&
+            ctx.genCache->fbH == ctx.fbH &&
+            ctx.genCache->scale == ctx.scale &&
+            ctx.genCache->offset == offset &&
+            ctx.genCache->zOff == ctx.zOff &&
+            ctx.genCache->zOffWorldDir == ctx.zOffWorldDir &&
+            !ctx.genCache->coords.empty() &&
+            (!needSurfaceNormals || !ctx.genCache->normals.empty());
+        if (genCacheHit) {
+            coords = ctx.genCache->coords;
+            if (needSurfaceNormals)
+                normals = ctx.genCache->normals;
+        }
+    }
 
-        const int front = std::max(0, ctx.compositeSettings.layersFront);
-        const int behind = std::max(0, ctx.compositeSettings.layersBehind);
-        const int numLayers = front + behind + 1;
-        const int zStart = -behind;
-        const float zStep = ctx.compositeSettings.reverseDirection ? -1.0f : 1.0f;
-        const auto compositeOptions = vc::render::ChunkedPlaneSampler::Options(vc::Sampling::Nearest, options.tileSize);
-        std::vector<cv::Mat_<uint8_t>> layerValues;
-        std::vector<cv::Mat_<uint8_t>> layerCoverage;
-        cv::Mat_<cv::Vec3f> layerCoords(coords.rows, coords.cols);
-        layerValues.reserve(numLayers);
-        layerCoverage.reserve(numLayers);
-        for (int i = 0; i < numLayers; ++i) {
-            const float offset = float(zStart + i) * zStep;
-            for (int y = 0; y < coords.rows; ++y) {
-                const auto* src = coords.ptr<cv::Vec3f>(y);
-                const auto* nrow = normals.ptr<cv::Vec3f>(y);
-                auto* dstRow = layerCoords.ptr<cv::Vec3f>(y);
-                for (int x = 0; x < coords.cols; ++x) {
-                    if (!std::isfinite(src[x][0]) || src[x][0] == -1.0f)
-                        dstRow[x] = src[x];
-                    else
-                        dstRow[x] = src[x] + nrow[x] * offset;
-                }
-            }
-            layerValues.emplace_back(dst.rows, dst.cols, uint8_t(0));
-            layerCoverage.emplace_back(dst.rows, dst.cols, uint8_t(0));
-            vc::render::ChunkedPlaneSampler::sampleCoordsFineToCoarse(
-                array, ctx.startLevel, layerCoords,
-                layerValues.back(), layerCoverage.back(), compositeOptions);
-        }
-        LayerStack stack;
-        stack.values.resize(numLayers);
-        for (int y = 0; y < dst.rows; ++y) {
-            auto* dstRow = dst.ptr<uint8_t>(y);
-            auto* covRow = cov.ptr<uint8_t>(y);
-            for (int x = 0; x < dst.cols; ++x) {
-                stack.validCount = 0;
-                for (int i = 0; i < numLayers; ++i) {
-                    if (!layerCoverage[i](y, x))
-                        continue;
-                    const float value = static_cast<float>(layerValues[i](y, x));
-                    if (value < static_cast<float>(ctx.compositeSettings.params.isoCutoff))
-                        continue;
-                    stack.values[stack.validCount++] = value;
-                }
-                if (stack.validCount > 0) {
-                    dstRow[x] = static_cast<uint8_t>(std::clamp(
-                        compositeLayerStack(stack, ctx.compositeSettings.params), 0.0f, 255.0f));
-                    covRow[x] = 1;
-                }
-            }
-        }
-    };
-
-    const bool planeView = dynamic_cast<PlaneSurface*>(ctx.surf.get()) != nullptr;
-    if (auto* plane = dynamic_cast<PlaneSurface*>(ctx.surf.get())) {
-        const cv::Vec3f vx = plane->basisX();
-        const cv::Vec3f vy = plane->basisY();
-        const cv::Vec3f n = plane->normal({0, 0, 0});
-        const float halfW = static_cast<float>(ctx.fbW) * 0.5f / ctx.scale;
-        const float halfH = static_cast<float>(ctx.fbH) * 0.5f / ctx.scale;
-        const cv::Vec3f origin = vx * (ctx.surfacePtrX - halfW)
-                               + vy * (ctx.surfacePtrY - halfH)
-                               + plane->origin()
-                               + n * ctx.zOff;
-        const cv::Vec3f vxStep = vx / ctx.scale;
-        const cv::Vec3f vyStep = vy / ctx.scale;
+    phaseGenCached = genCacheHit;
+    if (!genCacheHit) {
         if (profilePhases) phaseTimer.restart();
-        samplePlane(origin, vxStep, vyStep, n, values, coverage, *ctx.chunkArray);
-        if (profilePhases) phaseSampleMs += phaseTimer.elapsed();
-        if (ctx.overlayChunkArray && ctx.overlayVolume && ctx.overlayOpacity > 0.0f) {
-            overlayValues.create(ctx.fbH, ctx.fbW);
-            overlayCoverage.create(ctx.fbH, ctx.fbW);
-            overlayValues.setTo(0);
-            overlayCoverage.setTo(0);
-            const int level = std::clamp(ctx.startLevel, 0, ctx.overlayChunkArray->numLevels() - 1);
-            vc::render::ChunkedPlaneSampler::samplePlaneFineToCoarse(
-                *ctx.overlayChunkArray, level, origin, vxStep, vyStep,
-                overlayValues, overlayCoverage, options);
-        }
-    } else {
-        cv::Mat_<cv::Vec3f> coords;
-        cv::Mat_<cv::Vec3f> normals;
-        const cv::Vec3f offset(ctx.surfacePtrX * ctx.scale - float(ctx.fbW) * 0.5f,
-                               ctx.surfacePtrY * ctx.scale - float(ctx.fbH) * 0.5f,
-                               0.0f);
-        const bool needSurfaceNormals =
-            ctx.zOff != 0.0f ||
-            (ctx.compositeSettings.enabled && !streamingCompositeUnsupported());
+        ctx.surf->gen(&coords, needSurfaceNormals ? &normals : nullptr,
+                      cv::Size(ctx.fbW, ctx.fbH), {0, 0, 0}, ctx.scale, offset);
+        applyPerPixelNormalOffset(coords, normals, ctx.zOff);
+        if (profilePhases) phaseGenMs = phaseTimer.elapsed();
 
-        bool genCacheHit = false;
-        if (ctx.genCache) {
+        if (ctx.genCache && !coords.empty()) {
             std::lock_guard lock(ctx.genCache->mutex);
-            if (ctx.genCacheDirty) {
-                ctx.genCache->valid = false;
-                ctx.genCache->coords.release();
-                ctx.genCache->normals.release();
-            }
-            genCacheHit =
-                ctx.genCache->valid &&
-                ctx.genCache->surface == ctx.surf.get() &&
-                ctx.genCache->fbW == ctx.fbW &&
-                ctx.genCache->fbH == ctx.fbH &&
-                ctx.genCache->scale == ctx.scale &&
-                ctx.genCache->offset == offset &&
-                ctx.genCache->zOff == ctx.zOff &&
-                ctx.genCache->zOffWorldDir == ctx.zOffWorldDir &&
-                !ctx.genCache->coords.empty() &&
-                (!needSurfaceNormals || !ctx.genCache->normals.empty());
-            if (genCacheHit) {
-                coords = ctx.genCache->coords;
-                if (needSurfaceNormals)
-                    normals = ctx.genCache->normals;
-            }
+            ctx.genCache->valid = true;
+            ctx.genCache->surface = ctx.surf.get();
+            ctx.genCache->fbW = ctx.fbW;
+            ctx.genCache->fbH = ctx.fbH;
+            ctx.genCache->scale = ctx.scale;
+            ctx.genCache->offset = offset;
+            ctx.genCache->zOff = ctx.zOff;
+            ctx.genCache->zOffWorldDir = ctx.zOffWorldDir;
+            ctx.genCache->coords = coords;
+            ctx.genCache->normals = normals;
         }
+    }
 
-        phaseGenCached = genCacheHit;
-        if (!genCacheHit) {
-            if (profilePhases) phaseTimer.restart();
-            ctx.surf->gen(&coords, needSurfaceNormals ? &normals : nullptr,
-                          cv::Size(ctx.fbW, ctx.fbH), {0, 0, 0}, ctx.scale, offset);
-            applyPerPixelNormalOffset(coords, normals, ctx.zOff);
-            if (profilePhases) phaseGenMs = phaseTimer.elapsed();
+    // QuadSurface::gen() returns coords/normals as a cropped ROI view into a
+    // padded (w+8) buffer, so the Mat is NOT continuous; mc_render reads a flat
+    // w*h*3 array and would shear per row. Clone to continuous when needed.
+    if (!coords.empty() && !coords.isContinuous())
+        coords = coords.clone();
+    if (!normals.empty() && !normals.isContinuous())
+        normals = normals.clone();
 
-            if (ctx.genCache && !coords.empty()) {
-                std::lock_guard lock(ctx.genCache->mutex);
-                ctx.genCache->valid = true;
-                ctx.genCache->surface = ctx.surf.get();
-                ctx.genCache->fbW = ctx.fbW;
-                ctx.genCache->fbH = ctx.fbH;
-                ctx.genCache->scale = ctx.scale;
-                ctx.genCache->offset = offset;
-                ctx.genCache->zOff = ctx.zOff;
-                ctx.genCache->zOffWorldDir = ctx.zOffWorldDir;
-                ctx.genCache->coords = coords;
-                ctx.genCache->normals = normals;
-            }
-        }
-        if (!coords.empty()) {
-            if (profilePhases) phaseTimer.restart();
-            sampleCoords(coords, normals, values, coverage, *ctx.chunkArray);
-            if (profilePhases) phaseSampleMs += phaseTimer.elapsed();
-            if (ctx.overlayChunkArray && ctx.overlayVolume && ctx.overlayOpacity > 0.0f) {
-                overlayValues.create(ctx.fbH, ctx.fbW);
-                overlayCoverage.create(ctx.fbH, ctx.fbW);
-                overlayValues.setTo(0);
-                overlayCoverage.setTo(0);
-                const int level = std::clamp(ctx.startLevel, 0, ctx.overlayChunkArray->numLevels() - 1);
-                vc::render::ChunkedPlaneSampler::sampleCoordsFineToCoarse(
-                    *ctx.overlayChunkArray, level, coords, overlayValues, overlayCoverage, options);
-            }
-        }
+    auto renderArray = [&](vc::render::IChunkedArray& array,
+                           cv::Mat_<uint8_t>& dst, int rcomp) {
+        auto* mc = dynamic_cast<vc::render::McVolumeArray*>(&array);
+        if (!mc || coords.empty())
+            return;
+        mc->render(reinterpret_cast<const float*>(coords.ptr<cv::Vec3f>(0)),
+                   (rcomp != 0 && !normals.empty())
+                       ? reinterpret_cast<const float*>(normals.ptr<cv::Vec3f>(0))
+                       : nullptr,
+                   ctx.fbW, ctx.fbH, rcomp, t0, t1, 1.0f,
+                   ctx.compositeSettings.params.alphaMin,
+                   ctx.compositeSettings.params.alphaOpacity,
+                   voxPerPixel, dst.ptr<uint8_t>(0));
+    };
+
+    if (profilePhases) phaseTimer.restart();
+    renderArray(*ctx.chunkArray, values, comp);
+    if (profilePhases) phaseSampleMs += phaseTimer.elapsed();
+
+    if (ctx.overlayChunkArray && ctx.overlayVolume && ctx.overlayOpacity > 0.0f) {
+        overlayValues.create(ctx.fbH, ctx.fbW);
+        overlayValues.setTo(0);
+        renderArray(*ctx.overlayChunkArray, overlayValues, 0);
     }
 
     if (profilePhases) phaseTimer.restart();
     std::array<uint32_t, 256> lut{};
     vc::buildWindowLevelColormapLut(lut, ctx.windowLow, ctx.windowHigh, ctx.baseColormapId);
     std::array<uint32_t, 256> overlayLut{};
-    const bool hasOverlay = !overlayValues.empty() && !overlayCoverage.empty() &&
-                            ctx.overlayOpacity > 0.0f;
+    const bool hasOverlay = !overlayValues.empty() && ctx.overlayOpacity > 0.0f;
     if (hasOverlay) {
         vc::buildWindowLevelColormapLut(
             overlayLut, ctx.overlayWindowLow, ctx.overlayWindowHigh, ctx.overlayColormapId);
     }
     auto* fbBits = reinterpret_cast<uint32_t*>(result.framebuffer.bits());
     const int fbStride = result.framebuffer.bytesPerLine() / 4;
+    // mc_render emits 0 for invalid/no-data points; treat that as background.
     const uint32_t uncoveredPixel = planeView ? 0xFF404040u : 0xFF000000u;
     for (int y = 0; y < ctx.fbH; ++y) {
         auto* row = fbBits + size_t(y) * size_t(fbStride);
         const auto* src = values.ptr<uint8_t>(y);
-        const auto* cov = coverage.ptr<uint8_t>(y);
         const auto* overlaySrc = hasOverlay ? overlayValues.ptr<uint8_t>(y) : nullptr;
-        const auto* overlayCov = hasOverlay ? overlayCoverage.ptr<uint8_t>(y) : nullptr;
         for (int x = 0; x < ctx.fbW; ++x) {
-            uint32_t pixel = cov[x] ? lut[src[x]] : uncoveredPixel;
-            if (hasOverlay && overlayCov[x] &&
+            uint32_t pixel = src[x] ? lut[src[x]] : uncoveredPixel;
+            if (hasOverlay && overlaySrc[x] &&
                 overlaySrc[x] >= ctx.overlayWindowLow && overlaySrc[x] <= ctx.overlayWindowHigh) {
                 pixel = alphaBlendArgb(pixel, overlayLut[overlaySrc[x]], ctx.overlayOpacity);
             }

@@ -24,9 +24,11 @@ if(MC_STANDALONE)
   endif()
 endif()
 
-# core library: codec + archive (deps: libm + pthread for the appendable writer)
+# core library: codec + archive + surface sampling/render (deps: libm + pthread)
 add_library(matter_compressor STATIC
-  src/matter_compressor.c)
+  src/matter_compressor.c
+  src/mc_sample.c
+  src/mc_render.c)
 target_include_directories(matter_compressor PUBLIC src)
 set_target_properties(matter_compressor PROPERTIES POSITION_INDEPENDENT_CODE ON)
 find_package(Threads REQUIRED)
@@ -59,12 +61,13 @@ set_target_properties(matter_compressor_volume PROPERTIES
   POSITION_INDEPENDENT_CODE ON C_STANDARD 23 C_STANDARD_REQUIRED ON)
 # c3d decode output feeds the .mca re-encode -> honor archive determinism:
 # no -ffast-math, explicit -ffp-contract=off.
+# NO -fopenmp: c3d runs SINGLE-THREADED here. mc_volume's parallelism is its own
+# pthreads (24 prefetch threads + workers); letting c3d spawn an OpenMP team per
+# decode multiplied threads by nproc (24 * 16 = 384 -> thread explosion). c3d's
+# omp_ calls are all #ifdef _OPENMP-guarded with serial fallbacks, so building
+# without OpenMP makes every pragma a no-op and takes the serial path.
 set_source_files_properties(src/c3d.c PROPERTIES COMPILE_OPTIONS "-O3;-ffp-contract=off")
 target_link_libraries(matter_compressor_volume PUBLIC matter_compressor libs3 zstd::libzstd)
-find_package(OpenMP QUIET)
-if(OpenMP_C_FOUND)
-  target_link_libraries(matter_compressor_volume PRIVATE OpenMP::OpenMP_C)
-endif()
 
 # Tests + native flags only when built standalone (vendoring consumers don't want our
 # test exes added to their build).

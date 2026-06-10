@@ -33,7 +33,6 @@ add_library(vc_core
         src/Thinning.cpp
         src/Umbilicus.cpp
         src/render/ChunkCache.cpp
-        src/render/ChunkedPlaneSampler.cpp
         src/render/Colormaps.cpp
         src/render/MatterCache.cpp
         src/render/McVolumeArray.cpp

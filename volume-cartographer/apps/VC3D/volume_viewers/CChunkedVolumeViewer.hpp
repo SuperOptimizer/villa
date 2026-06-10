@@ -26,7 +26,6 @@
 #include "CVolumeViewerView.hpp"
 #include "VolumeViewerBase.hpp"
 #include "annotation_tools/SameWrapAnnotationTool.hpp"
-#include "vc/core/render/ChunkedPlaneSampler.hpp"
 #include "vc/core/render/IChunkedArray.hpp"
 #include "vc/core/types/Sampling.hpp"
 #include "vc/core/util/Compositing.hpp"
