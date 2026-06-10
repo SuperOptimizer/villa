@@ -64,6 +64,31 @@ public:
 
     virtual ChunkReadyCallbackId addChunkReadyListener(ChunkReadyCallback cb) = 0;
     virtual void removeChunkReadyListener(ChunkReadyCallbackId id) = 0;
+
+    // Status/metrics shared by the GUI status bar (resident RAM, on-disk cache,
+    // in-flight + download rate). Backends fill what they track; 0 otherwise.
+    struct Stats {
+        std::size_t decodedBytes = 0;
+        std::size_t decodedByteCapacity = 0;
+        std::size_t persistentCacheBytes = 0;
+        std::size_t remoteFetchesInFlight = 0;
+        double remoteDownloadBytesPerSecond = 0.0;
+    };
+    virtual Stats stats() const = 0;
+
+    // Background prefetch (never the interactive path). shardBatch reports the
+    // source shard enclosing a 16^3-block key (geometry only); prefetchShardBlocking
+    // pulls + transcodes the whole enclosing shard. Default no-ops for backends
+    // without a shard concept.
+    virtual FetchBatch shardBatch(int level, int iz, int iy, int ix) const
+    {
+        return FetchBatch{{iz, iy, ix}, 1};
+    }
+    virtual void prefetchShardBlocking(int /*level*/, int /*iz*/, int /*iy*/, int /*ix*/) {}
+
+    // Hint: a new interactive view request begins (raise fetch priority for the
+    // new frame's chunks). No-op for backends with their own scheduling.
+    virtual void beginViewRequest() {}
 };
 
 } // namespace vc::render

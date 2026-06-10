@@ -45,13 +45,7 @@ public:
         std::shared_ptr<MatterArchive> archive;
     };
 
-    struct Stats {
-        std::size_t decodedBytes = 0;
-        std::size_t decodedByteCapacity = 0;
-        std::size_t persistentCacheBytes = 0;
-        std::size_t remoteFetchesInFlight = 0;
-        double remoteDownloadBytesPerSecond = 0.0;
-    };
+    // Stats inherited from IChunkedArray.
 
     ChunkCache(std::vector<LevelInfo> levels,
                std::vector<std::shared_ptr<IChunkFetcher>> fetchers,
@@ -85,16 +79,16 @@ public:
     void warmChunkBlocking(int level, int iz, int iy, int ix);
 
     // The shard extent (in chunk units) enclosing this chunk — geometry only.
-    FetchBatch shardBatch(int level, int iz, int iy, int ix) const;
+    FetchBatch shardBatch(int level, int iz, int iy, int ix) const override;
 
     // Download the source shard enclosing this chunk (one parallel GET) and
     // persist every covered region into the cache, ON THE CALLING THREAD. The
     // shard-at-a-time prefetch primitive; bypasses the interactive pool.
-    void prefetchShardBlocking(int level, int iz, int iy, int ix);
+    void prefetchShardBlocking(int level, int iz, int iy, int ix) override;
 
-    Stats stats() const;
+    Stats stats() const override;
     void invalidate();
-    void beginViewRequest();
+    void beginViewRequest() override;
 
 private:
     enum class EntryStatus {

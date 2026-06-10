@@ -25,6 +25,7 @@
 #include "vc/core/util/Slicing.hpp"
 #include "vc/core/types/VcDataset.hpp"
 #include "vc/core/render/ZarrChunkFetcher.hpp"
+#include "vc/core/render/McVolumeArray.hpp"
 #include "vc/core/util/HttpFetch.hpp"
 #include "vc/core/util/RemoteUrl.hpp"
 #include "vc/core/util/PostProcess.hpp"
@@ -1497,16 +1498,39 @@ vc::render::IChunkedArray* Volume::chunkedCache()
     return chunkedCache_.get();
 }
 
-std::shared_ptr<vc::render::ChunkCache> Volume::chunkedCacheShared()
+std::shared_ptr<vc::render::IChunkedArray> Volume::chunkedCacheShared()
 {
     chunkedCache();   // ensure built
     std::lock_guard<std::mutex> lock(cacheMutex_);
     return chunkedCache_;
 }
 
-std::shared_ptr<vc::render::ChunkCache> Volume::createChunkCache(
+std::shared_ptr<vc::render::IChunkedArray> Volume::createChunkCache(
     vc::render::ChunkCache::Options options) const
 {
+    // Remote zarr (compress3d/c3d or blosc/raw): serve the render path directly
+    // from mc_volume — it owns streaming, c3d transcode into a local volume.mca,
+    // the resident mc_cache, single-flight, and async transcode workers. No
+    // ChunkCache / MatterArchive / ZarrChunkFetcher on this path.
+    if (isRemote_ && !isRemoteMcaUrl(remoteUrl_)) {
+        const std::filesystem::path cacheDir = remoteCacheRoot_.empty()
+            ? std::filesystem::temp_directory_path() / "vc_mca_stream" / id()
+            : remotePersistentCachePath();
+        std::error_code ec;
+        std::filesystem::create_directories(cacheDir, ec);
+        const float quality = []{
+            const char* q = std::getenv("VCA_MCA_QUALITY");
+            return q ? std::strtof(q, nullptr) : 8.0f;
+        }();
+        if (auto mv = vc::render::McVolumeArray::open(
+                remoteUrl_, cacheDir.string(), options.decodedByteCapacity, quality)) {
+            Logger()->info("createChunkCache: mc_volume url='{}' cacheDir='{}' levels={}",
+                           remoteUrl_, cacheDir.string(), mv->numLevels());
+            return mv;
+        }
+        Logger()->warn("createChunkCache: mc_volume open failed for '{}', falling back", remoteUrl_);
+    }
+
     if (isRemote_ && isRemoteMcaUrl(remoteUrl_)) {
         // remote matter-compressor archive: stream compressed chunks into a local
         // mirror volume.mca on demand and serve from it (no decode/re-encode).

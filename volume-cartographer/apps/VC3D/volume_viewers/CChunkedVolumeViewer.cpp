@@ -532,7 +532,7 @@ std::filesystem::path remoteCacheRootForState(const CState* state)
     return vc3d::remoteCachePath(suggestion).toStdString();
 }
 
-std::shared_ptr<vc::render::ChunkCache> makeChunkCacheForVolume(const std::shared_ptr<Volume>& volume,
+std::shared_ptr<vc::render::IChunkedArray> makeChunkCacheForVolume(const std::shared_ptr<Volume>& volume,
                                                                 std::size_t decodedByteCapacity,
                                                                 const CState* state)
 {
@@ -554,7 +554,7 @@ std::shared_ptr<vc::render::ChunkCache> makeChunkCacheForVolume(const std::share
     return volume->createChunkCache(std::move(options));
 }
 
-std::shared_ptr<vc::render::ChunkCache> sharedChunkCacheForVolume(const std::shared_ptr<Volume>& volume,
+std::shared_ptr<vc::render::IChunkedArray> sharedChunkCacheForVolume(const std::shared_ptr<Volume>& volume,
                                                                   std::size_t decodedByteCapacity,
                                                                   const CState* state)
 {
@@ -569,7 +569,7 @@ std::shared_ptr<vc::render::ChunkCache> sharedChunkCacheForVolume(const std::sha
                             "|cache=" + (volume->isRemote() ? remoteCacheRootForState(state).string() : std::string{});
 
     static std::mutex cacheMutex;
-    static std::unordered_map<std::string, std::weak_ptr<vc::render::ChunkCache>> caches;
+    static std::unordered_map<std::string, std::weak_ptr<vc::render::IChunkedArray>> caches;
 
     {
         std::lock_guard<std::mutex> lock(cacheMutex);
@@ -1373,9 +1373,9 @@ struct CChunkedVolumeViewer::RenderContext {
     float windowHigh = 255.0f;
     std::string baseColormapId;
     std::shared_ptr<Surface> surf;
-    std::shared_ptr<vc::render::ChunkCache> chunkArray;
+    std::shared_ptr<vc::render::IChunkedArray> chunkArray;
     std::shared_ptr<Volume> overlayVolume;
-    std::shared_ptr<vc::render::ChunkCache> overlayChunkArray;
+    std::shared_ptr<vc::render::IChunkedArray> overlayChunkArray;
     float overlayOpacity = 0.0f;
     std::string overlayColormapId;
     float overlayWindowLow = 0.0f;
@@ -1458,7 +1458,7 @@ CChunkedVolumeViewer::RenderResult CChunkedVolumeViewer::renderFrame(RenderConte
                            const cv::Vec3f& normal,
                            cv::Mat_<uint8_t>& dst,
                            cv::Mat_<uint8_t>& cov,
-                           vc::render::ChunkCache& array) {
+                           vc::render::IChunkedArray& array) {
         const bool wantComposite = ctx.compositeSettings.planeEnabled && !streamingCompositeUnsupported();
         if (!wantComposite) {
             vc::render::ChunkedPlaneSampler::samplePlaneFineToCoarse(
@@ -1512,7 +1512,7 @@ CChunkedVolumeViewer::RenderResult CChunkedVolumeViewer::renderFrame(RenderConte
                             const cv::Mat_<cv::Vec3f>& normals,
                             cv::Mat_<uint8_t>& dst,
                             cv::Mat_<uint8_t>& cov,
-                            vc::render::ChunkCache& array) {
+                            vc::render::IChunkedArray& array) {
         const bool wantComposite = ctx.compositeSettings.enabled &&
                                    !streamingCompositeUnsupported() &&
                                    !normals.empty();

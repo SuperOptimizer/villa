@@ -3,7 +3,7 @@
 #include <algorithm>
 
 #include "vc/core/types/Volume.hpp"
-#include "vc/core/render/ChunkCache.hpp"
+#include "vc/core/render/IChunkedArray.hpp"
 #include "vc/core/util/Logging.hpp"
 
 void VolumePrefetcher::start(std::shared_ptr<Volume> volume, std::vector<int> levels,
@@ -14,7 +14,7 @@ void VolumePrefetcher::start(std::shared_ptr<Volume> volume, std::vector<int> le
         return;
     const int nThreads = std::max(1, threads);
 
-    std::shared_ptr<vc::render::ChunkCache> cache;
+    std::shared_ptr<vc::render::IChunkedArray> cache;
     try {
         cache = volume->chunkedCacheShared();
     } catch (const std::exception& e) {

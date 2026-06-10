@@ -145,8 +145,8 @@ public:
     [[nodiscard]] vc::render::IChunkedArray* chunkedCache();
     // shared handle for long-running background users (prefetch): stays valid
     // even if the volume swaps its cache (budget change, invalidation).
-    [[nodiscard]] std::shared_ptr<vc::render::ChunkCache> chunkedCacheShared();
-    [[nodiscard]] std::shared_ptr<vc::render::ChunkCache> createChunkCache(
+    [[nodiscard]] std::shared_ptr<vc::render::IChunkedArray> chunkedCacheShared();
+    [[nodiscard]] std::shared_ptr<vc::render::IChunkedArray> createChunkCache(
         vc::render::ChunkCache::Options options) const;
 
     // Set cache budget for the chunked sampling cache.
@@ -276,7 +276,7 @@ protected:
     void zarrOpen();
 
     // Cache ownership
-    mutable std::shared_ptr<vc::render::ChunkCache> chunkedCache_;
+    mutable std::shared_ptr<vc::render::IChunkedArray> chunkedCache_;
     mutable std::mutex cacheMutex_;
     size_t cacheBudgetHot_ = 8ULL << 30;   // 8 GB default
     int ioThreads_ = 0;  // 0 = use default

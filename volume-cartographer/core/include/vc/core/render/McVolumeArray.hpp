@@ -51,15 +51,8 @@ public:
     ChunkReadyCallbackId addChunkReadyListener(ChunkReadyCallback cb) override;
     void removeChunkReadyListener(ChunkReadyCallbackId id) override;
 
-    // Prefetch a whole source shard enclosing this 16^3-block key (background path).
-    void prefetchShardBlocking(int level, int iz, int iy, int ix);
-
-    struct Stats {
-        std::uint64_t cacheHits = 0, cacheMisses = 0;
-        std::size_t diskBytes = 0, residentBytes = 0;
-        std::uint64_t netBytes = 0, regionsInFlight = 0;
-    };
-    Stats stats() const;
+    Stats stats() const override;
+    void prefetchShardBlocking(int level, int iz, int iy, int ix) override;
 
 private:
     explicit McVolumeArray(mc_volume* v, int numLevels,

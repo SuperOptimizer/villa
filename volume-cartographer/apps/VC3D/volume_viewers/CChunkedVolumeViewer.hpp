@@ -318,7 +318,7 @@ private:
     std::weak_ptr<Surface> _surfWeak;
     std::shared_ptr<Surface> _defaultSurface;
     std::string _surfName;
-    std::shared_ptr<vc::render::ChunkCache> _chunkArray;
+    std::shared_ptr<vc::render::IChunkedArray> _chunkArray;
     vc::render::IChunkedArray::ChunkReadyCallbackId _chunkCbId = 0;
 
     QImage _framebuffer;
@@ -347,7 +347,7 @@ private:
     float _windowHigh = 255.0f;
     std::string _baseColormapId;
     std::shared_ptr<Volume> _overlayVolume;
-    std::shared_ptr<vc::render::ChunkCache> _overlayChunkArray;
+    std::shared_ptr<vc::render::IChunkedArray> _overlayChunkArray;
     vc::render::IChunkedArray::ChunkReadyCallbackId _overlayChunkCbId = 0;
     float _overlayOpacity = 0.5f;
     std::string _overlayColormapId;

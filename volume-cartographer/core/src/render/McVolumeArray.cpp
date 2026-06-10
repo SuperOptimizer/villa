@@ -132,16 +132,15 @@ void McVolumeArray::onReady()
         cb();
 }
 
-McVolumeArray::Stats McVolumeArray::stats() const
+IChunkedArray::Stats McVolumeArray::stats() const
 {
     mc_volume_stats s{};
     mc_volume_get_stats(vol_, &s);
     Stats out;
-    out.cacheHits = s.cache_hits;
-    out.cacheMisses = s.cache_misses;
-    out.diskBytes = static_cast<std::size_t>(s.disk_bytes);
-    out.netBytes = s.net_bytes;
-    out.regionsInFlight = s.regions_inflight;
+    // mc_cache residency: mc_volume reports hits/misses but not resident bytes
+    // directly; surface disk + in-flight, leave RAM gauge to mc_cache budget.
+    out.persistentCacheBytes = static_cast<std::size_t>(s.disk_bytes);
+    out.remoteFetchesInFlight = static_cast<std::size_t>(s.regions_inflight);
     return out;
 }
 
