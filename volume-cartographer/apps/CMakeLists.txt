@@ -227,6 +227,9 @@ target_link_libraries(vc_project_tifxyz vc_core Boost::program_options opencv_co
 add_executable(vc_zarr_to_tiff src/vc_zarr_to_tiff.cpp)
 target_link_libraries(vc_zarr_to_tiff vc_core Boost::program_options TIFF::TIFF)
 
+add_executable(vc_cache_prefetch src/vc_cache_prefetch.cpp)
+target_link_libraries(vc_cache_prefetch vc_core Boost::program_options)
+
 add_executable(vc_zarr_recompress src/vc_zarr_recompress.cpp)
 target_link_libraries(vc_zarr_recompress vc_core Blosc::blosc)
 
