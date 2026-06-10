@@ -1,26 +1,35 @@
 #include "vc/core/render/MatterCache.hpp"
+#include "vc/core/render/ZarrChunkFetcher.hpp"
 
 #include <algorithm>
 #include <atomic>
 #include <cstring>
 #include <chrono>
 #include <future>
+#include <unordered_map>
 
 #include <filesystem>
 #include <stdexcept>
 
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
 #include "vc/core/util/Logging.hpp"
 
 extern "C" {
+#include "libs3.h"
 #include "matter_compressor.h"
 }
 
 namespace vc::render {
 
+
 struct MatterArchive::Impl {
     mc_archive* a = nullptr;
     mc_cache* cache = nullptr;
 };
+
 
 MatterArchive::MatterArchive(std::string path, std::array<int, 3> shape0, float quality,
                              std::size_t cacheBytes)
@@ -64,6 +73,21 @@ bool MatterArchive::appendChunkRaw(int lod, int cz, int cy, int cx, const std::u
 {
     if (!vox256) return false;
     return mc_archive_append_chunk_raw(impl_->a, lod, cz, cy, cx, vox256) == 0;
+}
+
+bool MatterArchive::appendChunkCompressed(int lod, int cz, int cy, int cx,
+                                          const std::uint8_t* blob, std::size_t len)
+{
+    if (!blob || !len) return false;
+    return mc_archive_append_chunk_compressed(impl_->a, lod, cz, cy, cx, blob, len) == 0;
+}
+
+bool MatterArchive::setPriors(const std::uint16_t* plo, const std::uint16_t* phi)
+{
+    if (!plo || !phi) return false;
+    return mc_archive_set_priors(impl_->a,
+                                 reinterpret_cast<const std::uint16_t(*)[32]>(plo),
+                                 reinterpret_cast<const std::uint16_t(*)[32]>(phi)) == 0;
 }
 
 bool MatterArchive::hasChunk(int lod, int cz, int cy, int cx) const
@@ -260,6 +284,280 @@ ChunkFetchResult MatterCacheFetcher::fetch(const ChunkKey& key)
                           reinterpret_cast<std::uint8_t*>(result.bytes.data()));
     result.status = ChunkFetchStatus::Found;
     return result;
+}
+
+
+// ============================================================================
+// MatterRemoteSource
+// ============================================================================
+
+struct MatterRemoteSource::Impl {
+    std::string url;
+    s3_client* client = nullptr;
+    mc_reader* reader = nullptr;            // streaming: resolve offsets/lengths only
+    std::uint64_t totalLen = 0;
+    std::mutex readerMu;                    // mc_reader is single-threaded
+    std::atomic<std::uint64_t> downloaded{0};
+
+    // mc_read_fn: small index reads (header, node tables, blob headers) served by
+    // direct ranged GETs; the reader FIFO-caches node tables so these amortize.
+    static int readThunk(void* ud, std::uint64_t off, std::uint32_t len, std::uint8_t* dst)
+    {
+        auto* impl = static_cast<Impl*>(ud);
+        s3_response r{};
+        const s3_status rc = s3_get_range(impl->client, impl->url.c_str(), off, len, &r);
+        const bool ok = rc == S3_OK && (r.status == 206 || r.status == 200) &&
+                        r.body && r.body_len == len;
+        if (ok) {
+            std::memcpy(dst, r.body, len);
+            impl->downloaded.fetch_add(len, std::memory_order_relaxed);
+        }
+        s3_response_free(&r);
+        return ok ? 0 : -1;
+    }
+
+    static s3_status credProvider(void*, s3_credentials* out)
+    {
+        return s3_credentials_load(nullptr, out);
+    }
+};
+
+MatterRemoteSource::MatterRemoteSource(std::string url)
+    : impl_(std::make_unique<Impl>())
+{
+    impl_->url = std::move(url);
+
+    // libs3 resolves credentials per request (cache-served; survives STS rotation
+    // over long sessions); no creds found -> anonymous (public buckets).
+    s3_config cfg{};
+    cfg.max_retries = 5;
+    std::string region;
+    s3_credentials probe{};
+    if (s3_credentials_load(nullptr, &probe) == S3_OK) {
+        cfg.cred_provider = &Impl::credProvider;
+        if (probe.region && probe.region[0]) region = probe.region;
+        cfg.region = region.empty() ? nullptr : region.c_str();
+        s3_credentials_free(&probe);
+    }
+    impl_->client = s3_client_new(&cfg);
+    if (!impl_->client)
+        throw std::runtime_error("mca remote: s3_client_new failed");
+
+    s3_response r{};
+    if (s3_head(impl_->client, impl_->url.c_str(), &r) != S3_OK || r.status != 200) {
+        const long st = r.status;
+        s3_response_free(&r);
+        throw std::runtime_error("mca remote: HEAD failed for " + impl_->url +
+                                 " (status " + std::to_string(st) + ")");
+    }
+    impl_->totalLen = r.content_length;
+    s3_response_free(&r);
+
+    impl_->reader = mc_open_streaming(&Impl::readThunk, impl_.get(), impl_->totalLen);
+    if (!impl_->reader)
+        throw std::runtime_error("mca remote: not a matter-compressor archive: " + impl_->url);
+
+    int nx = 0, ny = 0, nz = 0;
+    mc_reader_dims(impl_->reader, &nx, &ny, &nz);
+    nlods_ = mc_reader_nlods(impl_->reader);
+    quality_ = mc_reader_quality(impl_->reader);
+    if (nx <= 0 || ny <= 0 || nz <= 0 || nlods_ <= 0)
+        throw std::runtime_error("mca remote: bad archive header in " + impl_->url);
+    shape0_ = {nz, ny, nx};
+}
+
+MatterRemoteSource::~MatterRemoteSource()
+{
+    if (impl_ && impl_->reader)
+        mc_close(impl_->reader);
+    if (impl_ && impl_->client)
+        s3_client_free(impl_->client);
+}
+
+std::pair<const std::uint16_t*, const std::uint16_t*> MatterRemoteSource::priors() const
+{
+    const std::uint16_t *plo = nullptr, *phi = nullptr;
+    if (!mc_reader_priors(impl_->reader, &plo, &phi))
+        return {nullptr, nullptr};
+    return {plo, phi};
+}
+
+std::uint64_t MatterRemoteSource::downloadedBytes() const
+{
+    return impl_->downloaded.load(std::memory_order_relaxed);
+}
+
+std::vector<std::uint8_t> MatterRemoteSource::fetchChunkBlob(int lod, int cz, int cy, int cx)
+{
+    std::uint64_t off = 0, len = 0;
+    {
+        std::lock_guard<std::mutex> lk(impl_->readerMu);
+        off = mc_chunk_offset(impl_->reader, lod, cz, cy, cx);
+        if (!off)
+            return {};   // absent chunk (air)
+        len = mc_reader_chunk_blob_len(impl_->reader, off);
+    }
+    if (!len)
+        throw std::runtime_error("mca remote: bad blob length for chunk in " + impl_->url);
+
+    // one ranged GET for the whole compressed blob, outside the reader lock.
+    std::vector<std::uint8_t> blob(len);
+    for (std::uint64_t p = 0; p < len;) {
+        const auto n = static_cast<std::uint32_t>(
+            std::min<std::uint64_t>(64ull * 1024 * 1024, len - p));
+        s3_response r{};
+        const s3_status rc = s3_get_range(impl_->client, impl_->url.c_str(), off + p, n, &r);
+        const bool ok = rc == S3_OK && (r.status == 206 || r.status == 200) &&
+                        r.body && r.body_len == n;
+        if (ok)
+            std::memcpy(blob.data() + p, r.body, n);
+        s3_response_free(&r);
+        if (!ok)
+            throw std::runtime_error("mca remote: blob fetch failed for " + impl_->url);
+        p += n;
+    }
+    impl_->downloaded.fetch_add(len, std::memory_order_relaxed);
+    return blob;
+}
+
+// ============================================================================
+// MatterStreamFetcher
+// ============================================================================
+
+MatterStreamFetcher::MatterStreamFetcher(std::shared_ptr<MatterRemoteSource> remote,
+                                         std::shared_ptr<MatterArchive> archive,
+                                         int lod)
+    : remote_(std::move(remote))
+    , archive_(std::move(archive))
+    , lod_(lod)
+{
+}
+
+bool MatterStreamFetcher::ensureChunk(int cz, int cy, int cx, std::size_t& downloadedBytes)
+{
+    downloadedBytes = 0;
+    const std::uint64_t rk = (static_cast<std::uint64_t>(cz & 0x1FFFFF) << 42) |
+                             (static_cast<std::uint64_t>(cy & 0x1FFFFF) << 21) |
+                             (static_cast<std::uint64_t>(cx & 0x1FFFFF));
+
+    {
+        std::unique_lock<std::mutex> lk(regMu_);
+        for (;;) {
+            auto it = regions_.find(rk);
+            if (it == regions_.end())
+                break;
+            if (it->second == RegionState::InFlight) {
+                regCv_.wait(lk);
+                continue;
+            }
+            return it->second == RegionState::Present;
+        }
+        if (archive_->hasChunk(lod_, cz, cy, cx)) {   // mirrored in a previous run
+            regions_[rk] = RegionState::Present;
+            return true;
+        }
+        regions_[rk] = RegionState::InFlight;
+    }
+
+    bool present = false;
+    std::string error;
+    try {
+        const auto blob = remote_->fetchChunkBlob(lod_, cz, cy, cx);
+        downloadedBytes = blob.size();
+        if (!blob.empty()) {
+            if (!archive_->appendChunkCompressed(lod_, cz, cy, cx, blob.data(), blob.size()))
+                error = "appendChunkCompressed failed";
+            else
+                present = true;
+        }
+    } catch (const std::exception& e) {
+        error = e.what();
+    }
+    if (!error.empty())
+        Logger()->warn("mca stream l{} ({},{},{}): {}", lod_, cz, cy, cx, error);
+
+    {
+        std::lock_guard<std::mutex> lk(regMu_);
+        if (error.empty())
+            regions_[rk] = present ? RegionState::Present : RegionState::Absent;
+        else
+            regions_.erase(rk);   // transient failure: let a later fetch retry
+    }
+    regCv_.notify_all();
+    return present;
+}
+
+ChunkFetchResult MatterStreamFetcher::fetch(const ChunkKey& key)
+{
+    ChunkFetchResult result;
+    const int blkPerRegion = MatterArchive::kBlocksPerAxis;
+    const int cz = key.iz / blkPerRegion, bz = key.iz % blkPerRegion;
+    const int cy = key.iy / blkPerRegion, by = key.iy % blkPerRegion;
+    const int cx = key.ix / blkPerRegion, bx = key.ix % blkPerRegion;
+
+    std::size_t downloadedBytes = 0;
+    const bool present = ensureChunk(cz, cy, cx, downloadedBytes);
+    result.downloadedBytes = downloadedBytes;
+    if (!present) {
+        result.status = ChunkFetchStatus::Missing;
+        return result;
+    }
+    result.bytes.resize(static_cast<std::size_t>(MatterArchive::kBlock) *
+                        MatterArchive::kBlock * MatterArchive::kBlock);
+    archive_->decodeBlock(lod_, cz, cy, cx, bz, by, bx,
+                          reinterpret_cast<std::uint8_t*>(result.bytes.data()));
+    result.status = ChunkFetchStatus::Found;
+    return result;
+}
+
+// ============================================================================
+// openHttpMcaArchive
+// ============================================================================
+
+std::shared_ptr<MatterArchive> openHttpMcaArchive(const std::string& url,
+                                                  const std::filesystem::path& cacheDir,
+                                                  std::size_t cacheBytes,
+                                                  OpenedChunkedZarr& opened)
+{
+    auto remote = std::make_shared<MatterRemoteSource>(url);
+
+    std::error_code ec;
+    std::filesystem::create_directories(cacheDir, ec);
+    const auto mcaPath = cacheDir / "volume.mca";
+    const bool fresh = !std::filesystem::exists(mcaPath);
+    auto archive = std::make_shared<MatterArchive>(mcaPath.string(), remote->shape0(),
+                                                   remote->quality(), cacheBytes);
+    if (fresh) {
+        // mirror the per-volume codec priors so local decode matches the remote.
+        auto [plo, phi] = remote->priors();
+        if (plo && phi)
+            archive->setPriors(plo, phi);
+    }
+
+    const auto s0 = remote->shape0();
+    const int nlods = remote->nlods();
+    opened = {};
+    for (int lod = 0; lod < nlods; ++lod) {
+        std::array<int, 3> shape{};
+        for (int i = 0; i < 3; ++i)
+            shape[i] = std::max(1, (s0[i] + (1 << lod) - 1) >> lod);
+        const double inv = 1.0 / static_cast<double>(1u << lod);
+        IChunkedArray::LevelTransform t;
+        t.scaleFromLevel0 = {inv, inv, inv};
+        opened.levelNumbers.push_back(lod);
+        opened.shapes.push_back(shape);
+        opened.chunkShapes.push_back({MatterArchive::kBlock, MatterArchive::kBlock,
+                                      MatterArchive::kBlock});
+        opened.storageChunkShapes.push_back({MatterArchive::kChunk, MatterArchive::kChunk,
+                                             MatterArchive::kChunk});
+        opened.transforms.push_back(t);
+        opened.fetchers.push_back(std::make_shared<MatterStreamFetcher>(remote, archive, lod));
+    }
+    opened.dtype = ChunkDtype::UInt8;
+    opened.fillValue = 0.0;
+    Logger()->info("mca stream: {} -> {} (shape0={}x{}x{} lods={} q={})", url,
+                   mcaPath.string(), s0[0], s0[1], s0[2], nlods, remote->quality());
+    return archive;
 }
 
 }  // namespace vc::render

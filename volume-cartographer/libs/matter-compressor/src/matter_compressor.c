@@ -2092,6 +2092,9 @@ struct mc_reader {
     const uint8_t *arc;        // flat mode: archive buffer; streaming: NULL
     size_t len;
     uint64_t roots[8];
+    int nx, ny, nz;            // LOD0 dims from the header
+    float quality;             // quality the archive was built at
+    u8 priors[MC_PRIORS_BYTES]; int has_priors;   // raw per-volume prior blob
     mc_read_fn read; void *read_ud;   // streaming mode
     // streaming scratch: a fetched window of the current chunk blob.
     u8 *cbuf; uint64_t cbuf_off; uint64_t cbuf_len;
@@ -2107,10 +2110,20 @@ struct mc_reader {
     int ntab_next;
 };
 
+static void reader_hdr_load(mc_reader *r, const u8 *hdr){
+    for(int l=0;l<8;++l) memcpy(&r->roots[l], hdr+MCH_ROOTOFF+l*8, 8);
+    uint32_t ux,uy,uz;
+    memcpy(&ux,hdr+MCH_NX,4); memcpy(&uy,hdr+MCH_NY,4); memcpy(&uz,hdr+MCH_NZ,4);
+    r->nx=(int)ux; r->ny=(int)uy; r->nz=(int)uz;
+    memcpy(&r->quality,hdr+MCH_QUALITY,4);
+}
+
 mc_reader *mc_open(const uint8_t *arc, size_t len){
     mc_codec_init();
     mc_reader *r=calloc(1,sizeof *r); r->arc=arc; r->len=len;
-    for(int l=0;l<8;++l) memcpy(&r->roots[l], arc+MCH_ROOTOFF+l*8, 8);
+    reader_hdr_load(r, arc);
+    uint64_t poff; memcpy(&poff,arc+MCH_PRIOROFF,8);
+    if(poff){ memcpy(r->priors,arc+poff,MC_PRIORS_BYTES); r->has_priors=1; }
     priors_load(arc);
     return r;
 }
@@ -2127,8 +2140,63 @@ mc_reader *mc_open_streaming(mc_read_fn read, void *ud, uint64_t total_len){
     if(read(ud,0,MC_HDR,hdr)!=0){ free(r); return NULL; }
     uint32_t magic; memcpy(&magic,hdr+MCH_MAGIC,4);
     if(magic!=MC_MAGIC){ free(r); return NULL; }
-    for(int l=0;l<8;++l) memcpy(&r->roots[l], hdr+MCH_ROOTOFF+l*8, 8);
+    reader_hdr_load(r, hdr);
+    // per-volume priors: flat open gets them via priors_load(arc); a streaming
+    // reader must pull the blob through the callback or HF decode is wrong.
+    uint64_t poff; memcpy(&poff,hdr+MCH_PRIOROFF,8);
+    if(poff){
+        u8 pb[MC_PRIORS_BYTES];
+        uint32_t pm=0;
+        if(read(ud,poff,MC_PRIORS_BYTES,pb)==0) memcpy(&pm,pb,4);
+        if(pm==MC_PRIORS_MAGIC){
+            memcpy(r->priors,pb,MC_PRIORS_BYTES); r->has_priors=1;
+            mc_codec_set_priors((const uint16_t*)(pb+8),(const uint16_t*)(pb+8+8*32*2));
+        } else {
+            mc_codec_set_priors(NULL,NULL);
+        }
+    } else {
+        mc_codec_set_priors(NULL,NULL);
+    }
     return r;
+}
+
+// Raw per-volume prior arrays (plo/phi as u16[8][32]); 0 if the archive has none.
+// Feed into mc_archive_set_priors to make a local mirror decode identically.
+int mc_reader_priors(mc_reader *r, const uint16_t **plo, const uint16_t **phi){
+    if(!r||!r->has_priors) return 0;
+    if(plo)*plo=(const uint16_t*)(r->priors+8);
+    if(phi)*phi=(const uint16_t*)(r->priors+8+8*32*2);
+    return 1;
+}
+
+// Total byte length of the chunk blob at `chunk_off` (flat or streaming reader).
+// 0 on error. Pair with mc_chunk_offset to range-copy compressed chunks verbatim.
+uint64_t mc_reader_chunk_blob_len(mc_reader *r, uint64_t chunk_off){
+    if(!r||!chunk_off) return 0;
+    if(r->arc) return mc_chunk_blob_len(r->arc, chunk_off);
+    u8 h[MC_BLOB_HDR];
+    if(sread(r,chunk_off,MC_BLOB_HDR,h)!=0) return 0;
+    uint16_t fml; memcpy(&fml,h+MC_BLOB_HDR-2,2);
+    const uint64_t bm_off = chunk_off + MC_BLOB_HDR + fml;
+    u8 bm[MC_BITMAP_BYTES];
+    if(sread(r,bm_off,MC_BITMAP_BYTES,bm)!=0) return 0;
+    int np=0; for(int i=0;i<MC_BITMAP_BYTES;++i) np+=__builtin_popcount(bm[i]);
+    if(!np) return bm_off + MC_BITMAP_BYTES - chunk_off;
+    u8 *lens=malloc((size_t)np*2);
+    if(!lens||sread(r,bm_off+MC_BITMAP_BYTES,(uint32_t)((size_t)np*2),lens)!=0){ free(lens); return 0; }
+    uint64_t pay=0; for(int i=0;i<np;++i){ uint16_t l; memcpy(&l,lens+(size_t)i*2,2); pay+=l; }
+    free(lens);
+    return bm_off + MC_BITMAP_BYTES + (uint64_t)np*2 + pay - chunk_off;
+}
+
+void mc_reader_dims(mc_reader *r, int *nx, int *ny, int *nz){
+    if(nx)*nx=r?r->nx:0; if(ny)*ny=r?r->ny:0; if(nz)*nz=r?r->nz:0;
+}
+float mc_reader_quality(mc_reader *r){ return r?r->quality:0.f; }
+int mc_reader_nlods(mc_reader *r){
+    if(!r) return 0;
+    int n=0; for(int l=0;l<8;++l) if(r->roots[l]) n=l+1;
+    return n;
 }
 
 void mc_close(mc_reader *r){ if(!r)return;

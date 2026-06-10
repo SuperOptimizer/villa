@@ -61,6 +61,13 @@ std::string normalizeRemoteVolumeUrl(std::string url)
     return url;
 }
 
+bool isRemoteMcaUrl(const std::string& url)
+{
+    const auto normalized = normalizeRemoteVolumeUrl(url);
+    return normalized.size() > 4 &&
+           normalized.compare(normalized.size() - 4, 4, ".mca") == 0;
+}
+
 std::string deriveRemoteVolumeName(const std::string& url)
 {
     const auto normalized = normalizeRemoteVolumeUrl(url);
@@ -1243,6 +1250,14 @@ std::shared_ptr<Volume> Volume::NewFromUrl(
     const std::string remoteUrl = normalizeRemoteVolumeUrl(resolved.httpsUrl);
 
     vc::render::OpenedChunkedZarr opened;
+    if (isRemoteMcaUrl(remoteUrl)) {
+        // a remote matter-compressor archive: shapes/lods come from its header.
+        // The mirror archive built here is throwaway (createChunkCache reopens it
+        // at the real cache path); a tiny budget keeps this cheap.
+        const auto probeDir = std::filesystem::temp_directory_path() / "vc_mca_probe" /
+                              deriveRemoteVolumeId(remoteUrl);
+        vc::render::openHttpMcaArchive(remoteUrl, probeDir, 16ull << 20, opened);
+    } else {
     // Open the zarr metadata in memory. This performs the normal zarr metadata
     // reads, but does not stage .zarray/meta.json files on disk.
     // If stale AWS credentials are present, public buckets may reject the
@@ -1257,6 +1272,7 @@ std::shared_ptr<Volume> Volume::NewFromUrl(
         vc::HttpAuth anonymousAuth;
         opened = vc::render::openHttpZarrPyramid(remoteUrl, anonymousAuth);
         auth = std::move(anonymousAuth);
+    }
     }
 
     if (opened.shapes.empty())
@@ -1295,7 +1311,7 @@ std::shared_ptr<Volume> Volume::NewFromUrl(
     vol->metadata_["uuid"] = id;
     vol->metadata_["name"] = deriveRemoteVolumeName(remoteUrl);
     vol->metadata_["type"] = "vol";
-    vol->metadata_["format"] = "zarr";
+    vol->metadata_["format"] = isRemoteMcaUrl(remoteUrl) ? "mca" : "zarr";
     vol->metadata_["width"] = vol->_width;
     vol->metadata_["height"] = vol->_height;
     vol->metadata_["slices"] = vol->_slices;
@@ -1484,6 +1500,23 @@ vc::render::IChunkedArray* Volume::chunkedCache()
 std::shared_ptr<vc::render::ChunkCache> Volume::createChunkCache(
     vc::render::ChunkCache::Options options) const
 {
+    if (isRemote_ && isRemoteMcaUrl(remoteUrl_)) {
+        // remote matter-compressor archive: stream compressed chunks into a local
+        // mirror volume.mca on demand and serve from it (no decode/re-encode).
+        std::filesystem::path cacheDir = remoteCacheRoot_.empty()
+            ? std::filesystem::temp_directory_path() / "vc_mca_stream" / id()
+            : remotePersistentCachePath();
+        vc::render::OpenedChunkedZarr opened;
+        options.archive = vc::render::openHttpMcaArchive(
+            remoteUrl_, cacheDir, options.decodedByteCapacity, opened);
+        std::vector<vc::render::ChunkCache::LevelInfo> levels;
+        for (std::size_t i = 0; i < opened.shapes.size(); ++i)
+            levels.push_back({opened.shapes[i], opened.chunkShapes[i], opened.transforms[i]});
+        return std::make_shared<vc::render::ChunkCache>(
+            std::move(levels), std::move(opened.fetchers),
+            opened.fillValue, opened.dtype, std::move(options));
+    }
+
     vc::render::OpenedChunkedZarr opened = isRemote_
         ? vc::render::openHttpZarrPyramid(remoteUrl_, remoteAuth_)
         : vc::render::openLocalZarrPyramid(path_);

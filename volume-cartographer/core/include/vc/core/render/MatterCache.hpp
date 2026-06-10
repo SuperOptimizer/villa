@@ -14,8 +14,11 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <memory>
 #include <string>
+#include <utility>
+#include <vector>
 #include <unordered_map>
 #include <mutex>
 #include <condition_variable>
@@ -37,6 +40,14 @@ public:
     // recreated. Throws std::runtime_error on failure.
     MatterArchive(std::string path, std::array<int, 3> shape0, float quality,
                   std::size_t cacheBytes);
+
+    // Append an already-compressed chunk blob verbatim (no re-encode) — the
+    // .mca -> .mca streaming fast path. Thread-safe. Returns true on success.
+    bool appendChunkCompressed(int lod, int cz, int cy, int cx,
+                               const std::uint8_t* blob, std::size_t len);
+
+    // Install per-volume codec priors (from a remote archive being mirrored).
+    bool setPriors(const std::uint16_t* plo, const std::uint16_t* phi);
     ~MatterArchive();
 
     MatterArchive(const MatterArchive&) = delete;
@@ -128,6 +139,64 @@ private:
     std::mutex regMu_;
     std::condition_variable regCv_;
     std::unordered_map<std::uint64_t, RegionState> regions_;   // region key -> state
+};
+
+// MatterRemoteSource — index/blob access to a REMOTE .mca over HTTPS/S3 (libs3):
+// a streaming mc_reader resolves chunk offsets/blob lengths through small ranged
+// GETs (node tables FIFO-cached by the reader); whole compressed chunk blobs are
+// then fetched with one ranged GET each. Resolution is mutex-serialized (cheap);
+// blob GETs run outside the lock.
+class MatterRemoteSource {
+public:
+    explicit MatterRemoteSource(std::string url);
+    ~MatterRemoteSource();
+    MatterRemoteSource(const MatterRemoteSource&) = delete;
+    MatterRemoteSource& operator=(const MatterRemoteSource&) = delete;
+
+    std::array<int, 3> shape0() const { return shape0_; }   // (z,y,x) LOD0 voxels
+    int nlods() const { return nlods_; }
+    float quality() const { return quality_; }
+    // raw per-volume priors (u16[8][32] each), or {nullptr,nullptr} if none.
+    std::pair<const std::uint16_t*, const std::uint16_t*> priors() const;
+
+    // Fetch the compressed blob of chunk (lod,cz,cy,cx). Empty result = chunk
+    // absent in the remote (air). Throws std::runtime_error on transport errors.
+    std::vector<std::uint8_t> fetchChunkBlob(int lod, int cz, int cy, int cx);
+
+    std::uint64_t downloadedBytes() const;
+
+private:
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
+    std::array<int, 3> shape0_{};
+    int nlods_ = 0;
+    float quality_ = 0.f;
+};
+
+// MatterStreamFetcher — IChunkFetcher for a remote .mca: on a region miss, the
+// chunk's COMPRESSED blob is fetched from the remote and appended verbatim into
+// the local mirror archive (no decode/re-encode); blocks then serve from the
+// local archive's mc_cache exactly like every other mca volume.
+class MatterStreamFetcher final : public IChunkFetcher {
+public:
+    MatterStreamFetcher(std::shared_ptr<MatterRemoteSource> remote,
+                        std::shared_ptr<MatterArchive> archive,
+                        int lod);
+    ChunkFetchResult fetch(const ChunkKey& key) override;
+
+private:
+    // ensure chunk (cz,cy,cx) of lod_ is in the local mirror. Same single-flight
+    // contract as MatterCacheFetcher::ensureRegion.
+    bool ensureChunk(int cz, int cy, int cx, std::size_t& downloadedBytes);
+
+    std::shared_ptr<MatterRemoteSource> remote_;
+    std::shared_ptr<MatterArchive> archive_;
+    int lod_ = 0;
+
+    enum class RegionState { InFlight, Present, Absent };
+    std::mutex regMu_;
+    std::condition_variable regCv_;
+    std::unordered_map<std::uint64_t, RegionState> regions_;
 };
 
 }  // namespace vc::render

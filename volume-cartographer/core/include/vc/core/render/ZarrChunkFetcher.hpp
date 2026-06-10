@@ -35,6 +35,15 @@ std::unique_ptr<ChunkCache> createChunkCache(
     std::size_t decodedByteCapacity,
     std::size_t maxConcurrentReads = 16);
 
+// Open a remote .mca archive (s3:// or https://) as a streamed chunked pyramid:
+// 16^3 chunk keys per LOD served by MatterStreamFetcher, byte ranges cached
+// persistently under `cacheDir`. Fills `opened`; returns the shared archive.
+// Throws std::runtime_error if the archive can't be opened.
+std::shared_ptr<MatterArchive> openHttpMcaArchive(const std::string& url,
+                                                  const std::filesystem::path& cacheDir,
+                                                  std::size_t cacheBytes,
+                                                  OpenedChunkedZarr& opened);
+
 // Wrap an opened pyramid with a persistent matter-compressor (.mca) cache: each level's
 // source fetcher is decorated to fetch native chunks, re-encode 256^3 regions into the
 // shared .mca, and serve decoded 16^3 blocks out of its mc_cache (`cacheBytes` resident
