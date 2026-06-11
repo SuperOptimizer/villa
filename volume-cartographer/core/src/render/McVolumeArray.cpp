@@ -194,7 +194,8 @@ IChunkedArray::Stats McVolumeArray::stats() const
 void McVolumeArray::render(const float* ptsXYZ, const float* normalsXYZ,
                            int w, int h, int comp, float t0, float t1, float dt,
                            float alphaMin, float alphaOpacity,
-                           float voxPerPixel, std::uint8_t* out)
+                           float voxPerPixel, std::uint8_t* out,
+                           const ShadeParams* shade)
 {
     const std::size_t n = static_cast<std::size_t>(w) * static_cast<std::size_t>(h);
 
@@ -254,6 +255,16 @@ void McVolumeArray::render(const float* ptsXYZ, const float* normalsXYZ,
         p.t0 = t0 / s; p.t1 = t1 / s; p.dt = (dt > 0.f ? dt : 1.f) / s;
         p.alpha_min = alphaMin;
         p.alpha_opacity = alphaOpacity > 0.f ? alphaOpacity : 1.f;
+        // SHADED / PERCENTILE knobs. mc treats all-zero fields as its defaults, so
+        // a null/zero ShadeParams renders a sane headlight relief.
+        if (shade) {
+            p.light[0] = shade->lightZ; p.light[1] = shade->lightY; p.light[2] = shade->lightX;
+            p.ambient = shade->ambient; p.diffuse = shade->diffuse;
+            p.specular = shade->specular; p.shininess = shade->shininess;
+            p.absorption = shade->absorption; p.shadow = shade->shadow;
+            p.sss = shade->sss; p.curvature = shade->curvature;
+            p.percentile = shade->percentile;
+        }
         mc_render_points_par(&lods.lods[L], pts.data(), nrm.data(), w, h, &p, out, 0);
     }
 

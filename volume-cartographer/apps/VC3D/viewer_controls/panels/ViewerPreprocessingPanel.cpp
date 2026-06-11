@@ -77,13 +77,5 @@ void ViewerPreprocessingPanel::setupControls()
         if (_uiRefs.isoCutoffValue) {
             _uiRefs.isoCutoffValue->setText(QString::number(value));
         }
-        if (!_viewerManager) {
-            return;
-        }
-        _viewerManager->forEachBaseViewer([value](VolumeViewerBase* viewer) {
-            auto s = viewer->compositeRenderSettings();
-            s.params.isoCutoff = static_cast<uint8_t>(std::clamp(value, 0, 255));
-            viewer->setCompositeRenderSettings(s);
-        });
     });
 }

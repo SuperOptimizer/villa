@@ -28,10 +28,6 @@ struct OverlayColormapEntry
 // Re-export core functions.
 inline const std::vector<OverlayColormapSpec>& specs() noexcept { return vc::specs(); }
 inline const OverlayColormapSpec& resolve(const std::string& id) { return vc::resolve(id); }
-inline void makeColors(const cv::Mat_<uint8_t>& values, const OverlayColormapSpec& spec,
-                       uint32_t* outBuf, int outStride) {
-    vc::makeColors(values, spec, outBuf, outStride);
-}
 
 // Build Qt-specific entry lists with QString labels for UI comboboxes.
 const std::vector<OverlayColormapEntry>& entries(EntryScope scope = EntryScope::OverlayCompatible);

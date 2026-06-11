@@ -25,7 +25,6 @@ add_library(vc_core
         src/LoadJson.cpp
         src/RemoteUrl.cpp
         src/HttpFetch.cpp
-        src/PostProcess.cpp
         src/Geometry.cpp
         src/PointCollections.cpp
         src/surface_metrics.cpp
@@ -34,7 +33,6 @@ add_library(vc_core
         src/ZarrMetadata.cpp
         src/render/Colormaps.cpp
         src/render/McVolumeArray.cpp
-        src/render/PostProcess.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/../apps/src/vc_merge_tifxyz_grid.cpp
         ${CMAKE_CURRENT_BINARY_DIR}/Version.cpp
 )

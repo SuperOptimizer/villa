@@ -4,17 +4,11 @@
 #include "VolumeViewerCmaps.hpp"
 #include "volume_viewers/VolumeViewerBase.hpp"
 
-#include <QCheckBox>
 #include <QComboBox>
-#include <QDoubleSpinBox>
-#include <QLabel>
 #include <QLayout>
 #include <QScrollArea>
-#include <QSpinBox>
 #include <QString>
 #include <QVBoxLayout>
-
-#include <algorithm>
 
 namespace
 {
@@ -68,7 +62,6 @@ ViewerPostprocessingPanel::ViewerPostprocessingPanel(const UiRefs& uiRefs,
     moveLayoutItems(_uiRefs.contents ? _uiRefs.contents->layout() : nullptr, layout, this);
 
     setupColormapSelector();
-    setupControls();
 }
 
 void ViewerPostprocessingPanel::setupColormapSelector()
@@ -96,118 +89,3 @@ void ViewerPostprocessingPanel::setupColormapSelector()
     });
 }
 
-void ViewerPostprocessingPanel::setupControls()
-{
-    if (_uiRefs.stretchValues) {
-        connect(_uiRefs.stretchValues, &QCheckBox::toggled, this, [this](bool checked) {
-            if (auto* viewer = segmentationBaseViewer()) {
-                auto s = viewer->compositeRenderSettings();
-                s.postStretchValues = checked;
-                viewer->setCompositeRenderSettings(s);
-            }
-        });
-    }
-
-    if (_uiRefs.removeSmallComponents) {
-        connect(_uiRefs.removeSmallComponents, &QCheckBox::toggled, this, [this](bool checked) {
-            if (auto* viewer = segmentationBaseViewer()) {
-                auto s = viewer->compositeRenderSettings();
-                s.postRemoveSmallComponents = checked;
-                viewer->setCompositeRenderSettings(s);
-            }
-            setSmallComponentControlsEnabled(checked);
-        });
-    }
-
-    if (_uiRefs.minComponentSize) {
-        connect(_uiRefs.minComponentSize, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int value) {
-            if (auto* viewer = segmentationBaseViewer()) {
-                auto s = viewer->compositeRenderSettings();
-                s.postMinComponentSize = std::clamp(value, 1, 100000);
-                viewer->setCompositeRenderSettings(s);
-            }
-        });
-    }
-
-    setSmallComponentControlsEnabled(_uiRefs.removeSmallComponents && _uiRefs.removeSmallComponents->isChecked());
-    setClaheControlsEnabled(_uiRefs.claheEnabled && _uiRefs.claheEnabled->isChecked());
-
-    if (_uiRefs.claheEnabled) {
-        connect(_uiRefs.claheEnabled, &QCheckBox::toggled, this, [this](bool checked) {
-            setClaheControlsEnabled(checked);
-            if (!_viewerManager) {
-                return;
-            }
-            _viewerManager->forEachBaseViewer([checked](VolumeViewerBase* viewer) {
-                auto s = viewer->compositeRenderSettings();
-                s.postClaheEnabled = checked;
-                viewer->setCompositeRenderSettings(s);
-            });
-        });
-    }
-
-    if (_uiRefs.claheClipLimit) {
-        connect(_uiRefs.claheClipLimit, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double value) {
-            if (!_viewerManager) {
-                return;
-            }
-            _viewerManager->forEachBaseViewer([value](VolumeViewerBase* viewer) {
-                auto s = viewer->compositeRenderSettings();
-                s.postClaheClipLimit = static_cast<float>(value);
-                viewer->setCompositeRenderSettings(s);
-            });
-        });
-    }
-
-    if (_uiRefs.claheTileSize) {
-        connect(_uiRefs.claheTileSize, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int value) {
-            if (!_viewerManager) {
-                return;
-            }
-            _viewerManager->forEachBaseViewer([value](VolumeViewerBase* viewer) {
-                auto s = viewer->compositeRenderSettings();
-                s.postClaheTileSize = std::clamp(value, 2, 64);
-                viewer->setCompositeRenderSettings(s);
-            });
-        });
-    }
-}
-
-void ViewerPostprocessingPanel::setSmallComponentControlsEnabled(bool enabled)
-{
-    if (_uiRefs.minComponentSize) {
-        _uiRefs.minComponentSize->setEnabled(enabled);
-    }
-    if (_uiRefs.minComponentSizeLabel) {
-        _uiRefs.minComponentSizeLabel->setEnabled(enabled);
-    }
-}
-
-void ViewerPostprocessingPanel::setClaheControlsEnabled(bool enabled)
-{
-    if (_uiRefs.claheClipLimit) {
-        _uiRefs.claheClipLimit->setEnabled(enabled);
-    }
-    if (_uiRefs.claheTileSize) {
-        _uiRefs.claheTileSize->setEnabled(enabled);
-    }
-    if (_uiRefs.claheClipLimitLabel) {
-        _uiRefs.claheClipLimitLabel->setEnabled(enabled);
-    }
-    if (_uiRefs.claheTileSizeLabel) {
-        _uiRefs.claheTileSizeLabel->setEnabled(enabled);
-    }
-}
-
-VolumeViewerBase* ViewerPostprocessingPanel::segmentationBaseViewer() const
-{
-    if (!_viewerManager) {
-        return nullptr;
-    }
-    for (auto* viewer : _viewerManager->baseViewers()) {
-        if (viewer && viewer->surfName() == "segmentation") {
-            return viewer;
-        }
-    }
-    return nullptr;
-}

@@ -601,57 +601,22 @@
          </item>
          <item>
           <property name="text">
-           <string>Beer-Lambert</string>
+           <string>Std Dev</string>
           </property>
          </item>
          <item>
           <property name="text">
-           <string>Volumetric</string>
+           <string>Shaded</string>
           </property>
          </item>
          <item>
           <property name="text">
-           <string>DVR</string>
+           <string>Percentile</string>
           </property>
          </item>
          <item>
           <property name="text">
-           <string>First-Hit Iso</string>
-          </property>
-         </item>
-         <item>
-          <property name="text">
-           <string>Deviation from Mean</string>
-          </property>
-         </item>
-         <item>
-          <property name="text">
-           <string>Emission-only DVR</string>
-          </property>
-         </item>
-         <item>
-          <property name="text">
-           <string>Max Above Iso</string>
-          </property>
-         </item>
-         <item>
-          <property name="text">
-           <string>Gamma-weighted Mean</string>
-          </property>
-         </item>
-         <item>
-          <property name="text">
-           <string>Gradient Magnitude (z)</string>
-          </property>
-         </item>
-         <item>
-          <property name="text">
-           <string>PBR First-Hit Iso</string>
-          </property>
-         </item>
-         <item>
-          <property name="text">
-           <string>Shaded DVR</string>
+           <string>Depth</string>
           </property>
          </item>
         </widget>

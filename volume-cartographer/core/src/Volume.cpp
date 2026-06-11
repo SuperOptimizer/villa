@@ -28,7 +28,6 @@
 #include "vc/core/render/McVolumeArray.hpp"
 #include "vc/core/util/HttpFetch.hpp"
 #include "vc/core/util/RemoteUrl.hpp"
-#include "vc/core/util/PostProcess.hpp"
 #include "vc/core/render/IChunkedArray.hpp"
 #include "vc/core/render/ChunkFetch.hpp"
 #include "utils/hash.hpp"
@@ -1559,14 +1558,6 @@ void Volume::invalidateCache()
 // Sampling API
 // ============================================================================
 
-// Helper: apply optional post-processing from SampleParams in-place.
-static void applyOptionalPostProcess(cv::Mat_<uint8_t>& img,
-                                     const vc::SampleParams& params)
-{
-    if (!params.postProcess) return;
-    vc::applyPostProcess(img, *params.postProcess);
-}
-
 // Helper: scale level-0 coords to pyramid level coords.
 static const cv::Mat_<cv::Vec3f>& scaleCoords(const cv::Mat_<cv::Vec3f>& coords, int level)
 {
@@ -1597,7 +1588,6 @@ void Volume::sample(cv::Mat_<uint8_t>& out,
     out.create(coords.size());
     const auto& scaled = scaleCoords(coords, params.level);
     readInterpolated3D(out, chunkedCache(), params.level, scaled, params.method);
-    applyOptionalPostProcess(out, params);
 }
 
 void Volume::sample(cv::Mat_<uint16_t>& out,

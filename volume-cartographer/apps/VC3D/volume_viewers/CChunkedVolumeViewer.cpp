@@ -9,7 +9,6 @@
 #include "overlays/SegmentationOverlayController.hpp"
 #include "vc/core/render/Colormaps.hpp"
 #include "vc/core/render/McVolumeArray.hpp"
-#include "vc/core/render/PostProcess.hpp"
 #include "vc/core/types/Volume.hpp"
 #include "vc/core/types/VolumePkg.hpp"
 #include "vc/core/util/PlaneSurface.hpp"
@@ -102,11 +101,6 @@ struct IntersectionStyleHash {
         return h;
     }
 };
-
-bool isSupportedStreamingCompositeMethod(const std::string& method)
-{
-    return method == "mean" || method == "max" || method == "min" || method == "alpha";
-}
 
 int dominantAxis(const cv::Vec3f& v, float axisEps = 1e-4f)
 {
@@ -1364,17 +1358,6 @@ int CChunkedVolumeViewer::renderStartLevel(bool preferSurfaceResolution) const
     return std::clamp(level, 0, _chunkArray->numLevels() - 1);
 }
 
-bool CChunkedVolumeViewer::streamingCompositeUnsupported() const
-{
-    return !isSupportedStreamingCompositeMethod(_compositeSettings.params.method) ||
-           _compositeSettings.params.lightingEnabled ||
-           _compositeSettings.params.method == "beerLambert" ||
-           _compositeSettings.postClaheEnabled ||
-           _compositeSettings.postRakingEnabled ||
-           _compositeSettings.postRemoveSmallComponents ||
-           _compositeSettings.useVolumeGradients;
-}
-
 struct CChunkedVolumeViewer::RenderContext {
     std::uint64_t serial = 0;
     int fbW = 0;
@@ -1460,30 +1443,24 @@ CChunkedVolumeViewer::RenderResult CChunkedVolumeViewer::renderFrame(RenderConte
     cv::Mat_<uint8_t> overlayValues;
     const bool planeView = dynamic_cast<PlaneSurface*>(ctx.surf.get()) != nullptr;
 
-    auto streamingCompositeUnsupported = [&]() {
-        return !isSupportedStreamingCompositeMethod(ctx.compositeSettings.params.method) ||
-               ctx.compositeSettings.params.lightingEnabled ||
-               ctx.compositeSettings.params.method == "beerLambert" ||
-               ctx.compositeSettings.postClaheEnabled ||
-               ctx.compositeSettings.postRakingEnabled ||
-               ctx.compositeSettings.postRemoveSmallComponents ||
-               ctx.compositeSettings.useVolumeGradients;
-    };
-
     // mc_render composite params from VC's settings. comp=NONE -> a slice; an
-    // enabled-and-supported composite maps method -> reduction and the layer
-    // counts to a [t0,t1] slab in LOD-0 voxels. plane and quad use their own
-    // layer/enabled fields. Invalid/unsupported composite -> a plain slice.
+    // enabled composite maps method -> reduction and the layer counts to a
+    // [t0,t1] slab in LOD-0 voxels. plane and quad use their own layer/enabled
+    // fields. mc owns every supported method now.
     const bool composite = planeView ? ctx.compositeSettings.planeEnabled
                                      : ctx.compositeSettings.enabled;
-    const bool wantComposite = composite && !streamingCompositeUnsupported();
+    const bool wantComposite = composite;
     int comp = 0; // MC_COMP_NONE
     if (wantComposite) {
         const std::string& m = ctx.compositeSettings.params.method;
-        if (m == "min")       comp = 1;
-        else if (m == "mean") comp = 2;
-        else if (m == "max")  comp = 3;
-        else if (m == "alpha")comp = 4;
+        if (m == "min")            comp = 1;
+        else if (m == "mean")      comp = 2;
+        else if (m == "max")       comp = 3;
+        else if (m == "alpha")     comp = 4;
+        else if (m == "stddev")    comp = 5;
+        else if (m == "shaded")    comp = 6;
+        else if (m == "percentile")comp = 7;
+        else if (m == "depth")     comp = 8;
     }
     const int front  = planeView ? ctx.compositeSettings.planeLayersFront
                                  : ctx.compositeSettings.layersFront;
@@ -1561,11 +1538,20 @@ CChunkedVolumeViewer::RenderResult CChunkedVolumeViewer::renderFrame(RenderConte
     if (!normals.empty() && !normals.isContinuous())
         normals = normals.clone();
 
+    // SHADED(6)/PERCENTILE(7) knobs -> mc; null for other modes (mc uses defaults).
+    const auto& cp = ctx.compositeSettings.params;
+    vc::render::McVolumeArray::ShadeParams shade{
+        cp.lightZ, cp.lightY, cp.lightX,
+        cp.ambient, cp.diffuse, cp.specular, cp.shininess,
+        cp.absorption, cp.shadow, cp.sss, cp.curvature,
+        cp.percentile};
+
     auto renderArray = [&](vc::render::IChunkedArray& array,
                            cv::Mat_<uint8_t>& dst, int rcomp) {
         auto* mc = dynamic_cast<vc::render::McVolumeArray*>(&array);
         if (!mc || coords.empty())
             return;
+        const bool wantShade = (rcomp == 6 || rcomp == 7);
         mc->render(reinterpret_cast<const float*>(coords.ptr<cv::Vec3f>(0)),
                    (rcomp != 0 && !normals.empty())
                        ? reinterpret_cast<const float*>(normals.ptr<cv::Vec3f>(0))
@@ -1573,7 +1559,8 @@ CChunkedVolumeViewer::RenderResult CChunkedVolumeViewer::renderFrame(RenderConte
                    ctx.fbW, ctx.fbH, rcomp, t0, t1, 1.0f,
                    ctx.compositeSettings.params.alphaMin,
                    ctx.compositeSettings.params.alphaOpacity,
-                   voxPerPixel, dst.ptr<uint8_t>(0));
+                   voxPerPixel, dst.ptr<uint8_t>(0),
+                   wantShade ? &shade : nullptr);
     };
 
     if (profilePhases) phaseTimer.restart();
@@ -1588,12 +1575,13 @@ CChunkedVolumeViewer::RenderResult CChunkedVolumeViewer::renderFrame(RenderConte
 
     if (profilePhases) phaseTimer.restart();
     std::array<uint32_t, 256> lut{};
-    vc::buildWindowLevelColormapLut(lut, ctx.windowLow, ctx.windowHigh, ctx.baseColormapId);
+    mc_colormap_lut(lut.data(), ctx.windowLow, ctx.windowHigh,
+                    mc_colormap_id(ctx.baseColormapId.c_str()));
     std::array<uint32_t, 256> overlayLut{};
     const bool hasOverlay = !overlayValues.empty() && ctx.overlayOpacity > 0.0f;
     if (hasOverlay) {
-        vc::buildWindowLevelColormapLut(
-            overlayLut, ctx.overlayWindowLow, ctx.overlayWindowHigh, ctx.overlayColormapId);
+        mc_colormap_lut(overlayLut.data(), ctx.overlayWindowLow, ctx.overlayWindowHigh,
+                        mc_colormap_id(ctx.overlayColormapId.c_str()));
     }
     auto* fbBits = reinterpret_cast<uint32_t*>(result.framebuffer.bits());
     const int fbStride = result.framebuffer.bytesPerLine() / 4;
@@ -3836,9 +3824,7 @@ void CChunkedVolumeViewer::updateStatusLabel()
     items << QString("scale %1").arg(_scale, 0, 'f', 2);
     items << QString("%1x%2").arg(_framebuffer.width()).arg(_framebuffer.height());
 
-    if ((_compositeSettings.enabled || _compositeSettings.planeEnabled) && streamingCompositeUnsupported()) {
-        items << QString("composite unsupported: %1").arg(QString::fromStdString(_compositeSettings.params.method));
-    } else if (_compositeSettings.enabled || _compositeSettings.planeEnabled) {
+    if (_compositeSettings.enabled || _compositeSettings.planeEnabled) {
         items << QString("composite %1").arg(QString::fromStdString(_compositeSettings.params.method));
     }
 

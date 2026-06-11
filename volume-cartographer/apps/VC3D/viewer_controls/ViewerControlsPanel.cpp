@@ -196,15 +196,6 @@ void ViewerControlsPanel::addViewerGroups()
         .scrollArea = _uiRefs.postprocessingScrollArea,
         .contents = _uiRefs.postprocessingContents,
         .baseColormap = _uiRefs.baseColormap,
-        .stretchValues = _uiRefs.stretchValuesPost,
-        .removeSmallComponents = _uiRefs.removeSmallComponents,
-        .minComponentSizeLabel = _uiRefs.minComponentSizeLabel,
-        .minComponentSize = _uiRefs.minComponentSize,
-        .claheEnabled = _uiRefs.claheEnabled,
-        .claheClipLimitLabel = _uiRefs.claheClipLimitLabel,
-        .claheClipLimit = _uiRefs.claheClipLimit,
-        .claheTileSizeLabel = _uiRefs.claheTileSizeLabel,
-        .claheTileSize = _uiRefs.claheTileSize,
     };
     _postprocessingPanel = new ViewerPostprocessingPanel(postprocessingUi, _viewerManager, _uiRefs.contents);
     addViewerGroup(tr("Postprocessing"),

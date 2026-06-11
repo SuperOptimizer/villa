@@ -173,8 +173,6 @@ vc_add_test(NAME test_quadsurface_save_roundtrip)
 
 vc_add_test(NAME test_atomic_imwrite_multi)
 
-vc_add_test(NAME test_post_process)
-
 # Pin the on-disk wire format: chunks must remain Blosc1-readable because
 # VcDataset writes Zarr v2 metadata advertising compressor_id = "blosc".
 # This catches any future migration to Blosc2 that would silently produce
@@ -337,8 +335,6 @@ vc_add_test(NAME test_thinning)
 
 vc_add_test(NAME test_umbilicus)
 
-vc_add_test(NAME test_colormaps)
-
 vc_add_test(NAME test_quadsurface_io)
 
 vc_add_test(NAME test_quadsurface_pointto)
@@ -352,8 +348,6 @@ vc_add_test(NAME test_quadsurface_save_paths)
 vc_add_test(NAME test_segmentation)
 
 vc_add_test(NAME test_chunked_tensor_meta LIBS doctest::doctest vc_tracer)
-
-vc_add_test(NAME test_post_process_util)
 
 vc_add_test(NAME test_render)
 

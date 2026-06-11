@@ -13,6 +13,7 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -20,6 +21,14 @@
 #include <vector>
 
 struct mc_volume;
+
+// matter-compressor colormap helpers (defined in matter_compressor.h's extern "C"
+// block). Re-declared here so GUI TUs can map mc_render's u8 output -> ARGB without
+// pulling the full merged mc header onto their include path.
+extern "C" {
+int  mc_colormap_id(const char* name);
+void mc_colormap_lut(uint32_t lut[256], float win_low, float win_high, int cmap_id);
+}
 
 namespace vc::render {
 
@@ -58,16 +67,29 @@ public:
     void freeze() override;   // mc_volume_freeze: immutable, lock-free reads
     void thaw() override;     // mc_volume_thaw: write phase, advance pin epoch
 
+    // Extra parameters for mc's SHADED/PERCENTILE composite modes. Defaults match
+    // mc's zero-field defaults (headlight relief). Pass null for slice/min/mean/
+    // max/alpha. light is direction TOWARD the light in (z,y,x); (0,0,0)=headlight.
+    struct ShadeParams {
+        float lightZ = 0.f, lightY = 0.f, lightX = 0.f;
+        float ambient = 0.f, diffuse = 0.f, specular = 0.f, shininess = 0.f;
+        float absorption = 0.f, shadow = 0.f, sss = 0.f, curvature = 0.f;
+        float percentile = 0.f;   // MC_COMP_PERCENTILE rank in (0,1] (0 -> 0.9)
+    };
+
     // Render a W*H image directly via matter-compressor's mc_render, bypassing
     // any per-chunk C++ sampler. `ptsXYZ` is W*H*3 floats in VC's (x,y,z) order
     // (e.g. from Surface::gen()); `normalsXYZ` is W*H*3 (x,y,z) unit normals or
     // null (required when compositing). `comp` selects the reduction along the
-    // normal: 0=none(slice) 1=min 2=mean 3=max 4=alpha. `t0..t1` step `dt` is the
-    // composite slab in voxels. `voxPerPixel` picks the LOD. `out` is W*H bytes.
+    // normal: 0=none(slice) 1=min 2=mean 3=max 4=alpha 5=stddev 6=shaded
+    // 7=percentile 8=depth. `t0..t1` step `dt` is the composite slab in voxels.
+    // `voxPerPixel` picks the LOD. `shade` carries SHADED/PERCENTILE knobs (null
+    // ok). `out` is W*H bytes.
     void render(const float* ptsXYZ, const float* normalsXYZ, int w, int h,
                 int comp, float t0, float t1, float dt,
                 float alphaMin, float alphaOpacity,
-                float voxPerPixel, std::uint8_t* out);
+                float voxPerPixel, std::uint8_t* out,
+                const ShadeParams* shade = nullptr);
 
 private:
     explicit McVolumeArray(mc_volume* v, int numLevels,

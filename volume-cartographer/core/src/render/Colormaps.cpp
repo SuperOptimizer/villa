@@ -5,11 +5,6 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
-#include <unordered_map>
-
-#if defined(__x86_64__)
-#include <immintrin.h>
-#endif
 
 namespace vc {
 
@@ -83,21 +78,6 @@ std::vector<OverlayColormapEntry> buildEntries(const EntryScope scope)
 
 } // namespace
 
-void applyPackedLut(const cv::Mat_<uint8_t>& values, const uint32_t* lut,
-                    uint32_t* outBuf, int outStride)
-{
-    const int rows = values.rows;
-    const int cols = values.cols;
-
-    for (int y = 0; y < rows; ++y) {
-        const auto* src = values.ptr<uint8_t>(y);
-        auto* dst = outBuf + y * outStride;
-        for (int x = 0; x < cols; ++x) {
-            nt_store_u32(&dst[x], lut[src[x]]);
-        }
-    }
-}
-
 const std::vector<OverlayColormapSpec>& specs() noexcept
 {
     static const std::vector<OverlayColormapSpec>& specsRef = buildSpecs();
@@ -114,62 +94,6 @@ const OverlayColormapSpec& resolve(const std::string& id)
         return *it;
     }
     return allSpecs.front();
-}
-
-void makeColors(const cv::Mat_<uint8_t>& values, const OverlayColormapSpec& spec,
-                uint32_t* outBuf, int outStride)
-{
-    if (values.empty()) {
-        return;
-    }
-
-    if (spec.kind == OverlayColormapKind::OpenCv) {
-        // Cache OpenCV colormap LUTs -- same opencvCode always produces the same LUT
-        static std::unordered_map<int, std::array<uint32_t, 256>> lutCache;
-        auto it = lutCache.find(spec.opencvCode);
-        if (it == lutCache.end()) {
-            cv::Mat lut_input(1, 256, CV_8UC1);
-            for (int i = 0; i < 256; ++i)
-                lut_input.at<uint8_t>(0, i) = static_cast<uint8_t>(i);
-            cv::Mat lut_bgr;
-            cv::applyColorMap(lut_input, lut_bgr, spec.opencvCode);
-            std::array<uint32_t, 256> lut{};
-            const auto* bgrRow = lut_bgr.ptr<cv::Vec3b>(0);
-            for (int i = 0; i < 256; ++i) {
-                lut[i] = 0xFF000000u
-                       | (static_cast<uint32_t>(bgrRow[i][2]) << 16)
-                       | (static_cast<uint32_t>(bgrRow[i][1]) << 8)
-                       |  static_cast<uint32_t>(bgrRow[i][0]);
-            }
-            it = lutCache.emplace(spec.opencvCode, lut).first;
-        }
-        applyPackedLut(values, it->second.data(), outBuf, outStride);
-        return;
-    }
-
-    if (spec.kind == OverlayColormapKind::DiscreteLut && spec.discreteLut != nullptr) {
-        applyPackedLut(values, spec.discreteLut, outBuf, outStride);
-        return;
-    }
-
-    {
-        // Tint colormap: value * tint[channel]
-        // tint is R, G, B in [0,1]
-        const float tR = spec.tint[0] * 255.0f;
-        const float tG = spec.tint[1] * 255.0f;
-        const float tB = spec.tint[2] * 255.0f;
-
-        // Build 256-entry LUT for each channel
-        std::array<uint32_t, 256> lut{};
-        for (int i = 0; i < 256; ++i) {
-            float f = static_cast<float>(i) / 255.0f;
-            auto r = static_cast<uint32_t>(std::min(f * tR, 255.0f));
-            auto g = static_cast<uint32_t>(std::min(f * tG, 255.0f));
-            auto b = static_cast<uint32_t>(std::min(f * tB, 255.0f));
-            lut[i] = 0xFF000000u | (r << 16) | (g << 8) | b;
-        }
-        applyPackedLut(values, lut.data(), outBuf, outStride);
-    }
 }
 
 const std::vector<OverlayColormapEntry>& entries(const EntryScope scope) noexcept
