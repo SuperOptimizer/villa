@@ -121,20 +121,6 @@ std::string deriveRemoteVolumeId(const std::string& url)
     return out.str();
 }
 
-std::vector<vc::render::ChunkCache::LevelInfo>
-makeChunkCacheLevelInfo(const vc::render::OpenedChunkedZarr& opened)
-{
-    std::vector<vc::render::ChunkCache::LevelInfo> levels;
-    levels.reserve(opened.fetchers.size());
-    for (std::size_t i = 0; i < opened.fetchers.size(); ++i) {
-        vc::render::ChunkCache::LevelInfo level;
-        level.shape = opened.shapes[i];
-        level.chunkShape = opened.chunkShapes[i];
-        level.transform = opened.transforms[i];
-        levels.push_back(level);
-    }
-    return levels;
-}
 
 } // namespace
 
@@ -1508,93 +1494,42 @@ std::shared_ptr<vc::render::IChunkedArray> Volume::chunkedCacheShared()
 std::shared_ptr<vc::render::IChunkedArray> Volume::createChunkCache(
     vc::render::ChunkCache::Options options) const
 {
-    // Remote zarr (compress3d/c3d or blosc/raw): serve the render path directly
-    // from mc_volume — it owns streaming, c3d transcode into a local volume.mca,
-    // the resident mc_cache, single-flight, and async transcode workers. No
-    // ChunkCache / MatterArchive / ZarrChunkFetcher on this path.
-    if (isRemote_ && !isRemoteMcaUrl(remoteUrl_)) {
-        const std::filesystem::path cacheDir = remoteCacheRoot_.empty()
-            ? std::filesystem::temp_directory_path() / "vc_mca_stream" / id()
-            : remotePersistentCachePath();
-        std::error_code ec;
-        std::filesystem::create_directories(cacheDir, ec);
-        const float quality = []{
-            const char* q = std::getenv("VCA_MCA_QUALITY");
-            return q ? std::strtof(q, nullptr) : 8.0f;
-        }();
-        if (auto mv = vc::render::McVolumeArray::open(
-                remoteUrl_, cacheDir.string(), options.decodedByteCapacity, quality)) {
-            Logger()->info("createChunkCache: mc_volume url='{}' cacheDir='{}' levels={}",
-                           remoteUrl_, cacheDir.string(), mv->numLevels());
-            return mv;
-        }
-        Logger()->warn("createChunkCache: mc_volume open failed for '{}', falling back", remoteUrl_);
-    }
-
-    if (isRemote_ && isRemoteMcaUrl(remoteUrl_)) {
-        // remote matter-compressor archive: stream compressed chunks into a local
-        // mirror volume.mca on demand and serve from it (no decode/re-encode).
-        std::filesystem::path cacheDir = remoteCacheRoot_.empty()
-            ? std::filesystem::temp_directory_path() / "vc_mca_stream" / id()
-            : remotePersistentCachePath();
-        vc::render::OpenedChunkedZarr opened;
-        options.archive = vc::render::openHttpMcaArchive(
-            remoteUrl_, cacheDir, options.decodedByteCapacity, opened);
-        std::vector<vc::render::ChunkCache::LevelInfo> levels;
-        for (std::size_t i = 0; i < opened.shapes.size(); ++i)
-            levels.push_back({opened.shapes[i], opened.chunkShapes[i], opened.transforms[i]});
-        return std::make_shared<vc::render::ChunkCache>(
-            std::move(levels), std::move(opened.fetchers),
-            opened.fillValue, opened.dtype, std::move(options));
-    }
-
-    vc::render::OpenedChunkedZarr opened = isRemote_
-        ? vc::render::openHttpZarrPyramid(remoteUrl_, remoteAuth_)
-        : vc::render::openLocalZarrPyramid(path_);
-
-    if (opened.fetchers.empty()) {
+    // ONE render/cache path for every volume: matter-compressor's mc_volume.
+    //   - remote zarr (s3/https, c3d/blosc/raw): stream + transcode into a local
+    //     volume.mca, serve from the resident mc_cache.
+    //   - local zarr directory: same, but mc_volume reads the source from disk.
+    // mc_volume owns streaming, transcode, single-flight, async workers and the
+    // resident decoded-block cache. The legacy ChunkCache/MatterCache/
+    // ZarrChunkFetcher machinery is gone.
+    const std::string source = isRemote_ ? remoteUrl_ : path_.string();
+    if (source.empty())
         return nullptr;
+
+    const std::filesystem::path cacheDir = [&] {
+        if (isRemote_) {
+            return remoteCacheRoot_.empty()
+                ? std::filesystem::temp_directory_path() / "vc_mca_stream" / id()
+                : remotePersistentCachePath();
+        }
+        // local: a sibling .mcacache dir next to the dataset.
+        return path_.parent_path() / (path_.filename().string() + ".mcacache");
+    }();
+    std::error_code ec;
+    std::filesystem::create_directories(cacheDir, ec);
+
+    const float quality = [] {
+        const char* q = std::getenv("VCA_MCA_QUALITY");
+        return q ? std::strtof(q, nullptr) : 8.0f;
+    }();
+
+    if (auto mv = vc::render::McVolumeArray::open(
+            source, cacheDir.string(), options.decodedByteCapacity, quality)) {
+        Logger()->info("createChunkCache: mc_volume source='{}' cacheDir='{}' levels={}",
+                       source, cacheDir.string(), mv->numLevels());
+        return mv;
     }
-
-    // mca is the ONLY on-disk cache: ONE persistent volume.mca per volume holding all
-    // chunks at all LODs. ALL volumes (remote AND local) go through it. The cache dir is
-    // the remote cache dir for remote volumes; for local volumes it sits next to the
-    // dataset (a sibling .mca dir). uint8 only (mca is u8); VCA_NO_MCA_CACHE disables.
-    std::filesystem::path cacheDir;
-    if (isRemote_ && !remoteCacheRoot_.empty()) {
-        cacheDir = remotePersistentCachePath();
-    } else if (!path_.empty()) {
-        cacheDir = path_.parent_path() / (path_.filename().string() + ".mcacache");
-    }
-
-    Logger()->info(
-        "createChunkCache: isRemote={} cacheDir='{}' levels={}",
-        isRemote_, cacheDir.string(), opened.shapes.size());
-
-    std::vector<vc::render::ChunkCache::LevelInfo> mcaLevels;
-    const bool mcaDisabled = std::getenv("VCA_NO_MCA_CACHE") != nullptr;
-    bool mcaOn = false;
-    if (!mcaDisabled && !cacheDir.empty()) {
-        std::error_code ec;
-        std::filesystem::create_directories(cacheDir, ec);
-        const float quality = []{
-            const char* q = std::getenv("VCA_MCA_QUALITY");
-            return q ? std::strtof(q, nullptr) : 8.0f;
-        }();
-        const auto mcaPath = cacheDir / "volume.mca";
-        // the resident decoded-block cache is mc_cache inside the archive; the
-        // ChunkCache byte budget becomes its budget.
-        options.archive = vc::render::applyMatterCache(
-            opened, mcaPath, quality, options.decodedByteCapacity, mcaLevels);
-        mcaOn = options.archive != nullptr;
-    }
-
-    return std::make_shared<vc::render::ChunkCache>(
-        mcaOn ? std::move(mcaLevels) : makeChunkCacheLevelInfo(opened),
-        std::move(opened.fetchers),
-        opened.fillValue,
-        opened.dtype,
-        std::move(options));
+    Logger()->error("createChunkCache: mc_volume open failed for '{}'", source);
+    return nullptr;
 }
 
 void Volume::setCacheBudget(size_t hotBytes)
