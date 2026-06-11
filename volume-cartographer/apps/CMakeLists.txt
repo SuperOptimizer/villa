@@ -230,9 +230,6 @@ target_link_libraries(vc_zarr_to_tiff vc_core Boost::program_options TIFF::TIFF)
 add_executable(vc_cache_prefetch src/vc_cache_prefetch.cpp)
 target_link_libraries(vc_cache_prefetch vc_core Boost::program_options)
 
-add_executable(vc_zarr_recompress src/vc_zarr_recompress.cpp)
-target_link_libraries(vc_zarr_recompress vc_core Blosc::blosc)
-
 # Reuse the neutral common PCH on the CLI apps that link vc_core.
 # vc_obj_uv_lift and vc_tifxyz_mmap_prepare are omitted — they don't link vc_core (no shared
 # include paths), so REUSE_FROM would fail to compile against them.
@@ -246,7 +243,7 @@ if(VC_USE_PCH)
         vc_lasagna_line_probe vc_atlas_inspect vc_tifxyz_gengt vc_diffuse_winding vc_create_segment_mask
         vc_merge_tifxyz vc_merge_patch vc_visualize vc_volpkg_convert vc_transform_geom
         vc_gen_normalgrids vc_ngrids vc_tifxyz2rgb vc_rgb2tifxyz vc_thinning
-        vc_tifxyz vc_project_tifxyz vc_zarr_to_tiff vc_zarr_recompress
+        vc_tifxyz vc_project_tifxyz vc_zarr_to_tiff
     )
         target_precompile_headers(${_app} REUSE_FROM vc_common_pch)
     endforeach()
