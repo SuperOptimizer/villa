@@ -2056,10 +2056,13 @@ static void mc_archive_decode_block_ctx(mc_codec_ctx *C, mc_archive *a, uint64_t
 }
 void mc_archive_decode_block(mc_archive *a, uint64_t chunk_off, int bz,int by,int bx, mc_u8 *dst){
     if(!a||chunk_off<=MC_SLOT_ZERO){ memset(dst,0,MC_BLK*MC_BLK*MC_BLK); return; }
-    mc_codec_ctx *C=mc_codec_ctx_new();
-    if(!C){ memset(dst,0,MC_BLK*MC_BLK*MC_BLK); return; }
+    // This is the HOT render-path read (mc_cache miss -> src_archive -> here, per
+    // block). A fresh ctx per call would re-run step_tab_build's 4096-powf loop
+    // every block (~4% of render CPU). Keep one ctx per thread; step_tab_build
+    // caches on quality, so same-q blocks skip the rebuild.
+    static _Thread_local mc_codec_ctx *C = NULL;
+    if(!C){ C=mc_codec_ctx_new(); if(!C){ memset(dst,0,MC_BLK*MC_BLK*MC_BLK); return; } }
     mc_archive_decode_block_ctx(C,a,chunk_off,bz,by,bx,dst);
-    mc_codec_ctx_free(C);
 }
 
 // ---- parallel whole-chunk helpers ------------------------------------------
