@@ -183,6 +183,19 @@ IChunkedArray::Stats McVolumeArray::stats() const
                 lastRateBytesPerSec_ = 0.0;
         }
         out.remoteDownloadBytesPerSecond = lastRateBytesPerSec_;
+        static const bool dbg = getenv("MCV_LOG") != nullptr;
+        if (dbg) {
+            const double winDt =
+                std::chrono::duration<double>(now - windowStartTime_).count();
+            const double idleDt =
+                std::chrono::duration<double>(now - lastProgressTime_).count();
+            fprintf(stderr, "[mcv-rate] net=%llu winStart=%llu winDt=%.2f idleDt=%.2f "
+                    "rate=%.2fMB/s inflight=%llu\n",
+                    (unsigned long long)s.net_bytes,
+                    (unsigned long long)windowStartBytes_, winDt, idleDt,
+                    lastRateBytesPerSec_ / 1048576.0,
+                    (unsigned long long)s.regions_inflight);
+        }
     }
     return out;
 }
