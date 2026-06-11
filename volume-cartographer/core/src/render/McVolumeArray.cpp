@@ -183,19 +183,6 @@ IChunkedArray::Stats McVolumeArray::stats() const
                 lastRateBytesPerSec_ = 0.0;
         }
         out.remoteDownloadBytesPerSecond = lastRateBytesPerSec_;
-        static const bool dbg = getenv("MCV_LOG") != nullptr;
-        if (dbg) {
-            const double winDt =
-                std::chrono::duration<double>(now - windowStartTime_).count();
-            const double idleDt =
-                std::chrono::duration<double>(now - lastProgressTime_).count();
-            fprintf(stderr, "[mcv-rate] net=%llu winStart=%llu winDt=%.2f idleDt=%.2f "
-                    "rate=%.2fMB/s inflight=%llu\n",
-                    (unsigned long long)s.net_bytes,
-                    (unsigned long long)windowStartBytes_, winDt, idleDt,
-                    lastRateBytesPerSec_ / 1048576.0,
-                    (unsigned long long)s.regions_inflight);
-        }
     }
     return out;
 }
@@ -218,9 +205,12 @@ void McVolumeArray::render(const float* ptsXYZ, const float* normalsXYZ,
     const float s = static_cast<float>(1 << L);
 
     // VC points are (x,y,z); mc wants (z,y,x). Invalid (<0 / NaN) points pass
-    // through unchanged so mc_render emits 0 there.
-    std::vector<float> pts(n * 3);
-    std::vector<float> nrm;
+    // through unchanged so mc_render emits 0 there. Reuse thread-local scratch:
+    // render() runs per-frame on a render worker, so a fresh 13MB vector every
+    // call churns the allocator + first-touches pages (~3% page-fault traffic).
+    // The buffers grow to the largest frame and then never reallocate.
+    thread_local std::vector<float> pts, nrm;
+    pts.resize(n * 3);
     auto remap = [&](float c) { return (c + 0.5f) / s - 0.5f; };
     for (std::size_t i = 0; i < n; ++i) {
         const float x = ptsXYZ[i * 3 + 0], y = ptsXYZ[i * 3 + 1], z = ptsXYZ[i * 3 + 2];
