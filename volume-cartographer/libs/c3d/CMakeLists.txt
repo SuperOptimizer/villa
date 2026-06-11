@@ -1,9 +1,12 @@
 # c3d — 3D volumetric u8 compression codec (single TU, C23, libc only).
-# Upstream: ~/c3d (vendored as a copy of c3d.c + c3d.h).
-add_library(c3d c3d.c)
+# SINGLE VENDOR: the c3d source lives in matter-compressor (libs/matter-compressor/
+# src/c3d.{c,h}); this target builds from there so there is exactly one copy in the
+# tree. utils_c3d_codec links this for the zarr codec (encode/decode) path.
+set(MC_C3D_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../matter-compressor/src)
+add_library(c3d ${MC_C3D_DIR}/c3d.c)
 
 target_include_directories(c3d PUBLIC
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
+    $<BUILD_INTERFACE:${MC_C3D_DIR}>
 )
 
 target_compile_features(c3d PRIVATE c_std_23)
