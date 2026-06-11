@@ -24,7 +24,7 @@
 #include "vc/core/util/Logging.hpp"
 #include "vc/core/util/Slicing.hpp"
 #include "vc/core/types/VcDataset.hpp"
-#include "vc/core/render/ZarrChunkFetcher.hpp"
+#include "vc/core/types/ZarrMetadata.hpp"
 #include "vc/core/render/McVolumeArray.hpp"
 #include "vc/core/util/HttpFetch.hpp"
 #include "vc/core/util/RemoteUrl.hpp"
@@ -1088,7 +1088,7 @@ void Volume::zarrOpen()
     if (!metadata_.contains("format") || metadata_["format"].get_string() != "zarr")
         return;
 
-    auto opened = vc::render::openLocalZarrPyramid(path_);
+    auto opened = vc::render::openLocalZarrMeta(path_);
     if (opened.shapes.empty()) {
         throw std::runtime_error("no physical zarr dataset directories found in " + path_.string());
     }
@@ -1236,28 +1236,25 @@ std::shared_ptr<Volume> Volume::NewFromUrl(
 
     const std::string remoteUrl = normalizeRemoteVolumeUrl(resolved.httpsUrl);
 
-    vc::render::OpenedChunkedZarr opened;
+    vc::render::ZarrPyramidMeta opened;
     if (isRemoteMcaUrl(remoteUrl)) {
-        // a remote matter-compressor archive: shapes/lods come from its header.
-        // The mirror archive built here is throwaway (createChunkCache reopens it
-        // at the real cache path); a tiny budget keeps this cheap.
-        const auto probeDir = std::filesystem::temp_directory_path() / "vc_mca_probe" /
-                              deriveRemoteVolumeId(remoteUrl);
-        vc::render::openHttpMcaArchive(remoteUrl, probeDir, 16ull << 20, opened);
+        // Remote .mca archives are not supported in this build (the MatterCache
+        // streaming path was removed). GUI-unreachable: only zarr URLs reach here.
+        throw std::runtime_error("remote .mca archives are not supported in this build: " + remoteUrl);
     } else {
     // Open the zarr metadata in memory. This performs the normal zarr metadata
     // reads, but does not stage .zarray/meta.json files on disk.
     // If stale AWS credentials are present, public buckets may reject the
     // signed request even though the same object is readable anonymously.
     try {
-        opened = vc::render::openHttpZarrPyramid(remoteUrl, auth);
+        opened = vc::render::openHttpZarrMeta(remoteUrl, auth);
     } catch (const std::exception& e) {
         if (!resolved.useAwsSigv4 || auth.empty() || !isRemoteAuthError(e)) {
             throw;
         }
 
         vc::HttpAuth anonymousAuth;
-        opened = vc::render::openHttpZarrPyramid(remoteUrl, anonymousAuth);
+        opened = vc::render::openHttpZarrMeta(remoteUrl, anonymousAuth);
         auth = std::move(anonymousAuth);
     }
     }
@@ -1471,11 +1468,8 @@ vc::render::IChunkedArray* Volume::chunkedCache()
 {
     std::lock_guard<std::mutex> lock(cacheMutex_);
     if (!chunkedCache_) {
-        vc::render::ChunkCache::Options options;
+        vc::render::DecodedCacheOptions options;
         options.decodedByteCapacity = cacheBudgetHot_;
-        // mca region workers spend most of their time blocked on the network GET,
-        // so oversubscribe the cores; CPU (c3d decode + mc encode) caps usefulness.
-        options.maxConcurrentReads = ioThreads_ > 0 ? static_cast<std::size_t>(ioThreads_) : 48;
         chunkedCache_ = createChunkCache(std::move(options));
         if (!chunkedCache_) {
             throw std::runtime_error("Volume::chunkedCache failed to create chunk cache");
@@ -1492,7 +1486,7 @@ std::shared_ptr<vc::render::IChunkedArray> Volume::chunkedCacheShared()
 }
 
 std::shared_ptr<vc::render::IChunkedArray> Volume::createChunkCache(
-    vc::render::ChunkCache::Options options) const
+    vc::render::DecodedCacheOptions options) const
 {
     // ONE render/cache path for every volume: matter-compressor's mc_volume.
     //   - remote zarr (s3/https, c3d/blosc/raw): stream + transcode into a local

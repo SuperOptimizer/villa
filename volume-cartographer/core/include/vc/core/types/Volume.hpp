@@ -16,10 +16,9 @@
 #include "vc/core/types/Sampling.hpp"
 #include "vc/core/types/SampleParams.hpp"
 #include "vc/core/types/Array3D.hpp"
-#include "vc/core/render/ChunkCache.hpp"
+#include "vc/core/render/IChunkedArray.hpp"
 #include "vc/core/util/RemoteAuth.hpp"
 
-namespace vc::render { class IChunkedArray; }
 namespace utils { class ZarrArray; }
 
 struct CompositeParams;
@@ -147,7 +146,7 @@ public:
     // even if the volume swaps its cache (budget change, invalidation).
     [[nodiscard]] std::shared_ptr<vc::render::IChunkedArray> chunkedCacheShared();
     [[nodiscard]] std::shared_ptr<vc::render::IChunkedArray> createChunkCache(
-        vc::render::ChunkCache::Options options) const;
+        vc::render::DecodedCacheOptions options) const;
 
     // Set cache budget for the chunked sampling cache.
     void setCacheBudget(size_t hotBytes);

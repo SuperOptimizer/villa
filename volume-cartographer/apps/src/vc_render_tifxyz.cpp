@@ -1,6 +1,6 @@
 #include <iostream>
 #include "vc/core/util/Slicing.hpp"
-#include "vc/core/render/ZarrChunkFetcher.hpp"
+#include "vc/core/render/McVolumeArray.hpp"
 #include "vc/core/util/QuadSurface.hpp"
 #include "vc/core/util/Surface.hpp"
 #include "vc/core/util/Tiff.hpp"
@@ -1292,32 +1292,42 @@ int main(int argc, char *argv[])
     const int cacheLevel = group_idx;
 
     const size_t cache_bytes = parsed["cache-gb"].as<size_t>() * 1024ull * 1024ull * 1024ull;
-    std::unique_ptr<vc::render::ChunkCache> ownedChunkCache;
+    // Every volume (local or remote zarr) is served through matter-compressor's
+    // mc_volume, the same backend the GUI render path uses.
+    std::shared_ptr<vc::render::IChunkedArray> ownedChunkCache;
     vc::render::IChunkedArray* chunk_cache = nullptr;
 
+    const float mcaQuality = [] {
+        const char* q = std::getenv("VCA_MCA_QUALITY");
+        return q ? std::strtof(q, nullptr) : 8.0f;
+    }();
+
     if (useRemoteCache) {
-        try {
-            vc::HttpAuth remoteAuth = vc::HttpAuth::from_env();
-            ownedChunkCache = vc::render::createChunkCache(
-                vc::render::openHttpZarrPyramid(remoteUrl, remoteAuth),
-                cache_bytes);
-            chunk_cache = ownedChunkCache.get();
-            if (cacheLevel < 0 || cacheLevel >= chunk_cache->numLevels()) {
-                logPrintf(stderr, "Error: group index %d not available in remote zarr\n", group_idx);
-                return EXIT_FAILURE;
-            }
-            logPrintf(stdout, "Remote zarr streaming: %s\n", remoteUrl.c_str());
-        } catch (const std::exception& e) {
-            logPrintf(stderr, "Error opening remote zarr: %s\n", e.what());
+        const std::filesystem::path cacheDir =
+            std::filesystem::temp_directory_path() / "vc_mca_render";
+        std::error_code ec;
+        std::filesystem::create_directories(cacheDir, ec);
+        ownedChunkCache = vc::render::McVolumeArray::open(remoteUrl, cacheDir.string(),
+                                                          cache_bytes, mcaQuality);
+        if (!ownedChunkCache) {
+            logPrintf(stderr, "Error opening remote zarr: %s\n", remoteUrl.c_str());
             return EXIT_FAILURE;
         }
+        chunk_cache = ownedChunkCache.get();
+        if (cacheLevel < 0 || cacheLevel >= chunk_cache->numLevels()) {
+            logPrintf(stderr, "Error: group index %d not available in remote zarr\n", group_idx);
+            return EXIT_FAILURE;
+        }
+        logPrintf(stdout, "Remote zarr streaming: %s\n", remoteUrl.c_str());
     } else {
-        try {
-            ownedChunkCache = vc::render::createChunkCache(
-                vc::render::openLocalZarrPyramid(vol_path),
-                cache_bytes);
-        } catch (const std::exception& e) {
-            logPrintf(stderr, "Error opening local zarr: %s\n", e.what());
+        const std::filesystem::path cacheDir =
+            vol_path.parent_path() / (vol_path.filename().string() + ".mcacache");
+        std::error_code ec;
+        std::filesystem::create_directories(cacheDir, ec);
+        ownedChunkCache = vc::render::McVolumeArray::open(vol_path.string(),
+                                                          cacheDir.string(), cache_bytes, mcaQuality);
+        if (!ownedChunkCache) {
+            logPrintf(stderr, "Error opening local zarr: %s\n", vol_path.string().c_str());
             return EXIT_FAILURE;
         }
         chunk_cache = ownedChunkCache.get();

@@ -204,7 +204,7 @@ TEST_CASE("Volume::createChunkCache yields a non-null cache pointer")
     auto d = tmpDir("createcache");
     auto v = Volume::New(d, optsU8());
     REQUIRE(v);
-    vc::render::ChunkCache::Options copts;
+    vc::render::DecodedCacheOptions copts;
     copts.decodedByteCapacity = 1ULL << 20;
     auto c = v->createChunkCache(copts);
     CHECK(c != nullptr);

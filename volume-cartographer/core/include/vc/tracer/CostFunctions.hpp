@@ -90,8 +90,8 @@ private:
 
     passTroughComputor _passthrough_rms;
     passTroughComputor _passthrough_frac;
-    std::unique_ptr<vc::render::IChunkedArray> _cacheRms;
-    std::unique_ptr<vc::render::IChunkedArray> _cacheFrac;
+    std::shared_ptr<vc::render::IChunkedArray> _cacheRms;
+    std::shared_ptr<vc::render::IChunkedArray> _cacheFrac;
     Chunked3d<uint8_t, passTroughComputor> _rms;
     Chunked3d<uint8_t, passTroughComputor> _frac;
     float _scale;

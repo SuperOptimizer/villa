@@ -31,12 +31,10 @@ add_library(vc_core
         src/surface_metrics.cpp
         src/Thinning.cpp
         src/Umbilicus.cpp
-        src/render/ChunkCache.cpp
+        src/ZarrMetadata.cpp
         src/render/Colormaps.cpp
-        src/render/MatterCache.cpp
         src/render/McVolumeArray.cpp
         src/render/PostProcess.cpp
-        src/render/ZarrChunkFetcher.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/../apps/src/vc_merge_tifxyz_grid.cpp
         ${CMAKE_CURRENT_BINARY_DIR}/Version.cpp
 )

@@ -1,8 +1,8 @@
 #pragma once
 
 #include "vc/core/util/HashFunctions.hpp"
-#include "vc/core/render/ChunkCache.hpp"
-#include "vc/core/render/ZarrChunkFetcher.hpp"
+#include "vc/core/render/IChunkedArray.hpp"
+#include "vc/core/render/McVolumeArray.hpp"
 #include "vc/core/types/Array3D.hpp"
 #include "vc/core/types/Volume.hpp"
 
@@ -60,25 +60,23 @@ static uint64_t chunk_compute_total = 0;
 
 template <typename T, typename C> class Chunked3dAccessor;
 
-inline std::unique_ptr<vc::render::ChunkCache> openChunkedArrayCache(
+// Open a LOCAL zarr directory as an IChunkedArray for the tracer's dataset reads,
+// backed by matter-compressor's mc_volume (same path as the render cache). The
+// local volume.mca lands in a sibling ".mcacache" dir next to the dataset.
+inline std::shared_ptr<vc::render::IChunkedArray> openChunkedArrayCache(
     const std::filesystem::path& zarrPath,
     std::size_t capacityBytes)
 {
-    auto opened = vc::render::openLocalZarrPyramid(zarrPath);
-    std::vector<vc::render::ChunkCache::LevelInfo> levels;
-    levels.reserve(opened.shapes.size());
-    for (std::size_t i = 0; i < opened.shapes.size(); ++i) {
-        levels.push_back({opened.shapes[i], opened.chunkShapes[i], opened.transforms[i]});
-    }
-
-    vc::render::ChunkCache::Options options;
-    options.decodedByteCapacity = capacityBytes;
-    return std::make_unique<vc::render::ChunkCache>(
-        std::move(levels),
-        std::move(opened.fetchers),
-        opened.fillValue,
-        opened.dtype,
-        options);
+    const std::filesystem::path cacheDir =
+        zarrPath.parent_path() / (zarrPath.filename().string() + ".mcacache");
+    std::error_code ec;
+    std::filesystem::create_directories(cacheDir, ec);
+    auto mv = vc::render::McVolumeArray::open(zarrPath.string(), cacheDir.string(),
+                                              capacityBytes, 8.0f);
+    if (!mv)
+        throw std::runtime_error("openChunkedArrayCache: mc_volume open failed for " +
+                                 zarrPath.string());
+    return mv;
 }
 
 static std::string tmp_name_proc_thread()
@@ -686,7 +684,7 @@ struct Chunked3dFloatFromUint8
     }
 
     passTroughComputor _passthrough;
-    std::unique_ptr<vc::render::IChunkedArray> _ownedCache;
+    std::shared_ptr<vc::render::IChunkedArray> _ownedCache;
     Chunked3d<uint8_t, passTroughComputor> _x;
     float _scale;
     std::unique_ptr<vc::VcDataset> _ds;
@@ -726,7 +724,7 @@ struct Chunked3dVec3fFromUint8
     }
 
     passTroughComputor _passthrough_x, _passthrough_y, _passthrough_z;
-    std::unique_ptr<vc::render::IChunkedArray> _cacheX, _cacheY, _cacheZ;
+    std::shared_ptr<vc::render::IChunkedArray> _cacheX, _cacheY, _cacheZ;
     Chunked3d<uint8_t, passTroughComputor> _x, _y, _z;
     float _scale;
     std::vector<std::unique_ptr<vc::VcDataset>> _dss;

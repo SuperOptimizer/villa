@@ -13,7 +13,7 @@
 // ~/.VC3D/remote_cache.
 
 #include "vc/core/types/Volume.hpp"
-#include "vc/core/render/ChunkCache.hpp"
+#include "vc/core/render/IChunkedArray.hpp"
 #include "vc/core/util/RemoteAuth.hpp"
 #include "vc/core/util/Logging.hpp"
 
@@ -165,7 +165,7 @@ int main(int argc, char** argv)
     const auto t0 = std::chrono::steady_clock::now();
 
     const int nThreads = vm["threads"].as<int>() > 0 ? vm["threads"].as<int>() : 16;
-    auto* cc = static_cast<vc::render::ChunkCache*>(cache);
+    auto* cc = cache;   // vc::render::IChunkedArray* — shardBatch/prefetch/stats live here
 
     // Build ONE shard queue across all levels, in level order, with no barrier
     // between levels: workers flow from one level's shards straight into the next.
@@ -222,7 +222,7 @@ int main(int argc, char** argv)
     }
 
     const auto secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
-    const auto stats = static_cast<vc::render::ChunkCache*>(cache)->stats();
+    const auto stats = cache->stats();
     std::cout << "done in " << static_cast<int>(secs) << "s; cache size "
               << fmtBytes(double(stats.persistentCacheBytes)) << "\n";
     return 0;

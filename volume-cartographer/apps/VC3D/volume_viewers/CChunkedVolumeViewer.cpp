@@ -8,7 +8,6 @@
 #include "vc/core/render/Colormaps.hpp"
 #include "vc/core/render/McVolumeArray.hpp"
 #include "vc/core/render/PostProcess.hpp"
-#include "render/ChunkCache.hpp"
 #include "vc/core/types/Volume.hpp"
 #include "vc/core/types/VolumePkg.hpp"
 #include "vc/core/util/PlaneSurface.hpp"
@@ -540,12 +539,10 @@ std::shared_ptr<vc::render::IChunkedArray> makeChunkCacheForVolume(const std::sh
     if (!volume)
         return nullptr;
 
-    vc::render::ChunkCache::Options options;
+    vc::render::DecodedCacheOptions options;
     options.decodedByteCapacity = decodedByteCapacity > 0
         ? decodedByteCapacity
         : streamingCacheCapacityBytes(nullptr);
-    options.maxConcurrentReads = 16;
-    options.detectAllFillChunks = volume->isRemote();
     // The on-disk cache (a single volume.mca) is owned by Volume::createChunkCache, which
     // puts it under the volume's remoteCacheRoot. The GUI resolves that root
     // (/volpkgs|/ephemeral|settings); push it into the volume before the cache builds.

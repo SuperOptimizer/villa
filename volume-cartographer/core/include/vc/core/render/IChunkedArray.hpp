@@ -33,6 +33,12 @@ struct ChunkResult {
     std::string error;
 };
 
+// Options for Volume::createChunkCache. The render path (McVolumeArray) consumes
+// only decodedByteCapacity (the resident decoded-block budget, in bytes).
+struct DecodedCacheOptions {
+    std::size_t decodedByteCapacity = 512ULL << 20;
+};
+
 class IChunkedArray {
 public:
     using ChunkReadyCallbackId = std::uint64_t;

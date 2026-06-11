@@ -67,8 +67,6 @@ vc_add_test(NAME test_smoke LIBS doctest::doctest)
 
 vc_add_test(NAME test_appendmask_render)
 
-vc_add_test(NAME test_volume_chunk_errors)
-
 vc_add_test(NAME test_segmentation_autosave_state
     LIBS doctest::doctest
     INCLUDES ${PROJECT_SOURCE_DIR}/apps/VC3D)
@@ -393,8 +391,6 @@ vc_add_test(NAME test_vcdataset)
 
 vc_add_test(NAME test_zarr)
 
-vc_add_test(NAME test_chunk_cache)
-
 vc_add_test(NAME test_volume_extras)
 
 vc_add_test(NAME test_zarr_more)
@@ -404,10 +400,6 @@ vc_add_test(NAME test_vcdataset_compressors)
 vc_add_test(NAME test_volume_static_read)
 
 vc_add_test(NAME test_volume_pyramid)
-
-vc_add_test(NAME test_chunk_cache_persist)
-
-vc_add_test(NAME test_zarr_chunk_fetcher)
 
 vc_add_test(NAME test_slicing_more)
 
