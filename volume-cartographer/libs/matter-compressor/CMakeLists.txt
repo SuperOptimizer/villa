@@ -24,21 +24,20 @@ if(MC_STANDALONE)
   endif()
 endif()
 
-# core library: codec + archive + surface sampling/render (deps: libm + pthread)
+# Single merged TU (upstream folded mc_volume/mc_zarr/mc_s3 + codec + archive +
+# sample/render into matter_compressor.{c,h}). Bundles the vendored c3d decoder;
+# links VC's libs3 target + zstd for the remote-zarr streaming path.
 add_library(matter_compressor STATIC
-  src/matter_compressor.c)
+  src/matter_compressor.c src/c3d.c)
 target_include_directories(matter_compressor PUBLIC src)
-set_target_properties(matter_compressor PROPERTIES POSITION_INDEPENDENT_CODE ON)
+set_target_properties(matter_compressor PROPERTIES
+  POSITION_INDEPENDENT_CODE ON C_STANDARD 23 C_STANDARD_REQUIRED ON)
 find_package(Threads REQUIRED)
-target_link_libraries(matter_compressor m Threads::Threads)
+target_link_libraries(matter_compressor PUBLIC m Threads::Threads libs3 zstd::libzstd)
 
-# The codec is the hot encode/decode path; build it for the host arch. The
-# parent project's global flags do not reliably reach a vendored subdir (and CI
-# builds generic), so set it on THIS target. -DMC_NO_NATIVE=ON for portable
-# binaries (distribution / cross-build). Always -O3 -ffast-math regardless of
-# the parent's build type, since this TU is pure number-crunching.
 # Archive determinism (byte-identical across ISAs): no -ffast-math, explicit
 # -ffp-contract=off. Hot paths are integer; neither flag costs performance.
+# -DMC_NO_NATIVE=ON for portable binaries (distribution / cross-build).
 target_compile_options(matter_compressor PRIVATE -O3 -ffp-contract=off -Wno-stringop-overflow)
 if(NOT MC_NO_NATIVE)
   include(CheckCCompilerFlag)
@@ -47,25 +46,13 @@ if(NOT MC_NO_NATIVE)
     target_compile_options(matter_compressor PRIVATE -march=native)
   endif()
 endif()
-
-# matter_compressor_volume: remote-zarr streaming + transcode + cache + prefetch
-# (mc_volume) over a local .mca. Bundles the vendored c3d decoder + mc_zarr; links
-# the parent project's libs3 target (VC's libs/libs3) for S3/HTTP. Built whether
-# standalone or vendored so VC3D's render shim can link it.
-add_library(matter_compressor_volume STATIC
-  src/mc_volume.c src/mc_zarr.c src/c3d.c)
-target_include_directories(matter_compressor_volume PUBLIC src)
-set_target_properties(matter_compressor_volume PROPERTIES
-  POSITION_INDEPENDENT_CODE ON C_STANDARD 23 C_STANDARD_REQUIRED ON)
-# c3d decode output feeds the .mca re-encode -> honor archive determinism:
-# no -ffast-math, explicit -ffp-contract=off.
-# NO -fopenmp: c3d runs SINGLE-THREADED here. mc_volume's parallelism is its own
-# pthreads (24 prefetch threads + workers); letting c3d spawn an OpenMP team per
-# decode multiplied threads by nproc (24 * 16 = 384 -> thread explosion). c3d's
-# omp_ calls are all #ifdef _OPENMP-guarded with serial fallbacks, so building
-# without OpenMP makes every pragma a no-op and takes the serial path.
+# c3d: NO -fopenmp (single-threaded; mc_volume owns its own pthread pools, and an
+# OpenMP team per decode would multiply threads by nproc). c3d's omp_ calls are
+# all _OPENMP-guarded with serial fallbacks, so no OpenMP = the serial path.
 set_source_files_properties(src/c3d.c PROPERTIES COMPILE_OPTIONS "-O3;-ffp-contract=off")
-target_link_libraries(matter_compressor_volume PUBLIC matter_compressor libs3 zstd::libzstd)
+
+# Back-compat alias: consumers that linked the old split lib still resolve.
+add_library(matter_compressor_volume ALIAS matter_compressor)
 
 # Tests + native flags only when built standalone (vendoring consumers don't want our
 # test exes added to their build).

@@ -763,6 +763,21 @@ void MenuActionController::showSettingsDialog()
     }
     _window->onMoveOnSurfaceChangedToggled(resetViewOnSurfaceChange);
 
+    // Apply the RAM cache size live (no restart): resize the active volume's
+    // decoded cache. Backends without runtime resize ignore this.
+    {
+        const auto gb = settings.value(vc3d::settings::perf::RAM_CACHE_SIZE_GB,
+                                       vc3d::settings::perf::RAM_CACHE_SIZE_GB_DEFAULT)
+                            .toULongLong();
+        const std::size_t bytes = static_cast<std::size_t>(gb) * 1024ULL * 1024ULL * 1024ULL;
+        if (_window->_state) {
+            if (auto vol = _window->_state->currentVolume()) {
+                if (auto* arr = vol->chunkedCache())
+                    arr->setDecodedByteCapacity(bytes);
+            }
+        }
+    }
+
     dialog->deleteLater();
 }
 

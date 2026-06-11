@@ -12,6 +12,7 @@
 
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -53,6 +54,7 @@ public:
 
     Stats stats() const override;
     void prefetchShardBlocking(int level, int iz, int iy, int ix) override;
+    void setDecodedByteCapacity(std::size_t bytes) override;
 
     // Render a W*H image directly via matter-compressor's mc_render, bypassing
     // any per-chunk C++ sampler. `ptsXYZ` is W*H*3 floats in VC's (x,y,z) order
@@ -77,6 +79,13 @@ private:
     std::mutex listenerMu_;
     std::unordered_map<ChunkReadyCallbackId, ChunkReadyCallback> listeners_;
     std::atomic<ChunkReadyCallbackId> nextListenerId_{1};
+
+    // download-rate estimate: net_bytes delta / wall-clock delta between stats()
+    // polls. Guarded by rateMu_ since stats() is const + called off the worker.
+    mutable std::mutex rateMu_;
+    mutable std::uint64_t lastNetBytes_ = 0;
+    mutable std::chrono::steady_clock::time_point lastRateTime_{};
+    mutable double lastRateBytesPerSec_ = 0.0;
 };
 
 } // namespace vc::render

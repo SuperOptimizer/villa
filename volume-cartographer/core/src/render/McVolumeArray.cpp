@@ -1,6 +1,6 @@
 #include "vc/core/render/McVolumeArray.hpp"
 
-#include "mc_volume.h"   // pulls in matter_compressor.h (mc_render/mc_sample APIs)
+#include "matter_compressor.h"   // single merged TU: volume + codec + sample/render
 
 #include <cmath>
 #include <cstdio>
@@ -107,6 +107,11 @@ void McVolumeArray::prefetchChunks(const std::vector<ChunkKey>& keys, bool /*wai
     }
 }
 
+void McVolumeArray::setDecodedByteCapacity(std::size_t bytes)
+{
+    mc_volume_set_cache_bytes(vol_, bytes);
+}
+
 void McVolumeArray::prefetchShardBlocking(int level, int iz, int iy, int ix)
 {
     // iz/iy/ix are 16^3-block coords; mc_volume wants the source inner-chunk coords
@@ -140,10 +145,36 @@ IChunkedArray::Stats McVolumeArray::stats() const
     mc_volume_stats s{};
     mc_volume_get_stats(vol_, &s);
     Stats out;
-    // mc_cache residency: mc_volume reports hits/misses but not resident bytes
-    // directly; surface disk + in-flight, leave RAM gauge to mc_cache budget.
+    // RAM cache: decoded 16^3 blocks resident vs the budget (4096 B each).
+    constexpr std::size_t kBlockBytesU = kBlockBytes;
+    out.decodedBytes = static_cast<std::size_t>(s.cache_used_blocks) * kBlockBytesU;
+    out.decodedByteCapacity = static_cast<std::size_t>(s.cache_cap_blocks) * kBlockBytesU;
     out.persistentCacheBytes = static_cast<std::size_t>(s.disk_bytes);
     out.remoteFetchesInFlight = static_cast<std::size_t>(s.regions_inflight);
+
+    // download rate: net_bytes delta / wall-clock delta between polls. Decays to
+    // 0 when no new bytes arrive so the status bar stops showing "downloading".
+    {
+        std::lock_guard<std::mutex> lock(rateMu_);
+        const auto now = std::chrono::steady_clock::now();
+        if (lastRateTime_.time_since_epoch().count() != 0) {
+            const double dt = std::chrono::duration<double>(now - lastRateTime_).count();
+            if (dt >= 0.1) {
+                const std::uint64_t db = s.net_bytes >= lastNetBytes_
+                                         ? s.net_bytes - lastNetBytes_ : 0;
+                const double inst = db / dt;
+                // light EMA so the readout doesn't flicker between polls.
+                lastRateBytesPerSec_ = db == 0 ? 0.0
+                    : 0.5 * lastRateBytesPerSec_ + 0.5 * inst;
+                lastNetBytes_ = s.net_bytes;
+                lastRateTime_ = now;
+            }
+        } else {
+            lastNetBytes_ = s.net_bytes;
+            lastRateTime_ = now;
+        }
+        out.remoteDownloadBytesPerSecond = lastRateBytesPerSec_;
+    }
     return out;
 }
 

@@ -89,6 +89,10 @@ public:
     // Hint: a new interactive view request begins (raise fetch priority for the
     // new frame's chunks). No-op for backends with their own scheduling.
     virtual void beginViewRequest() {}
+
+    // Resize the decoded (RAM) cache budget at runtime, in bytes. No-op for
+    // backends with a fixed cache. Backends may discard resident data.
+    virtual void setDecodedByteCapacity(std::size_t /*bytes*/) {}
 };
 
 } // namespace vc::render
