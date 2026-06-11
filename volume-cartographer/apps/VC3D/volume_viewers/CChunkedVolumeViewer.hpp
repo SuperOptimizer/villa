@@ -325,8 +325,6 @@ private:
     bool _renderPendingAfterWorker = false;
     std::uint64_t _renderSerial = 0;
     std::size_t _inFlightParamsKey = 0;
-    cv::Mat_<uint8_t> _values;
-    cv::Mat_<uint8_t> _coverage;
     std::shared_ptr<GeneratedSurfaceCache> _genSurfaceCache;
     bool _genCacheDirty = true;
 

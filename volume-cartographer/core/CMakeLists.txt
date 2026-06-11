@@ -14,7 +14,6 @@ add_library(vc_core
         src/VolpkgConvert.cpp
         src/SparseChunkSpool.cpp
         src/Slicing.cpp
-        src/Compositing.cpp
         src/AffineTransform.cpp
         src/PlaneSurface.cpp
         src/Surface.cpp

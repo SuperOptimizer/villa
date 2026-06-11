@@ -147,49 +147,8 @@ struct CompositeRenderSettings {
     bool operator==(const CompositeRenderSettings&) const = default;
 };
 
-// Layer values for a single pixel across all layers
-// Used by compositing methods to process per-pixel data
-struct LayerStack {
-    std::vector<float> values;  // Values at each layer (after cutoff/equalization)
-    int validCount = 0;         // Number of valid (sampled) layers
-};
-
-// Compositing method interface
-// Each method takes a stack of layer values and returns a single output value
-namespace CompositeMethod {
-
-float mean(const LayerStack& stack) noexcept;
-float max(const LayerStack& stack) noexcept;
-float min(const LayerStack& stack) noexcept;
-float alpha(const LayerStack& stack, const CompositeParams& params) noexcept;
-float beerLambert(const LayerStack& stack, const CompositeParams& params) noexcept;
-
-} // namespace CompositeMethod
-
-// Apply compositing to a single pixel's layer stack
-// Returns the final composited value (0-255)
-float compositeLayerStack(
-    const LayerStack& stack,
-    const CompositeParams& params
-) noexcept;
-
-// Utility: check if method requires all layer values to be stored
-// (as opposed to running accumulator like max/min)
-bool methodRequiresLayerStorage(const std::string& method) noexcept;
-
-// Build a 256-entry u8→u8 LUT from a 4-knot piecewise-linear transfer
-// function with implicit endpoints (0,0) and (255,255). When `enabled` is
-// false, writes the identity mapping. Knot x coordinates are clamped and
-// sorted internally, so the caller does not need to pre-sort; degenerate
-// runs (x1 == x2) collapse to a step. Safe for tight rendering loops — a
-// 256-byte array fits trivially in L1D.
-void buildTfLut256(bool enabled,
-                   uint8_t x1, uint8_t y1,
-                   uint8_t x2, uint8_t y2,
-                   uint8_t lut[256]) noexcept;
-
-// Compute directional lighting factor for a surface normal
-// Returns a multiplier (0-1) based on Lambertian diffuse lighting
-// normal: surface normal (should be normalized)
-// params: contains light direction and strength settings
-float computeLightingFactor(const cv::Vec3f& normal, const CompositeParams& params) noexcept;
+// NOTE: the per-pixel C++ compositing pipeline (LayerStack, CompositeMethod::*,
+// compositeLayerStack, buildTfLut256, computeLightingFactor) was removed — the
+// render path now composites inside matter-compressor (mc_render). The structs
+// above (CompositeParams / CompositeRenderSettings) survive as the GUI's
+// settings carriers, mapped to mc_render params in CChunkedVolumeViewer.
