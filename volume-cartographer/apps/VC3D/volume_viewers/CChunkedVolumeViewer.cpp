@@ -3852,12 +3852,15 @@ void CChunkedVolumeViewer::updateStatusLabel()
             .arg(formatGigabytes(stats.decodedBytes))
             .arg(formatGigabytes(stats.decodedByteCapacity));
         items << QString("disk %1").arg(formatByteSize(stats.persistentCacheBytes));
-        // in-flight fetches may be local archive serves; only call it "downloading"
-        // when bytes are actually moving from the source.
-        if (stats.remoteFetchesInFlight > 0 && stats.remoteDownloadBytesPerSecond > 0.0) {
-            items << QString("downloading %1 @ %2")
-                .arg(stats.remoteFetchesInFlight)
-                .arg(formatMegabytesPerSecond(stats.remoteDownloadBytesPerSecond));
+        // Gate on the rate (a held sliding-window average, steady through the
+        // bursty batch arrivals) rather than the in-flight count, which flickers
+        // to 0 between request bursts even while data is still streaming. Append
+        // the in-flight depth only when it's currently >0.
+        if (stats.remoteDownloadBytesPerSecond > 0.0) {
+            const QString rate = formatMegabytesPerSecond(stats.remoteDownloadBytesPerSecond);
+            items << (stats.remoteFetchesInFlight > 0
+                ? QString("downloading %1 @ %2").arg(stats.remoteFetchesInFlight).arg(rate)
+                : QString("downloading @ %1").arg(rate));
         }
     }
 

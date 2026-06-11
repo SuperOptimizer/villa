@@ -152,26 +152,35 @@ IChunkedArray::Stats McVolumeArray::stats() const
     out.persistentCacheBytes = static_cast<std::size_t>(s.disk_bytes);
     out.remoteFetchesInFlight = static_cast<std::size_t>(s.regions_inflight);
 
-    // download rate: net_bytes delta / wall-clock delta between polls. Decays to
-    // 0 when no new bytes arrive so the status bar stops showing "downloading".
+    // download rate: bytes over a sliding ~2s window (smooths the bursty
+    // s3_get_batch arrivals), held through short idle gaps so the readout stays
+    // steady while downloads continue and only drops to 0 after ~3s of no bytes.
     {
+        constexpr double kWindowSec = 2.0;
+        constexpr double kIdleHoldSec = 3.0;
         std::lock_guard<std::mutex> lock(rateMu_);
         const auto now = std::chrono::steady_clock::now();
-        if (lastRateTime_.time_since_epoch().count() != 0) {
-            const double dt = std::chrono::duration<double>(now - lastRateTime_).count();
-            if (dt >= 0.1) {
-                const std::uint64_t db = s.net_bytes >= lastNetBytes_
-                                         ? s.net_bytes - lastNetBytes_ : 0;
-                const double inst = db / dt;
-                // light EMA so the readout doesn't flicker between polls.
-                lastRateBytesPerSec_ = db == 0 ? 0.0
-                    : 0.5 * lastRateBytesPerSec_ + 0.5 * inst;
-                lastNetBytes_ = s.net_bytes;
-                lastRateTime_ = now;
-            }
+        if (windowStartTime_.time_since_epoch().count() == 0) {       // first poll
+            windowStartBytes_ = s.net_bytes;
+            windowStartTime_ = now;
+            lastProgressTime_ = now;
         } else {
-            lastNetBytes_ = s.net_bytes;
-            lastRateTime_ = now;
+            if (s.net_bytes > windowStartBytes_)
+                lastProgressTime_ = now;                               // bytes moved
+            const double winDt =
+                std::chrono::duration<double>(now - windowStartTime_).count();
+            if (winDt >= kWindowSec) {
+                const std::uint64_t db = s.net_bytes >= windowStartBytes_
+                                         ? s.net_bytes - windowStartBytes_ : 0;
+                lastRateBytesPerSec_ = db / winDt;                     // window avg
+                windowStartBytes_ = s.net_bytes;                       // slide window
+                windowStartTime_ = now;
+            }
+            // declare idle only after a sustained gap with no new bytes.
+            const double idleDt =
+                std::chrono::duration<double>(now - lastProgressTime_).count();
+            if (idleDt >= kIdleHoldSec)
+                lastRateBytesPerSec_ = 0.0;
         }
         out.remoteDownloadBytesPerSecond = lastRateBytesPerSec_;
     }

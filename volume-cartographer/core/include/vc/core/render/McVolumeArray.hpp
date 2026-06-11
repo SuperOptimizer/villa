@@ -80,11 +80,16 @@ private:
     std::unordered_map<ChunkReadyCallbackId, ChunkReadyCallback> listeners_;
     std::atomic<ChunkReadyCallbackId> nextListenerId_{1};
 
-    // download-rate estimate: net_bytes delta / wall-clock delta between stats()
-    // polls. Guarded by rateMu_ since stats() is const + called off the worker.
+    // download-rate estimate. net_bytes arrives in bursts (one s3_get_batch of
+    // ~48 chunks every few seconds), so a poll-to-poll delta flickers to 0
+    // between bursts. Instead: average bytes over a sliding ~2s window, and hold
+    // the last nonzero rate for a few seconds of idle before declaring 0, so the
+    // status bar shows a steady rate while downloads are ongoing. rateMu_ guards
+    // (stats() is const + polled off the worker).
     mutable std::mutex rateMu_;
-    mutable std::uint64_t lastNetBytes_ = 0;
-    mutable std::chrono::steady_clock::time_point lastRateTime_{};
+    mutable std::uint64_t windowStartBytes_ = 0;
+    mutable std::chrono::steady_clock::time_point windowStartTime_{};
+    mutable std::chrono::steady_clock::time_point lastProgressTime_{};
     mutable double lastRateBytesPerSec_ = 0.0;
 };
 
