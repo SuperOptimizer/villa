@@ -285,7 +285,13 @@ std::filesystem::path outputSegmentsPathForState(CState* state)
     }
     if (path.empty()) {
         const auto vpkgRoot = std::filesystem::path(state->vpkg()->getVolpkgDirectory());
+        if (vpkgRoot.empty()) {
+            return {};   // freshly-created vpkg, no directory yet
+        }
         path = vpkgRoot / "paths";
+    }
+    if (path.empty()) {
+        return {};
     }
     return std::filesystem::absolute(path).lexically_normal();
 }
@@ -312,8 +318,14 @@ std::filesystem::path volpkgRootForState(CState* state)
     if (!state || !state->vpkg()) {
         return {};
     }
-    return std::filesystem::absolute(
-        std::filesystem::path(state->vpkg()->getVolpkgDirectory())).lexically_normal();
+    // A freshly-created ("New Project") vpkg can have an empty directory until it's
+    // saved. std::filesystem::absolute("") throws "Invalid argument" -> terminate,
+    // so bail on an empty path instead.
+    const std::filesystem::path dir(state->vpkg()->getVolpkgDirectory());
+    if (dir.empty()) {
+        return {};
+    }
+    return std::filesystem::absolute(dir).lexically_normal();
 }
 
 QString versionedTifxyzOutputName(const QString& baseNameIn,
