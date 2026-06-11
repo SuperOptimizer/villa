@@ -100,12 +100,12 @@ ChunkResult McVolumeArray::getChunkBlocking(int level, int iz, int iy, int ix)
 
 void McVolumeArray::prefetchChunks(const std::vector<ChunkKey>& keys, bool /*wait*/, int /*priorityOffset*/)
 {
-    // mc_volume's async workers already dedup; kick each region once. Snap to the
-    // 256^3 region corner (16 blocks) so 4096 block-keys -> one transcode request.
-    for (const auto& k : keys) {
-        std::uint8_t scratch[kBlockBytes];
-        mc_volume_try_block(vol_, k.level, k.iz, k.iy, k.ix, scratch);
-    }
+    // Predictive prefetch: request each region's DOWNLOAD if absent -- cheap,
+    // non-blocking, deduped (LIFO stack). NOT a decode (the old try_block path
+    // allocated a 4KB scratch + decoded synchronously per key). ChunkKey carries
+    // 16^3-block coords; the 256^3 region is block/16.
+    for (const auto& k : keys)
+        mc_volume_request_region(vol_, k.level, k.iz / kBlk, k.iy / kBlk, k.ix / kBlk);
 }
 
 void McVolumeArray::setDecodedByteCapacity(std::size_t bytes)

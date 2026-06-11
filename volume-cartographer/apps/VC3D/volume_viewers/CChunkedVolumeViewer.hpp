@@ -96,6 +96,13 @@ public:
     // either order. Called every global tick.
     void tickIdle();
 
+    // Predict the 16^3-block chunks this viewer will sample THIS frame, from coarse
+    // geometry (plane = viewport corners; QuadSurface = the visible control-point
+    // grid window) at the current render level. Appends to `out` (the tick dedups
+    // across viewers and submits the downloads up front, before freeze). Cheap:
+    // thousands of points, never a full-res pixel walk. No-op if no surface/array.
+    void predictWorkingSet(std::vector<vc::render::ChunkKey>& out) const;
+
     void invalidateVis() override;
     void invalidateVisRegion(const std::string& name, const cv::Rect& changedCells) override;
     void centerOnVolumePoint(const cv::Vec3f& point, bool forceRender = false) override;

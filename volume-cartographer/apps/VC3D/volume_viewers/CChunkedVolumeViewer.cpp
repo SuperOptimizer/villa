@@ -1605,6 +1605,76 @@ CChunkedVolumeViewer::RenderResult CChunkedVolumeViewer::renderFrame(RenderConte
     return result;
 }
 
+// Predict ONLY the 256^3 regions the render will actually sample THIS frame.
+// Done by running the surface's own gen() at a DOWNSAMPLED resolution over the
+// exact same viewport the render uses -- so we get the in-viewport coords (gen
+// clips to the screen rect; a warped sheet's off-screen patch is excluded), map
+// each to its 16^3 block, and collapse the distinct blocks to their 256^3 regions.
+// Coarse grid (~fb/8) = a few thousand points, cheap. The set is small because the
+// rendered slice is thin -- not the whole padded control grid (which sprayed ~46k
+// regions across the volume and flooded the download stack).
+static constexpr int kPredictDownsample = 8;   // gen at 1/8 res for prediction
+static constexpr std::size_t kMaxPredictedRegions = 4096;   // sanity cap
+
+void CChunkedVolumeViewer::predictWorkingSet(std::vector<vc::render::ChunkKey>& out) const
+{
+    if (_closing || !_chunkArray)
+        return;
+    auto surf = _surfWeak.lock();
+    if (!surf)
+        return;
+    auto* plane = dynamic_cast<PlaneSurface*>(surf.get());
+    const int level = renderStartLevel(plane == nullptr);
+    const auto cs = _chunkArray->chunkShape(level);   // (z,y,x) voxels per chunk (16^3)
+    const auto ls = _chunkArray->shape(level);        // (z,y,x) level dims
+    if (cs[0] <= 0 || cs[1] <= 0 || cs[2] <= 0)
+        return;
+    const auto s0 = _chunkArray->levelTransform(level).scaleFromLevel0;  // L0 voxel -> this LOD
+
+    const int fbW = _framebuffer.width()  > 0 ? _framebuffer.width()  : 1024;
+    const int fbH = _framebuffer.height() > 0 ? _framebuffer.height() : 1024;
+    const int D = kPredictDownsample;
+    const int gw = std::max(1, fbW / D), gh = std::max(1, fbH / D);
+    const float genScale = _scale / float(D);
+    // Same offset formula the render uses, at the downsampled fb size.
+    const cv::Vec3f offset(_surfacePtrX * genScale - float(gw) * 0.5f,
+                           _surfacePtrY * genScale - float(gh) * 0.5f, 0.0f);
+
+    cv::Mat_<cv::Vec3f> coords;
+    surf->gen(&coords, nullptr, cv::Size(gw, gh), {0, 0, 0}, genScale, offset);
+    if (coords.empty())
+        return;
+
+    // 256^3 region = 16 chunks of 16^3 per axis. ChunkKey carries 16^3-BLOCK coords;
+    // McVolumeArray::prefetchChunks divides by 16 to get the region index, so we
+    // emit the region's corner BLOCK = region*16. Dedup is at REGION granularity.
+    // (Cross-viewer + inflight/present dedup is NOT done here: the tick dedups the
+    // shared set across viewers, and mc_volume_request_region itself no-ops on
+    // present/in-flight/already-queued regions -- mc owns the pipeline state.)
+    const int regBlocks = 256 / 16;   // 16^3 blocks per region axis
+    std::unordered_set<std::uint64_t> seenRegion;
+    for (int y = 0; y < coords.rows; ++y) {
+        const cv::Vec3f* row = coords[y];
+        for (int x = 0; x < coords.cols; ++x) {
+            const cv::Vec3f& p = row[x];
+            if (!(p[0] >= 0.f) || !(p[1] >= 0.f) || !(p[2] >= 0.f) ||
+                p[0] != p[0] || p[1] != p[1] || p[2] != p[2])
+                continue;   // invalid / hole
+            // L0 voxel -> this-LOD voxel -> 16^3 block -> 256^3 region.
+            const int lz = int(p[2] * float(s0[0])), ly = int(p[1] * float(s0[1])), lx = int(p[0] * float(s0[2]));
+            if (unsigned(lz) >= unsigned(ls[0]) || unsigned(ly) >= unsigned(ls[1]) || unsigned(lx) >= unsigned(ls[2]))
+                continue;
+            const int rz = (lz / cs[0]) / regBlocks, ry = (ly / cs[1]) / regBlocks, rx = (lx / cs[2]) / regBlocks;
+            const std::uint64_t k = (std::uint64_t(rz) << 42) ^ (std::uint64_t(ry) << 21) ^ std::uint64_t(rx);
+            if (seenRegion.insert(k).second) {
+                out.push_back({level, rz * regBlocks, ry * regBlocks, rx * regBlocks});  // region -> corner block
+                if (seenRegion.size() >= kMaxPredictedRegions)
+                    return;
+            }
+        }
+    }
+}
+
 void CChunkedVolumeViewer::submitRender(const char* reason, std::source_location caller)
 {
     ProfileScope profile("submitRender", reason, caller);

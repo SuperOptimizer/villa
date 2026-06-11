@@ -33,6 +33,7 @@
 #include <exception>
 #include <iostream>
 #include <optional>
+#include <unordered_map>
 #include <unordered_set>
 #include "utils/Json.hpp"
 #include <opencv2/core.hpp>
@@ -168,6 +169,25 @@ void ViewerManager::onGlobalTick()
             return;   // keep _globalRenderPending set; retry next tick
 
     _globalRenderPending = false;
+
+    // PREDICTIVE PREFETCH (before thaw): each viewer predicts the chunks it will
+    // sample this frame from coarse geometry; collate per cache (the 4 viewers on
+    // one volume share a cache, so dedup their predictions) and submit the region
+    // downloads up front. So data front-runs the render instead of being discovered
+    // as a miss a cycle late. Cheap (thousands of points). The render's miss list
+    // remains the safety net for prediction gaps. (VCA_NO_PREDICT disables for A/B.)
+    static const bool predict = [] { const char* e = std::getenv("VCA_NO_PREDICT");
+        return !(e && e[0] && e[0] != '0'); }();
+    if (predict) {
+        std::unordered_map<vc::render::IChunkedArray*, std::vector<vc::render::ChunkKey>> wanted;
+        for (auto* v : chunked) {
+            if (auto* ca = v->chunkArrayPtr())
+                v->predictWorkingSet(wanted[ca]);
+        }
+        for (auto& [ca, keys] : wanted)
+            if (!keys.empty())
+                ca->prefetchChunks(keys, /*wait=*/false);
+    }
 
     // Game-loop order: THAW -> FREEZE -> RENDER. Mutation (the bounded
     // archive->cache fill) happens only in thaw while UNFROZEN; the cache is then
