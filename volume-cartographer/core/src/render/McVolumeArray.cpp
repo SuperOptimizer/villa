@@ -2,6 +2,7 @@
 
 #include "matter_compressor.h"   // single merged TU: volume + codec + sample/render
 
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -112,6 +113,9 @@ void McVolumeArray::setDecodedByteCapacity(std::size_t bytes)
     mc_volume_set_cache_bytes(vol_, bytes);
 }
 
+void McVolumeArray::freeze() { mc_volume_freeze(vol_); }
+void McVolumeArray::thaw()   { mc_volume_thaw(vol_); }
+
 void McVolumeArray::prefetchShardBlocking(int level, int iz, int iy, int ix)
 {
     // iz/iy/ix are 16^3-block coords; mc_volume wants the source inner-chunk coords
@@ -203,12 +207,17 @@ void McVolumeArray::render(const float* ptsXYZ, const float* normalsXYZ,
     // true 4864) so the shape ratio is NOT the scale; the downsample factor is
     // exactly 2^L. c_L = (c_0 + 0.5)/2^L - 0.5 (half-voxel-center correct).
     const float s = static_cast<float>(1 << L);
+    const bool composite = (comp != 0 /*MC_COMP_NONE*/);
 
-    // VC points are (x,y,z); mc wants (z,y,x). Invalid (<0 / NaN) points pass
-    // through unchanged so mc_render emits 0 there. Reuse thread-local scratch:
-    // render() runs per-frame on a render worker, so a fresh 13MB vector every
-    // call churns the allocator + first-touches pages (~3% page-fault traffic).
-    // The buffers grow to the largest frame and then never reallocate.
+    // Pre-remap points to level-L voxel space and render that single level.
+    // (Coarser-LOD fallback — show resident coarse data instead of black while a
+    // freshly-entered level streams in — is implemented in mc_render_points_par_lod
+    // but DISABLED for now; re-enable once the fill/game-loop work settles.)
+    // VC points are (x,y,z); mc wants (z,y,x). Invalid (<0/NaN) -> -1 so mc emits 0.
+    // Reuse thread-local scratch: a fresh 13MB vector per frame churns the
+    // allocator + first-touches pages; these grow once to the largest frame.
+    static const bool prof = getenv("MCV_PROF") != nullptr;
+    const auto tA = std::chrono::steady_clock::now();
     thread_local std::vector<float> pts, nrm;
     pts.resize(n * 3);
     auto remap = [&](float c) { return (c + 0.5f) / s - 0.5f; };
@@ -220,26 +229,33 @@ void McVolumeArray::render(const float* ptsXYZ, const float* normalsXYZ,
         pts[i * 3 + 1] = bad ? -1.f : remap(y);   // y
         pts[i * 3 + 2] = bad ? -1.f : remap(x);   // x
     }
-    const float* nrmPtr = nullptr;
-    if (normalsXYZ && comp != 0 /*MC_COMP_NONE*/) {
-        nrm.resize(n * 3);
-        for (std::size_t i = 0; i < n; ++i) {     // normals are directions: just swap, no remap
-            nrm[i * 3 + 0] = normalsXYZ[i * 3 + 2];   // z
-            nrm[i * 3 + 1] = normalsXYZ[i * 3 + 1];   // y
-            nrm[i * 3 + 2] = normalsXYZ[i * 3 + 0];   // x
-        }
-        nrmPtr = nrm.data();
-    }
+    const auto tB = std::chrono::steady_clock::now();
 
     mc_render_params p{};
     p.filter = MC_FILTER_TRILINEAR;
     p.comp = static_cast<mc_comp>(comp);
-    // composite range is in LOD-0 voxels; scale to the sampled level's pitch.
-    p.t0 = t0 / s; p.t1 = t1 / s; p.dt = (dt > 0.f ? dt : 1.f) / s;
-    p.alpha_min = alphaMin;
-    p.alpha_opacity = alphaOpacity > 0.f ? alphaOpacity : 1.f;
 
-    mc_render_points_par(&lods.lods[L], pts.data(), nrmPtr, w, h, &p, out, 0);
+    if (!composite) {
+        mc_render_points_par(&lods.lods[L], pts.data(), nullptr, w, h, &p, out, 0);
+        if (prof) {
+            const auto tC = std::chrono::steady_clock::now();
+            using ms = std::chrono::duration<double, std::milli>;
+            fprintf(stderr, "[mcv-prof] %dx%d L=%d remap=%.1fms sample=%.1fms\n",
+                    w, h, L, ms(tB - tA).count(), ms(tC - tB).count());
+        }
+    } else {
+        nrm.resize(n * 3);
+        for (std::size_t i = 0; i < n; ++i) {     // normals are directions: swap, no remap
+            nrm[i * 3 + 0] = normalsXYZ ? normalsXYZ[i * 3 + 2] : 0.f;   // z
+            nrm[i * 3 + 1] = normalsXYZ ? normalsXYZ[i * 3 + 1] : 0.f;   // y
+            nrm[i * 3 + 2] = normalsXYZ ? normalsXYZ[i * 3 + 0] : 0.f;   // x
+        }
+        // composite range is in LOD-0 voxels; scale to the sampled level's pitch.
+        p.t0 = t0 / s; p.t1 = t1 / s; p.dt = (dt > 0.f ? dt : 1.f) / s;
+        p.alpha_min = alphaMin;
+        p.alpha_opacity = alphaOpacity > 0.f ? alphaOpacity : 1.f;
+        mc_render_points_par(&lods.lods[L], pts.data(), nrm.data(), w, h, &p, out, 0);
+    }
 
     static const bool dbg = getenv("MCV_LOG") != nullptr;
     if (dbg && w > 4 && h > 4) {
@@ -253,14 +269,12 @@ void McVolumeArray::render(const float* ptsXYZ, const float* normalsXYZ,
             dcol[k] = P(cy+1, cx, k) - P(cy, cx, k);
         }
         std::size_t nz = 0; for (std::size_t i = 0; i < n; ++i) if (out[i]) ++nz;
-        const bool quad = (nrmPtr != nullptr) || (P(0,0,2) != P(cy,cx,2) && false);
         fprintf(stderr, "[mcv-render] %dx%d L=%d nz=%zu vpp=%.2f | "
                 "center_xyz(%.0f,%.0f,%.0f) d/col_xyz(%.3f,%.3f,%.3f) "
-                "d/row_xyz(%.3f,%.3f,%.3f) nrm=%d\n",
+                "d/row_xyz(%.3f,%.3f,%.3f) comp=%d\n",
                 w, h, L, nz, voxPerPixel,
                 P(cy,cx,0), P(cy,cx,1), P(cy,cx,2),
-                dcol[0],dcol[1],dcol[2], drow[0],drow[1],drow[2], nrmPtr?1:0);
-        (void)quad;
+                dcol[0],dcol[1],dcol[2], drow[0],drow[1],drow[2], composite?1:0);
     }
 }
 

@@ -1,5 +1,6 @@
 #include "ViewerManager.hpp"
 
+#include "Constants.hpp"
 #include "VCSettings.hpp"
 #include "volume_viewers/VolumeViewerBase.hpp"
 #include "volume_viewers/CChunkedVolumeViewer.hpp"
@@ -18,12 +19,16 @@
 
 #include <QMdiArea>
 #include <QThread>
+#include <QTimer>
+#include "vc/core/render/IChunkedArray.hpp"
 #include <QMdiSubWindow>
 #include <QSettings>
 #include <QtConcurrent/QtConcurrent>
 #include <QLoggingCategory>
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <cstdlib>
 #include <exception>
 #include <iostream>
 #include <optional>
@@ -86,6 +91,85 @@ ViewerManager::ViewerManager(CState* state,
                 this,
                 &ViewerManager::handleSurfaceWillBeDeleted);
     }
+
+    // The ONE global render clock for the whole application (~60fps). Each tick
+    // coalesces all pending changes into a single thaw -> freeze -> render pass.
+    _globalClock = new QTimer(this);
+    _globalClock->setInterval(vc3d::kGlobalTickMs);
+    connect(_globalClock, &QTimer::timeout, this, &ViewerManager::onGlobalTick);
+    _globalClock->start();
+}
+
+void ViewerManager::requestGlobalRender()
+{
+    // Idempotent dirty flag: any number of change events between ticks collapse
+    // into one render. Cheap — just a bool set on the main thread.
+    _globalRenderPending = true;
+}
+
+void ViewerManager::onGlobalTick()
+{
+    // The clock free-runs so idle/debounced per-viewer work (status refresh,
+    // resize-settle, intersection rebuild) still fires when no render is pending.
+    std::vector<CChunkedVolumeViewer*> chunked;
+    chunked.reserve(_baseViewers.size());
+    for (auto* base : _baseViewers) {
+        if (auto* v = dynamic_cast<CChunkedVolumeViewer*>(base))
+            chunked.push_back(v);
+    }
+
+    // Advance every viewer's idle deadlines first; this may set _globalRenderPending
+    // (e.g. a resize-settle that lands kicks a render), so read the flag afterwards.
+    for (auto* v : chunked) v->tickIdle();
+
+    // Collect the distinct chunk caches across all viewers (base + overlay). All
+    // viewers on one volume share a single cache, so this is one cache (plus the
+    // overlay's, if a different volume is loaded). Thaw/freeze each exactly once.
+    std::vector<vc::render::IChunkedArray*> caches;
+    auto addCache = [&caches](vc::render::IChunkedArray* c) {
+        if (c && std::find(caches.begin(), caches.end(), c) == caches.end())
+            caches.push_back(c);
+    };
+    for (auto* v : chunked) {
+        addCache(v->chunkArrayPtr());
+        addCache(v->overlayChunkArrayPtr());
+    }
+
+    // Render unless this frame is PROVABLY IDENTICAL to the last. Not provable when:
+    // a view/camera change is pending, OR downloads are still in flight (data may
+    // have landed in the cache last tick). Chunk arrival never schedules a render --
+    // in-flight is what keeps streaming frames updating. (A precise "cache changed
+    // last tick" signal can replace the in-flight proxy later; until then this
+    // errs toward rendering, never toward a stale frame.)
+    bool streaming = false;
+    for (auto* c : caches)
+        if (c->stats().remoteFetchesInFlight > 0) { streaming = true; break; }
+    if (!_globalRenderPending && !streaming)
+        return;
+    _globalRenderPending = false;
+
+    // Game-loop order: THAW -> FREEZE -> RENDER. Mutation (the bounded
+    // archive->cache fill) happens only in thaw while UNFROZEN; the cache is then
+    // frozen and the render workers read the immutable snapshot lock-free. This
+    // ordering is what makes the sync fill race-free. (End goal: an async
+    // lock-safe fill that runs concurrent with frozen reads — lands incrementally.)
+    static const bool latLog = [] { const char* e = std::getenv("VC3D_LATENCY");
+        return e && e[0] && e[0] != '0'; }();
+    const auto t0 = latLog ? std::chrono::steady_clock::now()
+                           : std::chrono::steady_clock::time_point{};
+    for (auto* c : caches) c->thaw();      // bounded fill happens here (<= ~5ms)
+    for (auto* c : caches) c->freeze();
+    if (latLog && !caches.empty()) {
+        const double thawMs = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - t0).count();
+        if (thawMs > 4.0)
+            Logger()->info("[vc3d-tick] thaw/batch-apply {:.1f}ms ({} cache(s))",
+                           thawMs, caches.size());
+    }
+
+    // While streaming, force every viewer to render even without a view change so
+    // newly-resident chunks appear; otherwise each viewer renders only if dirty.
+    for (auto* v : chunked) v->tickRender(streaming);
 }
 
 VolumeViewerBase* ViewerManager::createViewer(const std::string& surfaceName,

@@ -4,6 +4,8 @@
 #include <QString>
 #include <QFutureWatcher>
 
+class QTimer;
+
 #include <atomic>
 #include <functional>
 #include <memory>
@@ -113,6 +115,17 @@ public:
     int sliceStepSize() const { return _sliceStepSize; }
 
     void forEachBaseViewer(const std::function<void(VolumeViewerBase*)>& fn) const;
+
+    // ---- global render clock (one heartbeat for the whole app) --------------
+    // Any change that should produce a frame (camera moved, surface changed,
+    // resized, a chunk landed) calls requestGlobalRender(): it sets one
+    // idempotent dirty flag, coalescing N events into a single render per tick.
+    // onGlobalTick() (the one QTimer) then, per tick: thaw -> freeze each
+    // distinct chunk cache ONCE -> drive every dirty viewer's render (worker) ->
+    // the worker stages its framebuffer + the main thread flips it. Replaces the
+    // per-viewer render/status/intersection/resize debounce timers.
+    void requestGlobalRender();
+
     void setIntersectionThickness(float thickness);
     float intersectionThickness() const { return _intersectionThickness; }
     void setHighlightedSurfaceIds(const std::vector<std::string>& ids);
@@ -137,6 +150,7 @@ signals:
     void sliceStepSizeChanged(int size);
 
 private slots:
+    void onGlobalTick();
     void handleSurfacePatchIndexPrimeFinished();
     void handleSurfacePatchIndexTaskFinished();
     void handleSurfaceChanged(std::string name, std::shared_ptr<Surface> surf, bool isEditUpdate = false);
@@ -185,6 +199,11 @@ private:
     SegmentationModule* _segmentationModule{nullptr};
     std::vector<VolumeViewerBase*> _baseViewers;
     std::unordered_map<VolumeViewerBase*, bool> _resetDefaults;
+
+    // Global render clock. _globalClock fires every 33ms; onGlobalTick renders
+    // only when _globalRenderPending was set since the last tick.
+    QTimer* _globalClock{nullptr};
+    bool _globalRenderPending{false};
     float _intersectionOpacity{1.0f};
     float _intersectionThickness{0.0f};
     std::shared_ptr<Volume> _overlayVolume;

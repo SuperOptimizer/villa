@@ -55,6 +55,8 @@ public:
     Stats stats() const override;
     void prefetchShardBlocking(int level, int iz, int iy, int ix) override;
     void setDecodedByteCapacity(std::size_t bytes) override;
+    void freeze() override;   // mc_volume_freeze: immutable, lock-free reads
+    void thaw() override;     // mc_volume_thaw: write phase, advance pin epoch
 
     // Render a W*H image directly via matter-compressor's mc_render, bypassing
     // any per-chunk C++ sampler. `ptsXYZ` is W*H*3 floats in VC's (x,y,z) order

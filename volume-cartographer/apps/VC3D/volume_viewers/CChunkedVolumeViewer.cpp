@@ -1,5 +1,7 @@
 #include "CChunkedVolumeViewer.hpp"
 
+#include "Constants.hpp"
+
 #include "CState.hpp"
 #include "elements/ViewerStatsBar.hpp"
 #include "VCSettings.hpp"
@@ -28,15 +30,16 @@
 #include <QPainterPath>
 #include <QPointer>
 #include <QSettings>
-#include <QTimer>
 #include <QTransform>
 #include <QVBoxLayout>
 #include <QtConcurrent/QtConcurrentRun>
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <limits>
@@ -51,9 +54,12 @@
 
 namespace {
 
+using vc3d::kResizeSettleMs;
+using vc3d::kIntersectionSettleMs;
+using vc3d::kStatusRefreshMs;
+using vc3d::msToTicks;
 constexpr float kMinScale = 0.002f;
 constexpr float kMaxScale = 128.0f;
-constexpr int kResizeSettleMs = 140;
 constexpr float kResolutionLodZoomBias = 0.5f;
 constexpr float kSegmentationResolutionLodZoomBias = 1.0f;
 constexpr int kSurfaceResolutionLevelBias = 1;
@@ -328,6 +334,25 @@ std::string profileRectF(const QRectF& r)
 {
     return std::format("[x={:.2f},y={:.2f},w={:.2f},h={:.2f}]",
                        r.x(), r.y(), r.width(), r.height());
+}
+
+// End-to-end latency trace (VC3D_LATENCY=1): event -> frame-flip wall-clock ms.
+// Separate from --profile (which times internal phases); this answers "how long
+// from the nav input to pixels on screen".
+bool LatencyLoggingEnabled()
+{
+    static const bool on = [] {
+        const char* e = std::getenv("VC3D_LATENCY");
+        return e && e[0] && e[0] != '0';
+    }();
+    return on;
+}
+
+qint64 monotonicNowNs()
+{
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(
+               std::chrono::steady_clock::now().time_since_epoch())
+        .count();
 }
 
 class ProfileScope {
@@ -654,49 +679,9 @@ CChunkedVolumeViewer::CChunkedVolumeViewer(CState* state, ViewerManager* manager
     _view->setScene(_scene);
     _view->setDirectFramebuffer(&_framebuffer);
 
-    _renderTimer = new QTimer(this);
-    _renderTimer->setSingleShot(true);
-    _renderTimer->setInterval(16);
-    connect(_renderTimer, &QTimer::timeout, this, [this]() {
-        if (!_renderPending)
-            return;
-        _renderPending = false;
-        const std::string reason = ProfileLoggingEnabled()
-            ? std::format("render timer fired; scheduledReason='{}'; scheduledCaller='{}'",
-                          _pendingRenderReason, _pendingRenderCaller)
-            : std::string("render timer fired");
-        submitRender(reason.c_str());
-        updateStatusLabel();
-    });
-
-    _intersectionRenderTimer = new QTimer(this);
-    _intersectionRenderTimer->setSingleShot(true);
-    _intersectionRenderTimer->setInterval(50);
-    connect(_intersectionRenderTimer, &QTimer::timeout, this, [this]() {
-        const std::string reason = ProfileLoggingEnabled()
-            ? std::format("intersection timer fired; scheduledReason='{}'; scheduledCaller='{}'",
-                          _pendingIntersectionReason, _pendingIntersectionCaller)
-            : std::string("intersection timer fired");
-        renderIntersections(reason.c_str());
-        emit overlaysUpdated();
-    });
-
-    _resizeRenderTimer = new QTimer(this);
-    _resizeRenderTimer->setSingleShot(true);
-    _resizeRenderTimer->setInterval(kResizeSettleMs);
-    connect(_resizeRenderTimer, &QTimer::timeout, this, [this]() {
-        scheduleRender("resize settled");
-        emit overlaysUpdated();
-    });
-
-    _statusTimer = new QTimer(this);
-    // 1s tick: the stats read is a cheap atomic load now (no stat() syscall), so
-    // the disk/RAM figures stay live during background prefetch even when idle.
-    _statusTimer->setInterval(1000);
-    connect(_statusTimer, &QTimer::timeout, this, [this]() {
-        updateStatusLabel();
-    });
-    _statusTimer->start();
+    // Render, status refresh, resize-settle and intersection rebuild are all
+    // driven from the global render clock (ViewerManager::onGlobalTick) via
+    // tickRender()/tickIdle() instead of four per-viewer QTimers.
 
     reloadPerfSettings();
 
@@ -741,17 +726,9 @@ void CChunkedVolumeViewer::quiesceForClose()
         _viewerManager->unregisterViewer(this);
     }
 
-    if (_renderTimer)
-        _renderTimer->stop();
-    if (_intersectionRenderTimer)
-        _intersectionRenderTimer->stop();
-    if (_resizeRenderTimer)
-        _resizeRenderTimer->stop();
-    if (_statusTimer)
-        _statusTimer->stop();
-
+    _intersectionTickCountdown = -1;
+    _resizeSettleCountdown = -1;
     _renderPending = false;
-    _renderPendingAfterWorker = false;
     ++_renderSerial;
 
     if (_chunkCbId != 0 && _chunkArray) {
@@ -834,9 +811,8 @@ void CChunkedVolumeViewer::applyCameraState(const CameraState& state, bool force
 bool CChunkedVolumeViewer::isRenderQuiescent() const
 {
     return !_renderWorkerBusy.load(std::memory_order_acquire)
-        && !_renderPendingAfterWorker
         && !_renderPending
-        && !(_renderTimer && _renderTimer->isActive());
+        && _resizeSettleCountdown < 0;
 }
 
 std::size_t CChunkedVolumeViewer::chunkFetchesInFlight() const
@@ -865,24 +841,9 @@ void CChunkedVolumeViewer::rebuildChunkArray()
     if (!_chunkArray)
         return;
 
-    QPointer<CChunkedVolumeViewer> guard(this);
-    std::weak_ptr<Volume> volumeWeak = _volume;
-    _chunkCbId = _chunkArray->addChunkReadyListener([guard, volumeWeak]() {
-        QMetaObject::invokeMethod(qApp, [guard, volumeWeak]() {
-            if (!guard)
-                return;
-            auto volume = volumeWeak.lock();
-            if (!volume || guard->_volume != volume || guard->_closing)
-                return;
-            // Re-render promptly: the ChunkCache throttles chunk-ready callbacks
-            // (~30 Hz), so the 16ms render debounce is the only delay needed.
-            // (The old 250ms restart-on-arrival window starved repaints for as
-            // long as chunks kept streaming in.)
-            guard->_renderPending = true;
-            if (guard->_renderTimer && !guard->_renderTimer->isActive())
-                guard->_renderTimer->start();
-        }, Qt::QueuedConnection);
-    });
+    // Chunk arrival does NOT schedule a render. In the tick model the global clock
+    // renders every tick while downloads are in flight, so data that landed last
+    // tick is reflected by the next tick's render without any per-chunk callback.
 }
 
 void CChunkedVolumeViewer::OnVolumeChanged(std::shared_ptr<Volume> vol)
@@ -1265,12 +1226,69 @@ void CChunkedVolumeViewer::scheduleRender(const char* reason, std::source_locati
             _surfName, _renderPending, _scale, _zOff));
     }
     syncCameraTransform();
+    // Latency trace: stamp the FIRST event that made this frame dirty (later
+    // coalesced events keep the original origin so we measure worst-case
+    // event->flip). Cleared when the frame flips.
+    if (LatencyLoggingEnabled() && _latencyOriginNs < 0) {
+        _latencyOriginNs = monotonicNowNs();
+        _latencyOriginReason = reason;
+    }
     _renderPending = true;
-    if (_renderTimer && !_renderTimer->isActive()) {
-        _renderTimer->start();
-        profile.setDetails("action=render_timer_start");
+    // Route to the one global render clock: it coalesces all viewers' pending
+    // flags into a single thaw->batch-apply->freeze->render pass per tick.
+    if (_viewerManager) {
+        _viewerManager->requestGlobalRender();
+        profile.setDetails("action=request_global_render");
     } else {
-        profile.setDetails("action=already_scheduled");
+        profile.setDetails("action=no_manager");
+    }
+}
+
+// Called from ViewerManager::onGlobalTick (between the cache thaw and freeze):
+// if this viewer has a pending change, dispatch its render worker.
+void CChunkedVolumeViewer::tickRender(bool force)
+{
+    // force = the tick decided to render (e.g. streaming) even if this viewer had
+    // no view change. Otherwise render only when this viewer is dirty.
+    if (_closing || (!_renderPending && !force))
+        return;
+    // If last tick's render worker hasn't finished, SKIP this tick entirely and
+    // leave the dirty flag so the next tick retries. The tick is the only
+    // scheduler; a render never outlives its tick by queuing another.
+    if (_renderWorkerBusy.load(std::memory_order_acquire)) {
+        _renderPending = true;
+        return;
+    }
+    _renderPending = false;
+    submitRender("global tick");
+    updateStatusLabel();
+}
+
+// Called every global tick. Advances the per-viewer debounce/idle deadlines and
+// fires the associated work when each reaches zero. Replaces the old
+// _statusTimer / _resizeRenderTimer / _intersectionRenderTimer.
+void CChunkedVolumeViewer::tickIdle()
+{
+    if (_closing)
+        return;
+
+    // Status refresh: periodic, runs even when idle (background prefetch updates
+    // the disk/RAM figures). Re-arm each cycle.
+    if (--_statusTickCountdown <= 0) {
+        _statusTickCountdown = msToTicks(kStatusRefreshMs);
+        updateStatusLabel();
+    }
+
+    // Resize-settle: one-shot. When it lands, kick a real render.
+    if (_resizeSettleCountdown >= 0 && --_resizeSettleCountdown < 0) {
+        scheduleRender("resize settled");
+        emit overlaysUpdated();
+    }
+
+    // Intersection rebuild: one-shot debounce.
+    if (_intersectionTickCountdown >= 0 && --_intersectionTickCountdown < 0) {
+        renderIntersections("intersection deadline");
+        emit overlaysUpdated();
     }
 }
 
@@ -1300,9 +1318,11 @@ void CChunkedVolumeViewer::scheduleIntersectionRender(const char* reason, std::s
         profile.setDetails("action=deferred_segmentation_edit");
         return;
     }
-    if (_intersectionRenderTimer && !_intersectionRenderTimer->isActive()) {
-        _intersectionRenderTimer->start();
-        profile.setDetails("action=intersection_timer_start");
+    if (_intersectionTickCountdown < 0) {
+        _intersectionTickCountdown = msToTicks(kIntersectionSettleMs);
+        if (_viewerManager)
+            _viewerManager->requestGlobalRender();
+        profile.setDetails("action=intersection_deadline_set");
     } else {
         profile.setDetails("action=already_scheduled");
     }
@@ -1395,7 +1415,10 @@ struct CChunkedVolumeViewer::RenderResult {
 
 CChunkedVolumeViewer::RenderResult CChunkedVolumeViewer::renderFrame(RenderContext ctx)
 {
+    // Always time the whole frame so the latency trace (VC3D_LATENCY) can report
+    // worker cost even without --profile. Cheap: one QElapsedTimer.
     QElapsedTimer renderTimer;
+    renderTimer.start();
     // Sub-phase timing (only meaningful under --profile). gen = surface coords,
     // sample = chunk sample/decode, blit = colormap LUT + framebuffer write.
     const bool profilePhases = ProfileLoggingEnabled();
@@ -1403,7 +1426,6 @@ CChunkedVolumeViewer::RenderResult CChunkedVolumeViewer::renderFrame(RenderConte
     bool phaseGenCached = false;
     QElapsedTimer phaseTimer;
     if (ProfileLoggingEnabled()) {
-        renderTimer.start();
         Logger()->info("[vc3d-profile] renderFrame begin reason='{}' caller='{}' serial={} surf='{}' size={}x{} level={} interactive={} overlay={} composite={} planeComposite={}",
                        ctx.profileReason, ctx.profileCaller, ctx.serial,
                        ctx.surf ? ctx.surf->id : std::string(""),
@@ -1420,9 +1442,9 @@ CChunkedVolumeViewer::RenderResult CChunkedVolumeViewer::renderFrame(RenderConte
     result.framebuffer.fill(QColor(64, 64, 64));
 
     auto finishRenderFrameProfile = [&]() {
-        if (!ProfileLoggingEnabled() || !renderTimer.isValid())
-            return;
         result.renderFrameElapsedMs = renderTimer.elapsed();
+        if (!ProfileLoggingEnabled())
+            return;
         Logger()->info("[vc3d-profile] renderFrame end elapsed_ms={} gen_ms={} genCached={} sample_ms={} blit_ms={} reason='{}' caller='{}' serial={} framebuffer={}x{}",
                        result.renderFrameElapsedMs, phaseGenMs, phaseGenCached,
                        phaseSampleMs, phaseBlitMs, ctx.profileReason, ctx.profileCaller,
@@ -1625,34 +1647,15 @@ void CChunkedVolumeViewer::submitRender(const char* reason, std::source_location
         return;
     }
 
-    // Fingerprint of everything that changes the rendered output besides chunk DATA.
-    // A data-only refresh (chunk ready) must not invalidate an in-flight frame: it
-    // renders the same viewpoint, so let it display and queue one follow-up render.
-    const auto paramsKey = std::hash<std::string>{}(std::format(
-        "{}|{}x{}|{}|{}|{}|{}|{},{},{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
-        static_cast<const void*>(surf.get()), fbW, fbH, _surfacePtrX, _surfacePtrY,
-        _scale, _zOff, _zOffWorldDir[0], _zOffWorldDir[1], _zOffWorldDir[2],
-        renderStartLevel(dynamic_cast<PlaneSurface*>(surf.get()) == nullptr),
-        static_cast<int>(_samplingMethod), _windowLow, _windowHigh, _baseColormapId,
-        static_cast<const void*>(_overlayVolume.get()), _overlayOpacity,
-        _overlayColormapId, _overlayWindowLow, _overlayWindowHigh) +
-        std::format("|{}|{}|{}|{}|{}|{}|{}|{}|{}",
-        _compositeSettings.enabled, _compositeSettings.planeEnabled,
-        _compositeSettings.params.method, _compositeSettings.params.isoCutoff,
-        _compositeSettings.layersFront, _compositeSettings.layersBehind,
-        _compositeSettings.planeLayersFront, _compositeSettings.planeLayersBehind,
-        _genCacheDirty));
-
+    // One render worker at a time. If one is in flight, skip THIS tick and re-arm
+    // the dirty flag: the next tick retries. No queue, no completion self-schedule
+    // -- the tick is the only scheduler. (A worker takes <~1 tick normally; if it
+    // runs long, ticks coalesce into one retry rather than piling up renders.)
     if (_renderWorkerBusy.exchange(true, std::memory_order_acq_rel)) {
-        // view params changed -> the in-flight frame is for a stale viewpoint, drop
-        // it on completion. Same params -> keep it (it differs only by data age).
-        if (paramsKey != _inFlightParamsKey)
-            ++_renderSerial;
-        _renderPendingAfterWorker = true;
-        profile.setDetails("action=queued_after_worker");
+        _renderPending = true;
+        profile.setDetails("action=skip_worker_busy_retry_next_tick");
         return;
     }
-    _inFlightParamsKey = paramsKey;
 
     _chunkArray->beginViewRequest();
     if (_overlayChunkArray)
@@ -1711,9 +1714,8 @@ void CChunkedVolumeViewer::finishRenderOnMainThread(std::shared_ptr<RenderResult
                          std::source_location::current());
     if (profile.enabled()) {
         profile.setDetails(std::format(
-            "result={} serial={} currentSerial={} pendingAfterWorker={}",
-            bool(result), result ? result->serial : 0, _renderSerial,
-            _renderPendingAfterWorker));
+            "result={} serial={} currentSerial={}",
+            bool(result), result ? result->serial : 0, _renderSerial));
     }
     _renderWorkerBusy.store(false, std::memory_order_release);
     if (_closing) {
@@ -1721,9 +1723,11 @@ void CChunkedVolumeViewer::finishRenderOnMainThread(std::shared_ptr<RenderResult
         return;
     }
     if (!result || result->serial != _renderSerial) {
-        if (_renderPendingAfterWorker) {
-            _renderPendingAfterWorker = false;
-            scheduleRender("stale render result had pending worker");
+        if (LatencyLoggingEnabled()) {
+            // Superseded frame: its user-event origin is unmeasurable. Clear it so a
+            // LATER flip doesn't report this stale stamp (bogus multi-second values).
+            _latencyOriginNs = -1;
+            _latencyOriginReason = nullptr;
         }
         profile.setDetails("action=drop_stale_result");
         return;
@@ -1731,15 +1735,20 @@ void CChunkedVolumeViewer::finishRenderOnMainThread(std::shared_ptr<RenderResult
 
     _framebuffer = std::move(result->framebuffer);
     syncCameraTransform();
+    if (LatencyLoggingEnabled() && _latencyOriginNs >= 0) {
+        const double ms = (monotonicNowNs() - _latencyOriginNs) / 1e6;
+        Logger()->info("[vc3d-latency] surf='{}' event->flip {:.1f}ms origin='{}' worker={:.1f}ms",
+                       _surfName, ms,
+                       _latencyOriginReason ? _latencyOriginReason : "",
+                       double(result->renderFrameElapsedMs));
+        _latencyOriginNs = -1;
+        _latencyOriginReason = nullptr;
+    }
     scheduleIntersectionRender("stable render finished");
     emit overlaysUpdated();
     _view->viewport()->update();
     updateStatusLabel();
 
-    if (_renderPendingAfterWorker) {
-        _renderPendingAfterWorker = false;
-        scheduleRender("worker finished with pending render");
-    }
     if (profile.enabled()) {
         profile.setDetails(std::format(
             "action=display serial={} worker_elapsed_ms={} framebuffer={}x{}",
@@ -1765,8 +1774,6 @@ void CChunkedVolumeViewer::renderVisible(bool force, const char* reason, std::so
         profile.setDetails("action=schedule");
         return;
     }
-    if (_renderTimer && _renderTimer->isActive())
-        _renderTimer->stop();
     _renderPending = false;
     submitRender("renderVisible force", caller);
     updateStatusLabel();
@@ -1807,20 +1814,8 @@ void CChunkedVolumeViewer::setOverlayVolume(std::shared_ptr<Volume> volume)
         } catch (const std::exception&) {
             _overlayChunkArray.reset();
         }
-        if (_overlayChunkArray) {
-            QPointer<CChunkedVolumeViewer> guard(this);
-            std::weak_ptr<Volume> overlayVolumeWeak = _overlayVolume;
-            _overlayChunkCbId = _overlayChunkArray->addChunkReadyListener([guard, overlayVolumeWeak]() {
-                QMetaObject::invokeMethod(qApp, [guard, overlayVolumeWeak]() {
-                    if (!guard)
-                        return;
-                    auto volume = overlayVolumeWeak.lock();
-                    if (!volume || guard->_overlayVolume != volume || guard->_closing)
-                        return;
-                    guard->scheduleRender("overlay chunk ready");
-                }, Qt::QueuedConnection);
-            });
-        }
+        // Overlay chunk arrival, like base, does NOT schedule a render: the tick
+        // renders every tick while downloads are in flight.
     }
     scheduleRender("overlay volume changed");
 }
@@ -2044,11 +2039,12 @@ void CChunkedVolumeViewer::onResized()
     }
     resizeFramebuffer();
     _genCacheDirty = true;
-    if (_renderTimer && _renderTimer->isActive())
-        _renderTimer->stop();
+    // Cancel any pending immediate render; coalesce into a resize-settle deadline
+    // so a drag-resize doesn't re-render every frame.
     _renderPending = false;
-    if (_resizeRenderTimer)
-        _resizeRenderTimer->start();
+    _resizeSettleCountdown = msToTicks(kResizeSettleMs);
+    if (_viewerManager)
+        _viewerManager->requestGlobalRender();
     _view->viewport()->update();
 }
 

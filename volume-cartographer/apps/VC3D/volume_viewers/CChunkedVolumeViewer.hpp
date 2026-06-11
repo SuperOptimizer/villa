@@ -37,7 +37,6 @@ class QGraphicsEllipseItem;
 class QGraphicsItem;
 class QGraphicsPathItem;
 class QGraphicsScene;
-class QTimer;
 struct POI;
 class PlaneSurface;
 class Surface;
@@ -80,6 +79,23 @@ public:
     void requestRender(
         const char* reason = "external caller",
         std::source_location caller = std::source_location::current()) override;
+
+    // ---- global render clock hooks (driven by ViewerManager::onGlobalTick) --
+    // The viewer's chunk caches, so the clock can freeze/thaw each distinct one
+    // once per tick. Null when no volume is loaded.
+    vc::render::IChunkedArray* chunkArrayPtr() const { return _chunkArray.get(); }
+    vc::render::IChunkedArray* overlayChunkArrayPtr() const { return _overlayChunkArray.get(); }
+    // True if this viewer wants a frame (a change happened since its last render).
+    bool renderPending() const { return _renderPending; }
+    // Render now if pending (called from the global tick, between freeze/thaw).
+    // Dispatches the render worker; the framebuffer flip happens on completion.
+    void tickRender(bool force = false);
+    // Advance the per-viewer debounce/idle deadlines (status refresh,
+    // resize-settle, intersection rebuild) by one global tick. Decoupled from
+    // tickRender so the framebuffer flip and these housekeeping items can run in
+    // either order. Called every global tick.
+    void tickIdle();
+
     void invalidateVis() override;
     void invalidateVisRegion(const std::string& name, const cv::Rect& changedCells) override;
     void centerOnVolumePoint(const cv::Vec3f& point, bool forceRender = false) override;
@@ -298,10 +314,14 @@ private:
     CVolumeViewerView* _view = nullptr;
     QGraphicsScene* _scene = nullptr;
     ViewerStatsBar* _statsBar = nullptr;
-    QTimer* _renderTimer = nullptr;
-    QTimer* _intersectionRenderTimer = nullptr;
-    QTimer* _resizeRenderTimer = nullptr;
-    QTimer* _statusTimer = nullptr;
+    // Per-viewer debounce/idle work is driven from the global render clock
+    // (ViewerManager::onGlobalTick -> tick()) instead of per-viewer QTimers.
+    // Each counter is a frame deadline: <0 = inactive, 0 = fire this tick,
+    // >0 = fire in N more ticks. The clock runs at ~33ms, so e.g. resize-settle
+    // (~kResizeSettleMs) and the 1s status refresh become small frame counts.
+    int _statusTickCountdown = 0;
+    int _intersectionTickCountdown = -1;
+    int _resizeSettleCountdown = -1;
     bool _closing = false;
     bool _renderPending = false;
     bool _segmentationEditActive = false;
@@ -322,9 +342,12 @@ private:
 
     QImage _framebuffer;
     std::atomic<bool> _renderWorkerBusy{false};
-    bool _renderPendingAfterWorker = false;
     std::uint64_t _renderSerial = 0;
-    std::size_t _inFlightParamsKey = 0;
+    // Latency trace (VC3D_LATENCY=1): wall-clock ns of the originating event
+    // (nav/scroll/zoom) for the render currently coalescing. -1 = none pending.
+    // Carried scheduleRender -> tickRender -> finish to report event->flip ms.
+    qint64 _latencyOriginNs = -1;
+    const char* _latencyOriginReason = nullptr;
     std::shared_ptr<GeneratedSurfaceCache> _genSurfaceCache;
     bool _genCacheDirty = true;
 

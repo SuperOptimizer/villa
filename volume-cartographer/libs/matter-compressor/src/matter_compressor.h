@@ -190,6 +190,13 @@ int mc_archive_append_chunk_raw(mc_archive *a, int lod, int cz,int cy,int cx,
 // (format v6), so decode needs nothing extra.
 int mc_archive_append_chunk_raw_q(mc_archive *a, int lod, int cz,int cy,int cx,
                                   const mc_u8 vox[256*256*256], float q);
+// Caller-context variant: encode with C's quality AND max_error (the raw/raw_q
+// paths build a throwaway default ctx, so tau is off there). Also the
+// efficient path for tight append loops -- one ctx per worker thread, no
+// per-chunk table rebuilds.
+int mc_archive_append_chunk_ctx(mc_archive *a, mc_codec_ctx *C,
+                                int lod, int cz,int cy,int cx,
+                                const mc_u8 vox[256*256*256]);
 // Rate-controlled variant: pick this chunk's q to hit ~target_ratio (raw bytes
 // / compressed bytes) for THIS chunk. One 1/16-block sample encode at the
 // archive's base q plus a single power-law correction (~6% encode overhead,
@@ -461,8 +468,11 @@ void mc_cache_thaw(mc_cache *c);
 size_t mc_cache_resolve(mc_cache *c, const mc_block_id *ids, size_t n,
                         const mc_u8 **ptrs, int nthreads);
 
+// Record a block into the dedup miss set from outside the frozen read path.
+void mc_cache_miss_mark(mc_cache *c, int lod, int bz, int by, int bx);
+
 // Drain the frozen-phase miss queue (call after thaw; feed into the next
-// update/resolve batch). Duplicates possible — update() handles them.
+// update/resolve batch). The set is deduped; each unique block appears once.
 size_t mc_cache_misses_drain(mc_cache *c, mc_block_id *out, size_t cap);
 
 // Drop everything (e.g. source archive replaced).
@@ -548,6 +558,9 @@ void        mc_sampler_reset(mc_sampler *s);
 // One sample at (z,y,x). Out-of-bounds / NaN -> 0.
 float mc_sample_point(mc_sampler *s, float z, float y, float x, mc_filter f);
 
+// (LOD sampler API — mc_lod_sampler/mc_lod_sample — is declared after
+// mc_sample_lods is defined, below.)
+
 // Batch: n points, zyx[i*3+{0,1,2}] = (z,y,x). Points with any coordinate
 // < 0 (volume-cartographer's invalid marker) or NaN write 0.
 void mc_sample_points(mc_sampler *s, const float *zyx, size_t n,
@@ -556,11 +569,24 @@ void mc_sample_points_u8(mc_sampler *s, const float *zyx, size_t n,
                          mc_filter f, uint8_t *out);
 
 typedef enum {
-    MC_COMP_NONE  = 0,
-    MC_COMP_MIN   = 1,
-    MC_COMP_MEAN  = 2,
-    MC_COMP_MAX   = 3,
-    MC_COMP_ALPHA = 4,
+    MC_COMP_NONE   = 0,
+    MC_COMP_MIN    = 1,
+    MC_COMP_MEAN   = 2,
+    MC_COMP_MAX    = 3,
+    MC_COMP_ALPHA  = 4,
+    MC_COMP_STDDEV = 5,     // stddev of the samples along the ray: texture-
+                            // energy projection. Crackle/roughness reads
+                            // bright regardless of absolute density.
+    MC_COMP_SHADED = 6,     // emission-absorption ray march with gradient
+                            // lighting (see the shaded params below)
+    MC_COMP_PERCENTILE = 7, // value at the `percentile` rank of the ray's
+                            // samples: a robust max. MIP rides single-voxel
+                            // noise spikes; the 90th percentile keeps the
+                            // "locally bright" sensitivity without them.
+    MC_COMP_DEPTH  = 8,     // first-hit depth: the t where the value first
+                            // crosses alpha_min, mapped 1..255 over [t0,t1]
+                            // (0 = no hit). A heightfield of the surface --
+                            // feed mc_image_ssao, or relight externally.
 } mc_comp;
 
 typedef struct {
@@ -568,8 +594,40 @@ typedef struct {
     mc_comp   comp;         // reduction along the normal
     float t0, t1;           // composite range along the normal, in voxels
     float dt;               // step (<= 0 -> 1.0)
-    float alpha_min;        // MC_COMP_ALPHA: value threshold in [0,1)
-    float alpha_opacity;    // MC_COMP_ALPHA: per-sample opacity scale (0,1]
+    float alpha_min;        // ALPHA/SHADED: value threshold in [0,1)
+    float alpha_opacity;    // ALPHA/SHADED: per-sample opacity scale (0,1]
+
+    // -- MC_COMP_SHADED only (ignored by the other modes) --------------------
+    // Front-to-back emission-absorption: per step, density d = clamped
+    // (v/255 - alpha_min)/(1 - alpha_min) * alpha_opacity gives extinction
+    // sigma = absorption * d, opacity a = 1 - exp(-sigma * dt) (Beer-Lambert).
+    // Contributing samples are lit from the local gradient normal (central
+    // differences): two-sided Lambertian diffuse + Blinn-Phong specular,
+    // blended by surface-ness w = |g|^2 / (|g|^2 + grad_g0^2) so smooth
+    // interior emits unshaded instead of sparkling. When shadow or sss is
+    // set, a coarse secondary march toward the light accumulates optical
+    // depth tau: shadow scales the direct light by exp(-tau), sss adds
+    // back-lit translucency exp(-0.3*tau) ("glow through thin material").
+    // All zero-value fields take the defaults noted below; a zero-initialized
+    // struct renders a sane headlight relief view.
+    float light[3];         // direction TOWARD the light, (z,y,x) volume
+                            // coords; (0,0,0) -> headlight (along -normal).
+                            // Tilt it for raking light: relief pops hardest.
+    float ambient;          // ambient weight             (0 -> 0.25)
+    float diffuse;          // diffuse weight             (0 -> 0.75)
+    float specular;         // Blinn-Phong weight         (0 -> 0.20)
+    float shininess;        // specular exponent          (0 -> 24)
+    float absorption;       // extinction per unit density per voxel (0 -> 1.0)
+    float shadow;           // shadow strength [0,1]      (0 = no shadow rays)
+    float sss;              // translucency weight        (0 = off)
+    float grad_g0;          // gradient magnitude (u8/voxel) at half
+                            // surface-ness               (0 -> 8)
+    float curvature;        // SHADED: ridge/valley weight (0 = off).
+                            // Brightens locally-convex samples (ridges,
+                            // crackle crests), darkens concave (cracks,
+                            // valleys) from the density Laplacian -- reads
+                            // relief without a favorable light angle.
+    float percentile;       // MC_COMP_PERCENTILE rank in (0,1] (0 -> 0.9)
 } mc_render_params;
 
 // ---------------------------------------------------------------------------
@@ -590,6 +648,9 @@ void mc_render_points_par(const mc_sample_src *src,
                           const float *pts, const float *normals,
                           int w, int h, const mc_render_params *p,
                           uint8_t *out, int nthreads);
+
+// (mc_render_points_par_lod — LOD-fallback variant — declared after
+// mc_sample_lods is defined, below.)
 
 // ---------------------------------------------------------------------------
 // plane surface (volume-cartographer PlaneSurface)
@@ -642,6 +703,19 @@ int mc_render_quad(const mc_sample_src *src, const mc_quad *q,
                    const mc_render_params *p, uint8_t *out, int nthreads);
 
 // ---------------------------------------------------------------------------
+// screen-space ambient occlusion (post-process over MC_COMP_DEPTH)
+// ---------------------------------------------------------------------------
+// Darkens pixels whose neighborhood sits nearer the camera in the depth
+// image -- pits and crevices between crackle gain contact shadow without
+// any extra ray marching. Render the same view twice (SHADED + DEPTH),
+// then modulate the shaded image in place:
+//   mc_image_ssao(depth, w, h, 8.0f, 0.7f, shaded);
+// depth: MC_COMP_DEPTH output (0 = no hit; those pixels are left alone).
+// radius_px: sampling radius in pixels (0 -> 8). strength: [0,1] (0 -> 0.7).
+void mc_image_ssao(const uint8_t *depth, int w, int h,
+                   float radius_px, float strength, uint8_t *img);
+
+// ---------------------------------------------------------------------------
 // LOD-matched rendering
 // ---------------------------------------------------------------------------
 // Zoomed-out views shouldn't sample the finest level: at `vox_per_pixel`
@@ -655,6 +729,33 @@ typedef struct {
     mc_sample_src lods[8];      // [0] = finest; dims halve per level
     int nlods;
 } mc_sample_lods;
+
+// ---------------------------------------------------------------------------
+// LOD sampler: owns a per-level sampler over a whole pyramid and resolves a
+// requested level with optional coarser-LOD fallback.
+// ---------------------------------------------------------------------------
+typedef struct mc_lod_sampler mc_lod_sampler;
+mc_lod_sampler *mc_lod_sampler_new(const mc_sample_lods *ls);
+void            mc_lod_sampler_free(mc_lod_sampler *s);
+void            mc_lod_sampler_reset(mc_lod_sampler *s);
+
+// Sample (z,y,x) given in NATIVE level-0 voxel space. The sampler downscales
+// to the requested `lod` internally (c_L = (c_0 + 0.5)*2^-L - 0.5).
+//   lod_fallback == 0: sample only `lod`; an absent block reads 0.
+//   lod_fallback != 0: if `lod`'s block is absent, walk coarser levels
+//     (lod+1 .. coarsest) and sample the FINEST level whose block is resident;
+//     0 only if none are. Each coarser step halves the coords again.
+float mc_lod_sample(mc_lod_sampler *s, int lod, int lod_fallback,
+                    float z, float y, float x, mc_filter f);
+
+// LOD-fallback batch render: points are NATIVE level-0 voxel coords; sample the
+// requested `lod` and, where that level's block is absent (not yet streamed in),
+// fall back to the finest resident coarser level so newly-entered LODs show
+// coarse data immediately instead of going black. Slice path (comp==NONE).
+void mc_render_points_par_lod(const mc_sample_lods *ls, int lod,
+                              const float *ptsL0, int w, int h,
+                              const mc_render_params *p,
+                              uint8_t *out, int nthreads);
 
 // ---------------------------------------------------------------------------
 // 3D resampling (surface-aligned volumes)
@@ -911,6 +1012,13 @@ size_t mc_volume_set_cache_bytes(mc_volume *v, size_t bytes);
 // threads block. Bigger = network saturates further ahead of CPU-bound decode.
 // Default 2 GB. Returns the installed budget.
 size_t mc_volume_set_staging_bytes(mc_volume *v, size_t bytes);
+
+// Tick-phase bracket for a render game-loop (see mc_cache_freeze/thaw). freeze()
+// makes the resident cache immutable for the frame — get/get_copy then read
+// LOCK-FREE — and thaw() reopens the write phase (new regions land) + bumps the
+// pin epoch. A client clocks: thaw -> (regions arrive) -> freeze -> render -> repeat.
+void mc_volume_freeze(mc_volume *v);
+void mc_volume_thaw(mc_volume *v);
 
 #ifdef __cplusplus
 }

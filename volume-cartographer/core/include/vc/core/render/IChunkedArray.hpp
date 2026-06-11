@@ -99,6 +99,16 @@ public:
     // Resize the decoded (RAM) cache budget at runtime, in bytes. No-op for
     // backends with a fixed cache. Backends may discard resident data.
     virtual void setDecodedByteCapacity(std::size_t /*bytes*/) {}
+
+    // ---- render game-loop (one global clock; see ViewerManager) -------------
+    // freeze() brackets a frame: the cache becomes immutable for the duration so
+    // render reads are consistent (and, for mc backends, LOCK-FREE). thaw()
+    // reopens the write phase between frames — newly transcoded regions become
+    // visible and the pin epoch advances. The global tick does: thaw -> (regions
+    // land / predictive prefetch) -> freeze -> render all dirty viewers -> flip.
+    // No-ops for backends without a phase model (they're always consistent).
+    virtual void freeze() {}
+    virtual void thaw() {}
 };
 
 } // namespace vc::render
