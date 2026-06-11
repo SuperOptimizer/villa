@@ -40,8 +40,47 @@ float mc_get_quality(void);
 // exceeds tau, so |orig - decoded| <= tau for all material voxels. 0 = off
 // (default). Corrections are self-contained in the block payload (the decoder
 // does not need to know tau). Encode-side cost: one extra inverse DCT per block.
+//
+// ARCHIVAL PRESET: quality 0.5 + tau 1 — every material voxel within +/-1
+// greylevel (below micro-CT reconstruction noise), air bit-exact. Measured on
+// real 2.4um scroll data: 2.9x ratio / 51.9 dB / SSIM 0.9996, vs 1.96x for
+// true lossless (zstd-19) — there is deliberately no lossless mode; the DCT
+// path is not bit-reversible and the entropy ceiling makes one pointless.
+// tau 2 -> 4.0x, tau 3 (q 1) -> 5.3x, all with p99 == max == tau.
 void  mc_set_max_error(int tau);
 int   mc_get_max_error(void);
+
+// Calibrated preset ladder: level L guarantees |err| <= 2^L on every material
+// voxel (air is always bit-exact) with the quality that maximizes ratio under
+// that bound — measured on real 2.4um scroll data (PHerc Paris 4, masked
+// 512^3; 18-point calibration in bench/RESULTS.md). Ratio ~doubles per level:
+//   level  tau  q     ratio  PSNR   SSIM    dec MB/s (1T)
+//   0 archival   1  0.5    2.9x  51.9  0.9996   33
+//   1 master     2  0.5    4.0x  48.6  0.9991   38
+//   2 high       4  1      6.6x  44.3  0.9975   56
+//   3 balanced   8  2.5   12.6x  39.5  0.9925  100
+//   4 streaming 16  6     28.5x  35.9  0.9823  165
+//   5 fast      32  16    57.5x  32.5  0.9609  241
+//   6 ultrafast 64  32    78.1x  30.4  0.9341  276
+//   7 preview  128  64    93.4x  28.2  0.8915  673
+// No tau 256 level: 256 exceeds the u8 range, the bound could never bind.
+typedef enum {
+    MC_PRESET_ARCHIVAL  = 0,   // tau   1
+    MC_PRESET_MASTER    = 1,   // tau   2
+    MC_PRESET_HIGH      = 2,   // tau   4
+    MC_PRESET_BALANCED  = 3,   // tau   8
+    MC_PRESET_STREAMING = 4,   // tau  16
+    MC_PRESET_FAST      = 5,   // tau  32
+    MC_PRESET_ULTRAFAST = 6,   // tau  64
+    MC_PRESET_PREVIEW   = 7,   // tau 128
+    MC_PRESET_COUNT     = 8,
+} mc_preset;
+// Sets mc_set_quality + mc_set_max_error; returns the level's quality (pass
+// it to the mc_archive_append_* calls, which take q explicitly).
+float       mc_apply_preset(mc_preset level);
+float       mc_preset_quality(mc_preset level);
+int         mc_preset_tau(mc_preset level);      // == 1 << level
+const char *mc_preset_name(mc_preset level);
 void  mc_codec_init(void);             // one-time: build the DCT tables
 // Override the trained context priors (q=1 / q=12 endpoint tables, u16[8][32]
 // each) — used by per-volume prior blobs. NULL,NULL restores the baked tables.

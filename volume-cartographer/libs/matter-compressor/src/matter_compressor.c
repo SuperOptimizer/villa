@@ -718,6 +718,36 @@ static void step_tab_build(void);
 void  mc_set_quality(float q){ g_quality = q; step_tab_build(); }
 float mc_get_quality(void){ return g_quality; }
 void  mc_set_max_error(int tau){ g_max_err = tau<0?0:tau; }
+
+// ---- calibrated preset ladder (see header; bench/RESULTS.md for the data) --
+static const struct { float q; int tau; const char *name; } g_presets[8] = {
+    { 0.5f,   1, "archival"  },
+    { 0.5f,   2, "master"    },
+    { 1.0f,   4, "high"      },
+    { 2.5f,   8, "balanced"  },
+    { 6.0f,  16, "streaming" },
+    {16.0f,  32, "fast"      },
+    {32.0f,  64, "ultrafast" },
+    {64.0f, 128, "preview"   },
+};
+float mc_preset_quality(mc_preset p){
+    if((unsigned)p>=MC_PRESET_COUNT) p=MC_PRESET_STREAMING;
+    return g_presets[p].q;
+}
+int mc_preset_tau(mc_preset p){
+    if((unsigned)p>=MC_PRESET_COUNT) p=MC_PRESET_STREAMING;
+    return g_presets[p].tau;
+}
+const char *mc_preset_name(mc_preset p){
+    if((unsigned)p>=MC_PRESET_COUNT) return "?";
+    return g_presets[p].name;
+}
+float mc_apply_preset(mc_preset p){
+    if((unsigned)p>=MC_PRESET_COUNT) p=MC_PRESET_STREAMING;
+    mc_set_quality(g_presets[p].q);
+    mc_set_max_error(g_presets[p].tau);
+    return g_presets[p].q;
+}
 int   mc_get_max_error(void){ return g_max_err; }
 void  mc_codec_init(void){ mc_dct_init(); }
 void  mc_codec_set_priors(const uint16_t *plo, const uint16_t *phi){ rc_set_priors(plo,phi); }
@@ -5211,14 +5241,15 @@ static uint64_t rkey(int lod, int cz, int cy, int cx) {
 // decode one source inner-chunk's raw bytes into `dst` (edge^3, edge = source
 // inner_edge: 256 for c3d, 128 for v2). dst need not be 32-aligned for v2; c3d
 // needs a 32-aligned 256^3 (the v3 case always passes the region buffer).
-static void decode_inner(const char *codec, const uint8_t *raw, size_t rlen,
-                         uint8_t *dst, int edge) {
+// `dec` is a caller-owned, reusable c3d decoder (one per decode-pool thread):
+// c3d_decoder_new allocates a 64MB coeff buffer + 2MB symbol buffer, so making
+// one per chunk costs ~14% of a decode in alloc/first-touch/free. Reusing the
+// thread's decoder across chunks is bit-identical (it carries only scratch).
+static void decode_inner(c3d_decoder *dec, const char *codec,
+                         const uint8_t *raw, size_t rlen, uint8_t *dst, int edge) {
     size_t vox = (size_t)edge * edge * edge;
     if (strcmp(codec, "c3d") == 0) {
-        c3d_decoder *d = c3d_decoder_new();
-        c3d_decoder_set_denoise(d, false);
-        c3d_decoder_chunk_decode(d, raw, rlen, dst);   // c3d edge is always 256
-        c3d_decoder_free(d);
+        c3d_decoder_chunk_decode(dec, raw, rlen, dst);  // c3d edge is always 256
     } else {                                            // blosc/raw: already dense u8
         if (rlen >= vox) memcpy(dst, raw, vox);
         else { memset(dst, 0, vox); memcpy(dst, raw, rlen); }
@@ -5237,7 +5268,7 @@ static void blit_sub(uint8_t *region, const uint8_t *src, int edge,
 // Decode one item (the sub^3 cube for a region) -> assemble 256^3 -> append.
 // Frees the item's raw buffers. Runs on a decode-pool thread (off the download
 // thread). The c3d decode + mc re-encode are the CPU cost we keep off the net.
-static void decode_one(mc_volume *v, decode_item *it) {
+static void decode_one(mc_volume *v, c3d_decoder *dec, decode_item *it) {
     const char *codec = mc_zarr_inner_codec(v->lv[it->lod].z);
     const int edge = CHUNK / it->sub;
     if (it->nsub == 0) {                               // all air -> ZERO
@@ -5248,13 +5279,13 @@ static void decode_one(mc_volume *v, decode_item *it) {
     if (posix_memalign((void **)&dense, 64, (size_t)CHUNK * CHUNK * CHUNK)) goto done;
     double t_dec0 = mcv_now();
     if (it->sub == 1) {                                // c3d: chunk == region
-        decode_inner(codec, it->raw[0], it->rlen[0], dense, CHUNK);
+        decode_inner(dec, codec, it->raw[0], it->rlen[0], dense, CHUNK);
     } else {                                           // v2: blit the cube
         memset(dense, 0, (size_t)CHUNK * CHUNK * CHUNK);
         uint8_t *tile = malloc((size_t)edge * edge * edge);
         if (tile) {
             for (int k = 0; k < it->nsub; ++k) {
-                decode_inner(codec, it->raw[k], it->rlen[k], tile, edge);
+                decode_inner(dec, codec, it->raw[k], it->rlen[k], tile, edge);
                 blit_sub(dense, tile, edge, it->oz[k], it->oy[k], it->ox[k]);
             }
             free(tile);
@@ -5272,20 +5303,26 @@ done:
 }
 
 // Decode-pool worker: drain decode items, decode off the download thread.
+// Owns ONE reusable c3d decoder for its lifetime (the 64MB coeff buffer alloc
+// is ~14% of a decode; reuse amortizes it to once per thread).
 static void *decoder_main(void *ud) {
     mc_volume *v = ud;
     mc_thread_setname("mc-decode");        // distinguish in profilers
+    c3d_decoder *dec = c3d_decoder_new();
+    if (dec) c3d_decoder_set_denoise(dec, false);   // render cache: no denoise pass
     for (;;) {
         pthread_mutex_lock(&v->mu);
         while (v->dq_head == v->dq_tail && !v->stop) pthread_cond_wait(&v->dq_ne, &v->mu);
-        if (v->stop && v->dq_head == v->dq_tail) { pthread_mutex_unlock(&v->mu); return NULL; }
+        if (v->stop && v->dq_head == v->dq_tail) { pthread_mutex_unlock(&v->mu); break; }
         decode_item it = v->dq[v->dq_head];
         v->dq_head = (v->dq_head + 1) % v->dq_cap;
         pthread_cond_signal(&v->dq_nf);                // a slot freed
         pthread_mutex_unlock(&v->mu);
-        decode_one(v, &it);
+        decode_one(v, dec, &it);
         if (v->ready_cb) v->ready_cb(v->ready_ud);     // region became serveable
     }
+    if (dec) c3d_decoder_free(dec);
+    return NULL;
 }
 
 // Producer: push a decode item, BLOCKING if the queue is full (backpressure ->
