@@ -24,6 +24,7 @@
 #include <QMdiSubWindow>
 #include <QSettings>
 #include <QtConcurrent/QtConcurrent>
+#include <QThreadPool>
 #include <QLoggingCategory>
 #include <algorithm>
 #include <chrono>
@@ -66,6 +67,11 @@ ViewerManager::ViewerManager(CState* state,
     const float storedThickness = settings.value(viewer::INTERSECTION_THICKNESS, viewer::INTERSECTION_THICKNESS_DEFAULT).toFloat();
     _intersectionThickness = std::max(0.0f, storedThickness);
     _intersectionMaxSurfaces = viewer::INTERSECTION_MAX_SURFACES_DEFAULT;
+
+    // Single dedicated thread: the rtree rebuild is a background job and must not
+    // contend with the volume render bands on the global pool.
+    _surfacePatchIndexPool = new QThreadPool(this);
+    _surfacePatchIndexPool->setMaxThreadCount(1);
 
     _surfacePatchIndexWatcher =
         new QFutureWatcher<std::shared_ptr<SurfacePatchIndex>>(this);
@@ -141,11 +147,26 @@ void ViewerManager::onGlobalTick()
     // in-flight is what keeps streaming frames updating. (A precise "cache changed
     // last tick" signal can replace the in-flight proxy later; until then this
     // errs toward rendering, never toward a stale frame.)
+    // workPending (not remoteFetchesInFlight) = pipeline depth + undrained cache-fill
+    // misses, so the gate keeps ticking until the on-screen working set is fully
+    // resident, not just until downloads finish. remoteFetchesInFlight stays the
+    // stable user-facing "downloading N".
     bool streaming = false;
     for (auto* c : caches)
-        if (c->stats().remoteFetchesInFlight > 0) { streaming = true; break; }
+        if (c->stats().workPending > 0) { streaming = true; break; }
     if (!_globalRenderPending && !streaming)
         return;
+
+    // CRITICAL: thaw is the only cache mutator and the async render workers hold
+    // raw pointers into the FROZEN cache arena. If a render from a previous tick is
+    // still in flight, skip this tick entirely -- thawing now would evict/realloc
+    // the arena under those live pointers (use-after-free). The render finishes
+    // within a tick or two; we retry next tick. This is the freeze/thaw invariant:
+    // no mutation while frozen reads are live.
+    for (auto* v : chunked)
+        if (v->renderWorkerBusy())
+            return;   // keep _globalRenderPending set; retry next tick
+
     _globalRenderPending = false;
 
     // Game-loop order: THAW -> FREEZE -> RENDER. Mutation (the bounded
@@ -661,11 +682,17 @@ void ViewerManager::primeSurfacePatchIndicesAsync()
 
     // Build task captures shared_ptrs - surfaces stay alive throughout async operation
     const int stride = _surfacePatchSamplingStride;
-    auto future = QtConcurrent::run([quadSurfaces, stride]() -> std::shared_ptr<SurfacePatchIndex> {
+    auto future = QtConcurrent::run(_surfacePatchIndexPool,
+                                    [quadSurfaces, stride]() -> std::shared_ptr<SurfacePatchIndex> {
         try {
+            const auto t0 = std::chrono::steady_clock::now();
             auto index = std::make_shared<SurfacePatchIndex>();
             index->setSamplingStride(stride);
             index->rebuild(quadSurfaces);
+            const double ms = std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - t0).count();
+            Logger()->info("[patch-index] rebuild {} surface(s) in {:.0f}ms (dedicated thread)",
+                           quadSurfaces.size(), ms);
             return index;
         } catch (const std::exception& e) {
             qCWarning(lcViewerManager) << "SurfacePatchIndex async rebuild failed:" << e.what();

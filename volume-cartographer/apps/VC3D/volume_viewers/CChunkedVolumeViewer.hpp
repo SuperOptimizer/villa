@@ -115,6 +115,10 @@ public:
     // Render-bench helpers: true when no render is running/queued/pending; count of
     // remote chunk fetches still outstanding. Used by replay to settle each frame.
     bool isRenderQuiescent() const;
+    // True while an async render worker is sampling the FROZEN cache arena. The
+    // global tick must not thaw (mutate the arena) until this clears -- the worker
+    // holds raw pointers into the arena that thaw could evict/realloc.
+    bool renderWorkerBusy() const { return _renderWorkerBusy.load(std::memory_order_acquire); }
     std::size_t chunkFetchesInFlight() const;
     int datasetScaleIndex() const override { return _dsScaleIdx; }
     float datasetScaleFactor() const override { return _dsScale; }

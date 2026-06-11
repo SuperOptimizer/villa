@@ -155,6 +155,7 @@ IChunkedArray::Stats McVolumeArray::stats() const
     out.decodedByteCapacity = static_cast<std::size_t>(s.cache_cap_blocks) * kBlockBytesU;
     out.persistentCacheBytes = static_cast<std::size_t>(s.disk_bytes);
     out.remoteFetchesInFlight = static_cast<std::size_t>(s.regions_inflight);
+    out.workPending = static_cast<std::size_t>(s.work_pending);
 
     // download rate: bytes over a sliding ~2s window (smooths the bursty
     // s3_get_batch arrivals), held through short idle gaps so the readout stays
@@ -210,41 +211,51 @@ void McVolumeArray::render(const float* ptsXYZ, const float* normalsXYZ,
     const float s = static_cast<float>(1 << L);
     const bool composite = (comp != 0 /*MC_COMP_NONE*/);
 
-    // Pre-remap points to level-L voxel space and render that single level.
-    // (Coarser-LOD fallback — show resident coarse data instead of black while a
-    // freshly-entered level streams in — is implemented in mc_render_points_par_lod
-    // but DISABLED for now; re-enable once the fill/game-loop work settles.)
-    // VC points are (x,y,z); mc wants (z,y,x). Invalid (<0/NaN) -> -1 so mc emits 0.
-    // Reuse thread-local scratch: a fresh 13MB vector per frame churns the
-    // allocator + first-touches pages; these grow once to the largest frame.
+    // Slice path uses LOD fallback: pass NATIVE L0 coords and let mc_render_points_
+    // par_lod walk -- it samples the picked level L where that level's block is
+    // RAM-resident, else the FINEST resident coarser level (cheap residency probe,
+    // never decodes the fine block on the render thread). A not-yet-cached block is
+    // recorded as a miss (THAW fills it) and shown coarse meanwhile -> the image
+    // sharpens over a few frames instead of going black or stalling on decode.
+    // mc wants (z,y,x); invalid (<0/NaN) -> -1 so mc emits 0. (The composite path
+    // still pre-remaps to single level L below.)
     static const bool prof = getenv("MCV_PROF") != nullptr;
     const auto tA = std::chrono::steady_clock::now();
     thread_local std::vector<float> pts, nrm;
     pts.resize(n * 3);
     auto remap = [&](float c) { return (c + 0.5f) / s - 0.5f; };
-    for (std::size_t i = 0; i < n; ++i) {
-        const float x = ptsXYZ[i * 3 + 0], y = ptsXYZ[i * 3 + 1], z = ptsXYZ[i * 3 + 2];
-        const bool bad = !(x >= 0.f) || !(y >= 0.f) || !(z >= 0.f) ||
-                         std::isnan(x) || std::isnan(y) || std::isnan(z);
-        pts[i * 3 + 0] = bad ? -1.f : remap(z);   // z
-        pts[i * 3 + 1] = bad ? -1.f : remap(y);   // y
-        pts[i * 3 + 2] = bad ? -1.f : remap(x);   // x
-    }
-    const auto tB = std::chrono::steady_clock::now();
 
     mc_render_params p{};
     p.filter = MC_FILTER_TRILINEAR;
     p.comp = static_cast<mc_comp>(comp);
 
     if (!composite) {
-        mc_render_points_par(&lods.lods[L], pts.data(), nullptr, w, h, &p, out, 0);
+        // L0 coords, no remap (the lod sampler downscales per level internally).
+        for (std::size_t i = 0; i < n; ++i) {
+            const float x = ptsXYZ[i * 3 + 0], y = ptsXYZ[i * 3 + 1], z = ptsXYZ[i * 3 + 2];
+            const bool bad = !(x >= 0.f) || !(y >= 0.f) || !(z >= 0.f) ||
+                             std::isnan(x) || std::isnan(y) || std::isnan(z);
+            pts[i * 3 + 0] = bad ? -1.f : z;   // z
+            pts[i * 3 + 1] = bad ? -1.f : y;   // y
+            pts[i * 3 + 2] = bad ? -1.f : x;   // x
+        }
+        const auto tB = std::chrono::steady_clock::now();
+        mc_render_points_par_lod(&lods, L, pts.data(), w, h, &p, out, 0);
         if (prof) {
             const auto tC = std::chrono::steady_clock::now();
             using ms = std::chrono::duration<double, std::milli>;
-            fprintf(stderr, "[mcv-prof] %dx%d L=%d remap=%.1fms sample=%.1fms\n",
+            fprintf(stderr, "[mcv-prof] %dx%d L=%d remap=%.1fms sample=%.1fms (lod)\n",
                     w, h, L, ms(tB - tA).count(), ms(tC - tB).count());
         }
     } else {
+        for (std::size_t i = 0; i < n; ++i) {
+            const float x = ptsXYZ[i * 3 + 0], y = ptsXYZ[i * 3 + 1], z = ptsXYZ[i * 3 + 2];
+            const bool bad = !(x >= 0.f) || !(y >= 0.f) || !(z >= 0.f) ||
+                             std::isnan(x) || std::isnan(y) || std::isnan(z);
+            pts[i * 3 + 0] = bad ? -1.f : remap(z);   // z
+            pts[i * 3 + 1] = bad ? -1.f : remap(y);   // y
+            pts[i * 3 + 2] = bad ? -1.f : remap(x);   // x
+        }
         nrm.resize(n * 3);
         for (std::size_t i = 0; i < n; ++i) {     // normals are directions: swap, no remap
             nrm[i * 3 + 0] = normalsXYZ ? normalsXYZ[i * 3 + 2] : 0.f;   // z

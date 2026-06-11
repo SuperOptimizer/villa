@@ -230,6 +230,11 @@ private:
     std::vector<SurfacePatchIndexTask> _surfacesQueuedDuringRebuild;
     QFutureWatcher<std::shared_ptr<SurfacePatchIndex>>* _surfacePatchIndexWatcher{nullptr};
     QFutureWatcher<SurfacePatchIndexTaskResult>* _surfacePatchIndexTaskWatcher{nullptr};
+    // Dedicated pool for the patch-index rtree rebuild. QtConcurrent::run defaults
+    // to the GLOBAL pool, which the volume render bands (mc_render_points_par) also
+    // use -- so an rtree rebuild stole render workers and inflated frame latency.
+    // Isolating it here keeps the render pool for rendering.
+    QThreadPool* _surfacePatchIndexPool{nullptr};
 
     // Surfaces currently pinned in the LRU as "highlighted/visible".
     // We track them so we can unpin the right set when highlights change.

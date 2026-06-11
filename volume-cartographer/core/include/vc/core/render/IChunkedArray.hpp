@@ -77,7 +77,8 @@ public:
         std::size_t decodedBytes = 0;
         std::size_t decodedByteCapacity = 0;
         std::size_t persistentCacheBytes = 0;
-        std::size_t remoteFetchesInFlight = 0;
+        std::size_t remoteFetchesInFlight = 0;   // real pipeline depth (status bar)
+        std::size_t workPending = 0;             // + undrained fill misses (render gate)
         double remoteDownloadBytesPerSecond = 0.0;
     };
     virtual Stats stats() const = 0;

@@ -1188,28 +1188,19 @@ int main(int argc, char *argv[])
 
     CompositeParams compositeParams;
     if (isCompositeMode) {
+        // Only "alpha" is a real composite reduction in readCompositeFast; the old
+        // beerLambert/iso C++ passes are gone, so it falls back to mean.
         compositeParams.method = (accumType == AccumType::Alpha) ? "alpha" : "beerLambert";
         compositeParams.alphaMin = parsed["alpha-min"].as<float>() / 255.0f;
-        compositeParams.alphaMax = parsed["alpha-max"].as<float>() / 255.0f;
         compositeParams.alphaOpacity = parsed["alpha-opacity"].as<float>() / 255.0f;
-        compositeParams.alphaCutoff = parsed["alpha-cutoff"].as<float>() / 10000.0f;
-        compositeParams.blExtinction = parsed["bl-extinction"].as<float>();
-        compositeParams.blEmission = parsed["bl-emission"].as<float>();
-        compositeParams.blAmbient = parsed["bl-ambient"].as<float>();
-        compositeParams.isoCutoff = uint8_t(std::clamp(parsed["iso-cutoff"].as<int>(), 0, 255));
         if (parsed.count("composite-start")) compositeStart = parsed["composite-start"].as<int>();
         if (parsed.count("composite-end"))   compositeEnd = parsed["composite-end"].as<int>();
         if (compositeEnd < compositeStart) { logPrintf(stderr, "Error: --composite-end < --composite-start\n"); return EXIT_FAILURE; }
         int layers = compositeEnd - compositeStart + 1;
         logPrintf(stdout, "Composite: %s (%d layers [%d..%d])\n", compositeParams.method.c_str(), layers, compositeStart, compositeEnd);
         if (compositeParams.method == "alpha")
-            logPrintf(stdout, "  alpha: min=%.0f max=%.0f opacity=%.0f cutoff=%.0f\n",
-                      compositeParams.alphaMin*255, compositeParams.alphaMax*255,
-                      compositeParams.alphaOpacity*255, compositeParams.alphaCutoff*10000);
-        else
-            logPrintf(stdout, "  BL: ext=%.1f em=%.1f amb=%.1f\n",
-                      compositeParams.blExtinction, compositeParams.blEmission, compositeParams.blAmbient);
-        if (compositeParams.isoCutoff > 0) logPrintf(stdout, "  iso cutoff: %d\n", int(compositeParams.isoCutoff));
+            logPrintf(stdout, "  alpha: min=%.0f opacity=%.0f\n",
+                      compositeParams.alphaMin*255, compositeParams.alphaOpacity*255);
     }
 
     std::vector<float> accumOffsets;
