@@ -42,6 +42,14 @@ public:
                                                const std::string& cacheDir,
                                                std::size_t cacheBytes,
                                                float quality);
+
+    // Open an ALREADY-BUILT .mca at `url` (remote s3://.../https://... or a local
+    // file path) and stream blocks on demand -- no zarr discovery, no transcode,
+    // no download/decode threads (the archive already holds every LOD). `cacheBytes`
+    // is the resident mc_cache budget. Returns nullptr on failure. Use this when the
+    // URL is a built .mca; use open() for an NGFF zarr root.
+    static std::shared_ptr<McVolumeArray> openStreaming(const std::string& url,
+                                                        std::size_t cacheBytes);
     ~McVolumeArray() override;
 
     McVolumeArray(const McVolumeArray&) = delete;

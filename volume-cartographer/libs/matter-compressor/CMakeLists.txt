@@ -79,6 +79,10 @@ if(MC_STANDALONE)
   target_link_libraries(mc_cache_test matter_compressor)
   add_test(NAME cache COMMAND mc_cache_test)
 
+  add_executable(mc_stream_volume_test tests/mc_stream_volume_test.c)
+  target_link_libraries(mc_stream_volume_test matter_compressor)
+  add_test(NAME stream_volume COMMAND mc_stream_volume_test)
+
   # archive repacker: Morton order + clustered index for streaming + offline
   add_executable(mc_export tools/mc_export.c)
   target_include_directories(mc_export PRIVATE src)

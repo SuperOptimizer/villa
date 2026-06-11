@@ -46,6 +46,18 @@ std::shared_ptr<McVolumeArray> McVolumeArray::open(const std::string& url,
     return std::shared_ptr<McVolumeArray>(new McVolumeArray(v, n, {nz, ny, nx}));
 }
 
+std::shared_ptr<McVolumeArray> McVolumeArray::openStreaming(const std::string& url,
+                                                            std::size_t cacheBytes)
+{
+    mc_volume* v = mc_volume_open_streaming(url.c_str(), cacheBytes);
+    if (!v)
+        return nullptr;
+    const int n = mc_volume_nlods(v);
+    int nz = 0, ny = 0, nx = 0;
+    mc_volume_shape(v, 0, &nz, &ny, &nx);
+    return std::shared_ptr<McVolumeArray>(new McVolumeArray(v, n, {nz, ny, nx}));
+}
+
 std::array<int, 3> McVolumeArray::shape(int level) const
 {
     int nz = 0, ny = 0, nx = 0;

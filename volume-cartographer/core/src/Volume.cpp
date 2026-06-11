@@ -1237,9 +1237,24 @@ std::shared_ptr<Volume> Volume::NewFromUrl(
 
     vc::render::ZarrPyramidMeta opened;
     if (isRemoteMcaUrl(remoteUrl)) {
-        // Remote .mca archives are not supported in this build (the MatterCache
-        // streaming path was removed). GUI-unreachable: only zarr URLs reach here.
-        throw std::runtime_error("remote .mca archives are not supported in this build: " + remoteUrl);
+        // Remote .mca: an already-built archive. Probe its per-LOD shape by opening
+        // the streaming reader once (HEAD + header read), then derive the same
+        // pyramid-meta fields the zarr path produces. The reader is closed when the
+        // probe handle is dropped; createChunkCache reopens it for the live stream.
+        auto probe = vc::render::McVolumeArray::openStreaming(remoteUrl, std::size_t{1} << 20);
+        if (!probe)
+            throw std::runtime_error("failed to open remote .mca archive: " + remoteUrl);
+        const int nl = probe->numLevels();
+        for (int l = 0; l < nl; ++l) {
+            const std::array<int, 3> s = probe->shape(l);   // (z,y,x)
+            opened.shapes.push_back(s);
+            opened.chunkShapes.push_back({16, 16, 16});
+            opened.storageChunkShapes.push_back({256, 256, 256});
+            opened.levelNumbers.push_back(l);
+            opened.transforms.push_back(probe->levelTransform(l));
+        }
+        opened.dtype = vc::render::ChunkDtype::UInt8;
+        opened.fillValue = 0.0;
     } else {
     // Open the zarr metadata in memory. This performs the normal zarr metadata
     // reads, but does not stage .zarray/meta.json files on disk.
@@ -1514,6 +1529,20 @@ std::shared_ptr<vc::render::IChunkedArray> Volume::createChunkCache(
         const char* q = std::getenv("VCA_MCA_QUALITY");
         return q ? std::strtof(q, nullptr) : 8.0f;
     }();
+
+    // Remote .mca: an already-built archive -- stream blocks directly (no zarr
+    // transcode, no on-disk cache). Everything else (remote zarr / local zarr dir)
+    // takes the transcode-into-local-.mca path.
+    if (isRemote_ && isRemoteMcaUrl(source)) {
+        if (auto mv = vc::render::McVolumeArray::openStreaming(
+                source, options.decodedByteCapacity)) {
+            Logger()->info("createChunkCache: mc_volume STREAMING source='{}' levels={}",
+                           source, mv->numLevels());
+            return mv;
+        }
+        Logger()->error("createChunkCache: mc_volume streaming open failed for '{}'", source);
+        return nullptr;
+    }
 
     if (auto mv = vc::render::McVolumeArray::open(
             source, cacheDir.string(), options.decodedByteCapacity, quality)) {
