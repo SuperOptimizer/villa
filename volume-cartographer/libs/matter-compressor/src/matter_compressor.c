@@ -1451,10 +1451,15 @@ static inline uint16_t mc_chunk_fmaplen(const uint8_t*arc, uint64_t chunk_off){
 // O(4096) pass: bi -> abs_off (0 = absent block). Render samples are spatially
 // coherent (consecutive blocks share a chunk), so the table is built once per
 // chunk and every block lookup is O(1).
-typedef struct { uint64_t chunk_off; uint64_t off[MC_GRID3]; uint16_t len[MC_GRID3]; } mc_chunk_idx;
+typedef struct { const uint8_t*arc; uint64_t chunk_off, tag; uint64_t off[MC_GRID3]; uint16_t len[MC_GRID3]; } mc_chunk_idx;
 static const mc_chunk_idx *mc_chunk_index(const uint8_t*arc, uint64_t chunk_off){
-    static _Thread_local mc_chunk_idx idx = { .chunk_off = 0 };
-    if(idx.chunk_off==chunk_off) return &idx;        // hot: same chunk as last block
+    static _Thread_local mc_chunk_idx idx = { .arc=NULL, .chunk_off=~0ull, .tag=0 };
+    // Key on (arc base, chunk_off, content hash). chunk_off alone is unsafe: it is
+    // reused across archives (same tree position -> same EOF offset) and after a
+    // re-append, so the stored xxh64 disambiguates content. Otherwise a stale index
+    // from a different chunk is served (caught by mc_v6 par-vs-serial).
+    uint64_t tag = mc_chunk_stored_hash(arc, chunk_off);
+    if(idx.arc==arc && idx.chunk_off==chunk_off && idx.tag==tag) return &idx;   // hot
     uint64_t bm_off = chunk_off + MC_BLOB_HDR + mc_chunk_fmaplen(arc,chunk_off);
     const uint8_t*bm = arc + bm_off;
     int npresent=0; for(int i=0;i<MC_BITMAP_BYTES;++i) npresent+=__builtin_popcount(bm[i]);
@@ -1467,7 +1472,7 @@ static const mc_chunk_idx *mc_chunk_index(const uint8_t*arc, uint64_t chunk_off)
             idx.off[bi]=pay; idx.len[bi]=l; pay+=l; ++slot;
         } else { idx.off[bi]=0; idx.len[bi]=0; }
     }
-    idx.chunk_off=chunk_off;
+    idx.arc=arc; idx.chunk_off=chunk_off; idx.tag=tag;
     return &idx;
 }
 static int mc_block_range(const uint8_t*arc, uint64_t chunk_off, int bz,int by,int bx,
@@ -1789,6 +1794,8 @@ struct mc_archive {
     uint64_t reserve;          // mmap reservation size (dims-derived, <= MC_RESERVE)
     pthread_mutex_t grow_mu;   // serializes ftruncate only; decode is lock-free
     _Atomic uint64_t *cov;     // coverage memo slots (region key | flags), 0 = empty
+    _Atomic uint64_t gen;      // bumped on every publish; invalidates per-thread
+                               // chunk_off memos when a chunk is re-appended
 };
 
 // region key for the coverage memo: same packing as rkey() but defined here so the
@@ -1911,6 +1918,7 @@ static int w_mark_zero(mc_archive *w,int lod,int cz,int cy,int cx){
     if(slot==~0ull) return -1;
     w_write_u64(w, slot, MC_SLOT_ZERO);
     mc_cov_put(w, lod, cz, cy, cx, 1 /*air*/);
+    atomic_fetch_add_explicit(&w->gen, 1, memory_order_release);
     return 0;
 }
 
@@ -1924,6 +1932,7 @@ static int w_install_blob(mc_archive *w,int lod,int cz,int cy,int cx,const u8 *b
     atomic_thread_fence(memory_order_release);
     w_write_u64(w, slot, off);   // publish chunk offset = commit
     mc_cov_put(w, lod, cz, cy, cx, 0 /*present*/);
+    atomic_fetch_add_explicit(&w->gen, 1, memory_order_release);
     // keep the header's total length current so the file is valid if reopened now.
     uint64_t cur = atomic_load_explicit(&w->cursor, memory_order_relaxed);
     w_write_u64(w, MCH_TOTLEN, cur);
@@ -3416,11 +3425,12 @@ static void src_archive(void *ud, int lod, int bz,int by,int bx, mc_u8 *dst){
     // chunk-coherent so this collapses the per-block walk to one walk per chunk.
     int cz=bz>>4, cy=by>>4, cx=bx>>4;
     static _Thread_local const struct mc_archive *la=NULL;
-    static _Thread_local int llod=-1,lcz=-1,lcy=-1,lcx=-1; static _Thread_local uint64_t lco=0;
+    static _Thread_local int llod=-1,lcz=-1,lcy=-1,lcx=-1; static _Thread_local uint64_t lco=0,lgen=0;
+    uint64_t gen=atomic_load_explicit(&a->gen,memory_order_acquire);
     uint64_t co;
-    if(la==a && llod==lod && lcz==cz && lcy==cy && lcx==cx) co=lco;
-    else { co=mc_archive_chunk_offset(a,lod,cz,cy,cx);
-           la=a; llod=lod; lcz=cz; lcy=cy; lcx=cx; lco=co; }
+    if(la==a && lgen==gen && llod==lod && lcz==cz && lcy==cy && lcx==cx) co=lco;
+    else { co=mc_archive_chunk_offset(a,lod,cz,cy,cx);   // re-resolve if archive grew
+           la=a; lgen=gen; llod=lod; lcz=cz; lcy=cy; lcx=cx; lco=co; }
     mc_archive_decode_block(a,co,bz&15,by&15,bx&15,dst);
 }
 mc_cache *mc_cache_new_archive(size_t bytes, struct mc_archive *a){
