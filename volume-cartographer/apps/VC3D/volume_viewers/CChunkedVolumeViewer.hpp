@@ -338,7 +338,17 @@ private:
     std::uint64_t _lastRenderDataGen = 0;   // data gen of the last submitted frame
     // This viewer's predicted region working set from the current tick (corner-
     // block ChunkKeys) -- the viewport-local set the data-gen skip checks against.
+    // Memoized: the set is a pure function of geometry+viewport, so it's only
+    // recomputed when the camera/surface/framebuffer changed (any scheduleRender
+    // invalidates the key -- geometry edits arrive through there too).
     std::vector<vc::render::ChunkKey> _predictedRegions;
+    struct PredictKey {
+        const void* surf = nullptr;
+        int fbW = 0, fbH = 0;
+        float scale = 0.f, px = 0.f, py = 0.f;
+        bool operator==(const PredictKey&) const = default;
+    };
+    PredictKey _lastPredictKey;
     void predictWorkingSetInto(std::vector<vc::render::ChunkKey>& out) const;
     bool _segmentationEditActive = false;
     bool _deferSegmentationIntersections = false;

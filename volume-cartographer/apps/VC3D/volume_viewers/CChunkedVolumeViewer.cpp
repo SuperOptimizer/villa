@@ -1228,6 +1228,7 @@ void CChunkedVolumeViewer::scheduleRender(const char* reason, std::source_locati
         _latencyOriginReason = reason;
     }
     _renderPending = true;
+    _lastPredictKey = {};   // geometry/settings may have changed: re-predict
     // Route to the one global render clock: it coalesces all viewers' pending
     // flags into a single thaw->batch-apply->freeze->render pass per tick.
     if (_viewerManager) {
@@ -1639,9 +1640,18 @@ static constexpr std::size_t kMaxPredictedRegions = 4096;   // sanity cap
 void CChunkedVolumeViewer::predictWorkingSet(std::vector<vc::render::ChunkKey>& out)
 {
     // Stash THIS viewer's contribution: tickRender's viewport-local data-gen
-    // skip checks against exactly the regions this viewer will sample.
-    _predictedRegions.clear();
-    predictWorkingSetInto(_predictedRegions);
+    // skip checks against exactly the regions this viewer will sample. The set
+    // is a pure function of geometry+viewport -- reuse it while neither changed
+    // (the downsampled gen() is the cost; the request blast below stays, since
+    // mc dedups present/in-flight/queued regions in O(1)).
+    auto surf = _surfWeak.lock();
+    const PredictKey key{surf.get(), _framebuffer.width(), _framebuffer.height(),
+                         _scale, _surfacePtrX, _surfacePtrY};
+    if (!(key == _lastPredictKey) || key.surf == nullptr) {
+        _predictedRegions.clear();
+        predictWorkingSetInto(_predictedRegions);
+        _lastPredictKey = key;
+    }
     out.insert(out.end(), _predictedRegions.begin(), _predictedRegions.end());
 }
 
