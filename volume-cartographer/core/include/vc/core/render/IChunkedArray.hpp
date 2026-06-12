@@ -92,6 +92,11 @@ public:
     };
     virtual Stats stats() const = 0;
 
+    // Monotonic data generation: changes whenever a render could produce different
+    // pixels (cache fill / chunk arrival). 0 = unknown (callers must not skip).
+    // Same nonzero gen + unchanged camera across ticks => provably identical frame.
+    virtual std::uint64_t dataGeneration() const { return 0; }
+
     // Background prefetch (never the interactive path). shardBatch reports the
     // source shard enclosing a 16^3-block key (geometry only); prefetchShardBlocking
     // pulls + transcodes the whole enclosing shard. Default no-ops for backends

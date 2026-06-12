@@ -334,6 +334,7 @@ private:
     int _resizeSettleCountdown = -1;
     bool _closing = false;
     bool _renderPending = false;
+    std::uint64_t _lastRenderDataGen = 0;   // data gen of the last submitted frame
     bool _segmentationEditActive = false;
     bool _deferSegmentationIntersections = false;
     bool _deferredSegmentationIntersectionsDirty = false;

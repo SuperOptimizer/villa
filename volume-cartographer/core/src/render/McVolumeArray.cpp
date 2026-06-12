@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <vector>
 
 namespace vc::render {
@@ -13,6 +14,14 @@ namespace vc::render {
 namespace {
 constexpr int kBlk = 16;
 constexpr int kBlockBytes = kBlk * kBlk * kBlk;   // 4096
+
+// NaN test that survives -ffast-math (std::isnan and x!=x are deleted there).
+inline bool nanBits(float f)
+{
+    std::uint32_t u;
+    std::memcpy(&u, &f, 4);
+    return (u & 0x7FFFFFFFu) > 0x7F800000u;
+}
 }
 
 McVolumeArray::McVolumeArray(mc_volume* v, int numLevels, std::array<int, 3> shape0)
@@ -168,6 +177,11 @@ void McVolumeArray::onReady()
         cb();
 }
 
+std::uint64_t McVolumeArray::dataGeneration() const
+{
+    return mc_volume_render_gen(vol_);
+}
+
 IChunkedArray::Stats McVolumeArray::stats() const
 {
     mc_volume_stats s{};
@@ -262,8 +276,8 @@ void McVolumeArray::render(const float* ptsXYZ, const float* normalsXYZ,
         // L0 coords, no remap (the lod sampler downscales per level internally).
         for (std::size_t i = 0; i < n; ++i) {
             const float x = ptsXYZ[i * 3 + 0], y = ptsXYZ[i * 3 + 1], z = ptsXYZ[i * 3 + 2];
-            const bool bad = !(x >= 0.f) || !(y >= 0.f) || !(z >= 0.f) ||
-                             std::isnan(x) || std::isnan(y) || std::isnan(z);
+            const bool bad = nanBits(x) || nanBits(y) || nanBits(z) ||
+                             x < 0.f || y < 0.f || z < 0.f;
             pts[i * 3 + 0] = bad ? -1.f : z;   // z
             pts[i * 3 + 1] = bad ? -1.f : y;   // y
             pts[i * 3 + 2] = bad ? -1.f : x;   // x
@@ -279,8 +293,8 @@ void McVolumeArray::render(const float* ptsXYZ, const float* normalsXYZ,
     } else {
         for (std::size_t i = 0; i < n; ++i) {
             const float x = ptsXYZ[i * 3 + 0], y = ptsXYZ[i * 3 + 1], z = ptsXYZ[i * 3 + 2];
-            const bool bad = !(x >= 0.f) || !(y >= 0.f) || !(z >= 0.f) ||
-                             std::isnan(x) || std::isnan(y) || std::isnan(z);
+            const bool bad = nanBits(x) || nanBits(y) || nanBits(z) ||
+                             x < 0.f || y < 0.f || z < 0.f;
             pts[i * 3 + 0] = bad ? -1.f : remap(z);   // z
             pts[i * 3 + 1] = bad ? -1.f : remap(y);   // y
             pts[i * 3 + 2] = bad ? -1.f : remap(x);   // x

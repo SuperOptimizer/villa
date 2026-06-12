@@ -1253,7 +1253,16 @@ void CChunkedVolumeViewer::tickRender(bool force)
         _renderPending = true;
         return;
     }
+    // Streaming-forced tick with an unchanged camera: skip when the data
+    // generation hasn't moved since the frame we last submitted -- no cache fill
+    // and no chunk/air publish means the frame is provably identical. Most ticks
+    // of a streaming settle change nothing (batches land every ~0.5-1s); this
+    // turns ~10 full re-renders/s into one per landed batch.
+    const std::uint64_t dataGen = _chunkArray ? _chunkArray->dataGeneration() : 0;
+    if (!_renderPending && force && dataGen != 0 && dataGen == _lastRenderDataGen)
+        return;
     _renderPending = false;
+    _lastRenderDataGen = dataGen;
     submitRender("global tick");
     updateStatusLabel();
 }
