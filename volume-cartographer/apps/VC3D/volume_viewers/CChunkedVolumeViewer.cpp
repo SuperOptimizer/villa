@@ -626,11 +626,44 @@ struct CChunkedVolumeViewer::GeneratedSurfaceCache {
     cv::Mat_<cv::Vec3f> normals;
 };
 
+// Persistent pre-colormap sample buffer + tile bookkeeping for partial
+// inter-frame rendering (renderFrame). Only the single-flight render worker
+// mutates it; the mutex covers viewer teardown races.
+struct CChunkedVolumeViewer::PartialFrameCache {
+    std::mutex mutex;
+    bool valid = false;
+    // camera/settings the values buffer corresponds to (colormap/window are
+    // post-sampling and deliberately excluded -- they re-blit, never re-sample)
+    const void* array = nullptr;   // the chunk array sampled (volume identity)
+    Surface* surface = nullptr;
+    int fbW = 0, fbH = 0;
+    float scale = 0.f, ptrX = 0.f, ptrY = 0.f, zOff = 0.f;
+    cv::Vec3f zOffWorldDir{0, 0, 0};
+    std::uint64_t sampleFp = 0;
+    double tileMsEma = 0.0;        // measured per-tile render cost -> pass budget
+    cv::Mat_<uint8_t> values;      // the sampled frame (pre-colormap)
+    // per-tile: gen snapshot at last render, dirty flag, and the region bounding
+    // box (picked LOD) the tile samples -- the data-staleness signature.
+    struct TileBox { bool any = false; int z0 = 0, z1 = -1, y0 = 0, y1 = -1, x0 = 0, x1 = -1; };
+    std::vector<std::uint64_t> tileGen;
+    std::vector<uint8_t> tileDirty;
+    std::vector<TileBox> tileBox;
+};
+
+// NaN test that survives -ffast-math (x!=x / std::isnan are deleted there).
+static inline bool ccvNanBits(float f)
+{
+    std::uint32_t u;
+    std::memcpy(&u, &f, 4);
+    return (u & 0x7FFFFFFFu) > 0x7F800000u;
+}
+
 CChunkedVolumeViewer::CChunkedVolumeViewer(CState* state, ViewerManager* manager, QWidget* parent)
     : QWidget(parent)
     , _state(state)
     , _viewerManager(manager)
     , _genSurfaceCache(std::make_shared<GeneratedSurfaceCache>())
+    , _partialFrame(std::make_shared<PartialFrameCache>())
 {
     _view = new CVolumeViewerView(this);
     _view->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
@@ -1404,6 +1437,7 @@ struct CChunkedVolumeViewer::RenderContext {
     float overlayWindowHigh = 255.0f;
     std::shared_ptr<GeneratedSurfaceCache> genCache;
     bool genCacheDirty = false;
+    std::shared_ptr<PartialFrameCache> partialCache;
     std::string profileReason;
     std::string profileCaller;
 };
@@ -1415,6 +1449,7 @@ struct CChunkedVolumeViewer::RenderResult {
     float surfacePtrY = 0.0f;
     float scale = 1.0f;
     qint64 renderFrameElapsedMs = 0;
+    int tilesRemaining = 0;        // partial refine: dirty tiles for next tick
 };
 
 CChunkedVolumeViewer::RenderResult CChunkedVolumeViewer::renderFrame(RenderContext ctx)
@@ -1585,7 +1620,307 @@ CChunkedVolumeViewer::RenderResult CChunkedVolumeViewer::renderFrame(RenderConte
     };
 
     if (profilePhases) phaseTimer.restart();
-    renderArray(*ctx.chunkArray, values, comp);
+
+    // ---- partial inter-frame rendering -------------------------------------
+    // Persistent pre-colormap sample buffer + 64px tile grid. Re-render only
+    // what changed: same camera -> region-gen-stale tiles; integer-pixel pan ->
+    // blit the overlap and render the exposed strips; zoom / z-scroll /
+    // geometry scroll -> seed with the previous frame as an instant preview and
+    // refine tiles center-out under a per-pass budget (the remainder continues
+    // next tick). Window/colormap changes never reach here (LUT-only, below).
+    auto* mcArr = dynamic_cast<vc::render::McVolumeArray*>(ctx.chunkArray.get());
+    PartialFrameCache* pf = ctx.partialCache.get();
+    const bool overlayActive =
+        ctx.overlayChunkArray && ctx.overlayVolume && ctx.overlayOpacity > 0.0f;
+    constexpr int TS = 64;                     // tile edge (px)
+    const bool partialOk = pf && mcArr && !overlayActive && !coords.empty();
+
+    // Sampling fingerprint: everything that changes sampled VALUES other than
+    // the camera (colormap/window are post-sampling and excluded).
+    std::uint64_t fp = 0x9E3779B97F4A7C15ull ^ std::uint64_t(comp + 1);
+    auto fpAdd = [&fp](float v) {
+        std::uint32_t u;
+        std::memcpy(&u, &v, 4);
+        fp = (fp ^ u) * 0x100000001B3ull;
+    };
+    fpAdd(t0); fpAdd(t1);
+    fpAdd(ctx.compositeSettings.params.alphaMin);
+    fpAdd(ctx.compositeSettings.params.alphaOpacity);
+    fpAdd(shade.lightZ); fpAdd(shade.lightY); fpAdd(shade.lightX);
+    fpAdd(shade.ambient); fpAdd(shade.diffuse); fpAdd(shade.specular);
+    fpAdd(shade.shininess); fpAdd(shade.absorption); fpAdd(shade.shadow);
+    fpAdd(shade.sss); fpAdd(shade.curvature); fpAdd(shade.percentile);
+
+    if (!partialOk) {
+        renderArray(*ctx.chunkArray, values, comp);
+        if (pf) {                              // overlay on / non-mc array: cache off
+            std::lock_guard lk(pf->mutex);
+            pf->valid = false;
+        }
+    } else {
+        std::lock_guard lk(pf->mutex);
+        const int tilesX = (ctx.fbW + TS - 1) / TS;
+        const int tilesY = (ctx.fbH + TS - 1) / TS;
+        const int nTiles = tilesX * tilesY;
+        const int level = mcArr->pickLevel(voxPerPixel);
+
+        enum class Mode { Full, Data, Pan, Seed };
+        Mode mode = Mode::Full;
+        int panDx = 0, panDy = 0;
+        bool seedWarp = false;
+        const bool baseMatch = pf->valid && pf->surface == ctx.surf.get() &&
+                               pf->array == ctx.chunkArray.get() &&
+                               pf->fbW == ctx.fbW && pf->fbH == ctx.fbH &&
+                               pf->sampleFp == fp && !pf->values.empty();
+        if (baseMatch) {
+            const bool geomStable = !ctx.genCacheDirty;
+            const bool zSame = pf->zOff == ctx.zOff && pf->zOffWorldDir == ctx.zOffWorldDir;
+            const bool camSame = pf->scale == ctx.scale &&
+                                 pf->ptrX == ctx.surfacePtrX && pf->ptrY == ctx.surfacePtrY;
+            if (geomStable && zSame && camSame) {
+                mode = Mode::Data;
+            } else if (geomStable && zSame && pf->scale == ctx.scale) {
+                const float fdx = (ctx.surfacePtrX - pf->ptrX) * ctx.scale;
+                const float fdy = (ctx.surfacePtrY - pf->ptrY) * ctx.scale;
+                panDx = int(std::lround(fdx));
+                panDy = int(std::lround(fdy));
+                const bool integral = std::abs(fdx - float(panDx)) < 1e-3f &&
+                                      std::abs(fdy - float(panDy)) < 1e-3f;
+                const bool overlaps =
+                    std::abs(panDx) < ctx.fbW && std::abs(panDy) < ctx.fbH;
+                mode = (integral && overlaps) ? Mode::Pan : Mode::Seed;
+            } else {
+                mode = Mode::Seed;             // zoom / z-scroll / geometry scroll
+                seedWarp = pf->scale != ctx.scale;
+            }
+        }
+
+        if (pf->values.rows != ctx.fbH || pf->values.cols != ctx.fbW) {
+            pf->values.create(ctx.fbH, ctx.fbW);
+            pf->values.setTo(uint8_t(0));
+            mode = Mode::Full;
+        }
+        if (int(pf->tileGen.size()) != nTiles) {
+            pf->tileGen.assign(size_t(nTiles), 0);
+            pf->tileDirty.assign(size_t(nTiles), uint8_t(1));
+            pf->tileBox.assign(size_t(nTiles), PartialFrameCache::TileBox{});
+        }
+
+        // gen snapshot BEFORE sampling: anything landing during this pass stamps
+        // a larger gen and re-dirties its tiles next pass.
+        const std::uint64_t genSnap = mcArr->dataGeneration();
+
+        // Per-tile region bounding boxes at the picked level: stride-4 walk of
+        // the cached coords (a picked-level region spans >=128px on screen, so a
+        // 4px stride cannot skip one), dilated +/-1 region so composite slabs /
+        // trilinear edges can't slip past the signature. Rebuilt every pass
+        // (~0.1ms) since coords may be new.
+        {
+            const int sh = 8 + level;          // 256<<level L0 voxels per region
+            for (int ty = 0; ty < tilesY; ++ty)
+                for (int tx = 0; tx < tilesX; ++tx) {
+                    auto& b = pf->tileBox[size_t(ty) * tilesX + tx];
+                    b = PartialFrameCache::TileBox{};
+                    const int py0 = ty * TS, py1 = std::min(ctx.fbH, py0 + TS);
+                    const int px0 = tx * TS, px1 = std::min(ctx.fbW, px0 + TS);
+                    for (int y = py0; y < py1; y += 4) {
+                        const cv::Vec3f* row = coords[y];
+                        for (int x = px0; x < px1; x += 4) {
+                            const cv::Vec3f& p = row[x];
+                            if (ccvNanBits(p[0]) || ccvNanBits(p[1]) || ccvNanBits(p[2]) ||
+                                p[0] < 0.f || p[1] < 0.f || p[2] < 0.f)
+                                continue;
+                            const int rz = int(p[2]) >> sh;
+                            const int ry = int(p[1]) >> sh;
+                            const int rx = int(p[0]) >> sh;
+                            if (!b.any) {
+                                b.z0 = b.z1 = rz; b.y0 = b.y1 = ry; b.x0 = b.x1 = rx;
+                                b.any = true;
+                            } else {
+                                b.z0 = std::min(b.z0, rz); b.z1 = std::max(b.z1, rz);
+                                b.y0 = std::min(b.y0, ry); b.y1 = std::max(b.y1, ry);
+                                b.x0 = std::min(b.x0, rx); b.x1 = std::max(b.x1, rx);
+                            }
+                        }
+                    }
+                    if (b.any) {               // slab / trilinear margin
+                        b.z0 = std::max(0, b.z0 - 1); b.z1 += 1;
+                        b.y0 = std::max(0, b.y0 - 1); b.y1 += 1;
+                        b.x0 = std::max(0, b.x0 - 1); b.x1 += 1;
+                    }
+                }
+        }
+
+        auto markDataStale = [&]() {
+            for (int t = 0; t < nTiles; ++t) {
+                if (pf->tileDirty[size_t(t)])
+                    continue;
+                const auto& b = pf->tileBox[size_t(t)];
+                if (b.any && mcArr->dataGenerationForBox(level, b.z0, b.z1,
+                                                         b.y0, b.y1, b.x0, b.x1) >
+                                 pf->tileGen[size_t(t)])
+                    pf->tileDirty[size_t(t)] = 1;
+            }
+        };
+
+        switch (mode) {
+        case Mode::Full:
+            renderArray(*ctx.chunkArray, pf->values, comp);
+            std::fill(pf->tileGen.begin(), pf->tileGen.end(), genSnap);
+            std::fill(pf->tileDirty.begin(), pf->tileDirty.end(), uint8_t(0));
+            break;
+        case Mode::Data:
+            markDataStale();
+            break;
+        case Mode::Pan: {
+            // content shifts opposite the camera: new(x,y) = old(x+dx, y+dy)
+            cv::Mat_<uint8_t> shifted(ctx.fbH, ctx.fbW, uint8_t(0));
+            const int sx0 = std::max(0, panDx), sy0 = std::max(0, panDy);
+            const int dx0 = std::max(0, -panDx), dy0 = std::max(0, -panDy);
+            const int cw = ctx.fbW - std::abs(panDx), ch = ctx.fbH - std::abs(panDy);
+            pf->values(cv::Rect(sx0, sy0, cw, ch))
+                .copyTo(shifted(cv::Rect(dx0, dy0, cw, ch)));
+            shifted.copyTo(pf->values);
+            // a NEW tile fully sourced from clean old tiles inherits min(gen);
+            // anything touching the exposed strips is dirty.
+            std::vector<std::uint64_t> oldGen = pf->tileGen;
+            std::vector<uint8_t> oldDirty = pf->tileDirty;
+            for (int ty = 0; ty < tilesY; ++ty)
+                for (int tx = 0; tx < tilesX; ++tx) {
+                    const int t = ty * tilesX + tx;
+                    const int nx0 = tx * TS, nx1 = std::min(ctx.fbW, nx0 + TS) - 1;
+                    const int ny0 = ty * TS, ny1 = std::min(ctx.fbH, ny0 + TS) - 1;
+                    const int ox0 = nx0 + panDx, ox1 = nx1 + panDx;
+                    const int oy0 = ny0 + panDy, oy1 = ny1 + panDy;
+                    if (ox0 < 0 || oy0 < 0 || ox1 >= ctx.fbW || oy1 >= ctx.fbH) {
+                        pf->tileDirty[size_t(t)] = 1;
+                        pf->tileGen[size_t(t)] = 0;
+                        continue;
+                    }
+                    std::uint64_t g = ~0ull;
+                    bool dirty = false;
+                    for (int sy = oy0 / TS; sy <= oy1 / TS; ++sy)
+                        for (int sx = ox0 / TS; sx <= ox1 / TS; ++sx) {
+                            const int st = sy * tilesX + sx;
+                            dirty = dirty || oldDirty[size_t(st)] != 0;
+                            g = std::min(g, oldGen[size_t(st)]);
+                        }
+                    pf->tileDirty[size_t(t)] = dirty ? 1 : 0;
+                    pf->tileGen[size_t(t)] = dirty ? 0 : g;
+                }
+            markDataStale();
+            break;
+        }
+        case Mode::Seed: {
+            if (seedWarp) {
+                // zoom preview: map the old frame onto the new camera (nearest).
+                // dst -> src: src = (dst + offNew) * scaleOld/scaleNew - offOld
+                const float sw = pf->scale / ctx.scale;
+                const float offXn = ctx.surfacePtrX * ctx.scale - float(ctx.fbW) * 0.5f;
+                const float offYn = ctx.surfacePtrY * ctx.scale - float(ctx.fbH) * 0.5f;
+                const float offXo = pf->ptrX * pf->scale - float(ctx.fbW) * 0.5f;
+                const float offYo = pf->ptrY * pf->scale - float(ctx.fbH) * 0.5f;
+                cv::Matx23f m(sw, 0.f, offXn * sw - offXo,
+                              0.f, sw, offYn * sw - offYo);
+                cv::Mat seeded;
+                cv::warpAffine(pf->values, seeded, m, pf->values.size(),
+                               cv::INTER_NEAREST | cv::WARP_INVERSE_MAP,
+                               cv::BORDER_CONSTANT, cv::Scalar(0));
+                seeded.copyTo(pf->values);
+            }
+            // z-scroll / geometry scroll: the old frame stands as the preview.
+            std::fill(pf->tileGen.begin(), pf->tileGen.end(), 0);
+            std::fill(pf->tileDirty.begin(), pf->tileDirty.end(), uint8_t(1));
+            break;
+        }
+        }
+
+        // Refine: render dirty tiles center-out under a per-pass budget, in ONE
+        // stacked mc render call (full SIMD/thread parallelism, no per-tile
+        // spawn). The remainder continues next tick (finishRender re-arms).
+        if (mode != Mode::Full) {
+            std::vector<int> dirtyTiles;
+            dirtyTiles.reserve(size_t(nTiles));
+            for (int t = 0; t < nTiles; ++t)
+                if (pf->tileDirty[size_t(t)])
+                    dirtyTiles.push_back(t);
+            if (!dirtyTiles.empty()) {
+                const float cxp = float(ctx.fbW) * 0.5f, cyp = float(ctx.fbH) * 0.5f;
+                auto d2 = [&](int t) {
+                    const float ddx = (float(t % tilesX) + 0.5f) * TS - cxp;
+                    const float ddy = (float(t / tilesX) + 0.5f) * TS - cyp;
+                    return ddx * ddx + ddy * ddy;
+                };
+                std::sort(dirtyTiles.begin(), dirtyTiles.end(),
+                          [&](int a, int b2) { return d2(a) < d2(b2); });
+                constexpr double kBudgetMs = 50.0;
+                int budget = nTiles;
+                if (pf->tileMsEma > 0.0)
+                    budget = std::clamp(int(kBudgetMs / pf->tileMsEma), 48, nTiles);
+                const int K = std::min<int>(budget, int(dirtyTiles.size()));
+
+                const bool wantN = comp != 0 && !normals.empty();
+                cv::Mat_<cv::Vec3f> tp(K * TS, TS, cv::Vec3f(-1.f, -1.f, -1.f));
+                cv::Mat_<cv::Vec3f> tn;
+                if (wantN) {
+                    tn.create(K * TS, TS);
+                    tn.setTo(cv::Scalar(0.f, 0.f, 0.f));
+                }
+                for (int k = 0; k < K; ++k) {
+                    const int t = dirtyTiles[size_t(k)];
+                    const int px0 = (t % tilesX) * TS, py0 = (t / tilesX) * TS;
+                    const int w = std::min(TS, ctx.fbW - px0);
+                    const int h = std::min(TS, ctx.fbH - py0);
+                    coords(cv::Rect(px0, py0, w, h))
+                        .copyTo(tp(cv::Rect(0, k * TS, w, h)));
+                    if (wantN)
+                        normals(cv::Rect(px0, py0, w, h))
+                            .copyTo(tn(cv::Rect(0, k * TS, w, h)));
+                }
+                cv::Mat_<uint8_t> tout(K * TS, TS, uint8_t(0));
+                QElapsedTimer batchTimer;
+                batchTimer.start();
+                const bool wantShade = (comp == 6 || comp == 7);
+                mcArr->render(reinterpret_cast<const float*>(tp.ptr<cv::Vec3f>(0)),
+                              wantN ? reinterpret_cast<const float*>(tn.ptr<cv::Vec3f>(0))
+                                    : nullptr,
+                              TS, K * TS, comp, t0, t1, 1.0f,
+                              ctx.compositeSettings.params.alphaMin,
+                              ctx.compositeSettings.params.alphaOpacity,
+                              voxPerPixel, tout.ptr<uint8_t>(0),
+                              wantShade ? &shade : nullptr);
+                const double perTile = double(batchTimer.elapsed()) / std::max(1, K);
+                pf->tileMsEma = pf->tileMsEma > 0.0
+                                    ? pf->tileMsEma * 0.8 + perTile * 0.2
+                                    : perTile;
+                for (int k = 0; k < K; ++k) {
+                    const int t = dirtyTiles[size_t(k)];
+                    const int px0 = (t % tilesX) * TS, py0 = (t / tilesX) * TS;
+                    const int w = std::min(TS, ctx.fbW - px0);
+                    const int h = std::min(TS, ctx.fbH - py0);
+                    tout(cv::Rect(0, k * TS, w, h))
+                        .copyTo(pf->values(cv::Rect(px0, py0, w, h)));
+                    pf->tileGen[size_t(t)] = genSnap;
+                    pf->tileDirty[size_t(t)] = 0;
+                }
+            }
+        }
+        for (int t = 0; t < nTiles; ++t)
+            result.tilesRemaining += pf->tileDirty[size_t(t)] ? 1 : 0;
+
+        pf->valid = true;
+        pf->array = ctx.chunkArray.get();
+        pf->surface = ctx.surf.get();
+        pf->fbW = ctx.fbW;
+        pf->fbH = ctx.fbH;
+        pf->scale = ctx.scale;
+        pf->ptrX = ctx.surfacePtrX;
+        pf->ptrY = ctx.surfacePtrY;
+        pf->zOff = ctx.zOff;
+        pf->zOffWorldDir = ctx.zOffWorldDir;
+        pf->sampleFp = fp;
+        values = pf->values;                   // the LUT blit below reads this
+    }
     if (profilePhases) phaseSampleMs += phaseTimer.elapsed();
 
     if (ctx.overlayChunkArray && ctx.overlayVolume && ctx.overlayOpacity > 0.0f) {
@@ -1696,9 +2031,9 @@ void CChunkedVolumeViewer::predictWorkingSetInto(std::vector<vc::render::ChunkKe
         const cv::Vec3f* row = coords[y];
         for (int x = 0; x < coords.cols; ++x) {
             const cv::Vec3f& p = row[x];
-            if (!(p[0] >= 0.f) || !(p[1] >= 0.f) || !(p[2] >= 0.f) ||
-                p[0] != p[0] || p[1] != p[1] || p[2] != p[2])
-                continue;   // invalid / hole
+            if (ccvNanBits(p[0]) || ccvNanBits(p[1]) || ccvNanBits(p[2]) ||
+                p[0] < 0.f || p[1] < 0.f || p[2] < 0.f)
+                continue;   // invalid / hole (NaN check survives -ffast-math)
             // L0 voxel -> this-LOD voxel -> 16^3 block -> 256^3 region.
             const int lz = int(p[2] * float(s0[0])), ly = int(p[1] * float(s0[1])), lx = int(p[0] * float(s0[2]));
             if (unsigned(lz) >= unsigned(ls[0]) || unsigned(ly) >= unsigned(ls[1]) || unsigned(lx) >= unsigned(ls[2]))
@@ -1784,6 +2119,7 @@ void CChunkedVolumeViewer::submitRender(const char* reason, std::source_location
     ctx.overlayWindowHigh = _overlayWindowHigh;
     ctx.genCache = _genSurfaceCache;
     ctx.genCacheDirty = _genCacheDirty;
+    ctx.partialCache = _partialFrame;
     if (ProfileLoggingEnabled()) {
         ctx.profileReason = reason ? reason : "";
         ctx.profileCaller = profileCaller(caller);
@@ -1845,6 +2181,13 @@ void CChunkedVolumeViewer::finishRenderOnMainThread(std::shared_ptr<RenderResult
     emit overlaysUpdated();
     _view->viewport()->update();
     updateStatusLabel();
+    if (result->tilesRemaining > 0 && _viewerManager) {
+        // partial refine: more dirty tiles -- continue next tick. Set the dirty
+        // flag directly (NOT scheduleRender: the camera is unchanged, so the
+        // predict memo and latency-origin stamps must survive).
+        _renderPending = true;
+        _viewerManager->requestGlobalRender();
+    }
 
     if (profile.enabled()) {
         profile.setDetails(std::format(

@@ -198,6 +198,33 @@ std::uint64_t McVolumeArray::dataGenerationFor(const std::vector<ChunkKey>& keys
     return g;
 }
 
+std::uint64_t McVolumeArray::dataGenerationForBox(int level, int rz0, int rz1,
+                                                  int ry0, int ry1,
+                                                  int rx0, int rx1) const
+{
+    // The box at `level` plus its covering ancestors at every coarser level
+    // (region coords halve per level). Boxes are tiny (a 64px tile spans <=
+    // a few regions), so this is a few dozen hash+load probes.
+    std::uint64_t g = 0;
+    for (int l = level; l < numLevels_; ++l) {
+        const int sh = l - level;
+        for (int z = rz0 >> sh; z <= (rz1 >> sh); ++z)
+            for (int y = ry0 >> sh; y <= (ry1 >> sh); ++y)
+                for (int x = rx0 >> sh; x <= (rx1 >> sh); ++x) {
+                    const std::uint64_t rg = mc_volume_region_gen(vol_, l, z, y, x);
+                    if (rg > g)
+                        g = rg;
+                }
+    }
+    return g;
+}
+
+int McVolumeArray::pickLevel(float voxPerPixel) const
+{
+    mc_sample_lods lods = mc_volume_sample_lods(vol_, 0);
+    return mc_render_pick_lod(&lods, voxPerPixel > 0.f ? voxPerPixel : 1.f);
+}
+
 IChunkedArray::Stats McVolumeArray::stats() const
 {
     mc_volume_stats s{};

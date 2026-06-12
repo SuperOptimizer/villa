@@ -303,6 +303,7 @@ private:
     struct RenderContext;
     struct RenderResult;
     struct GeneratedSurfaceCache;
+    struct PartialFrameCache;
     static RenderResult renderFrame(RenderContext ctx);
     void finishRenderOnMainThread(std::shared_ptr<RenderResult> result);
     int renderStartLevel(bool preferSurfaceResolution = false) const;
@@ -342,6 +343,7 @@ private:
     // recomputed when the camera/surface/framebuffer changed (any scheduleRender
     // invalidates the key -- geometry edits arrive through there too).
     std::vector<vc::render::ChunkKey> _predictedRegions;
+    std::shared_ptr<PartialFrameCache> _partialFrame;   // inter-frame tile reuse
     struct PredictKey {
         const void* surf = nullptr;
         int fbW = 0, fbH = 0;

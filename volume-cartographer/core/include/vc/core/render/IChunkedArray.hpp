@@ -106,6 +106,22 @@ public:
         return dataGeneration();
     }
 
+    // Max data generation over an inclusive 256^3-REGION box at `level`, plus the
+    // covering ancestor regions at every coarser level (a tile rendered coarse
+    // sharpens when its fine region lands; a tile waiting on coarse data changes
+    // when the ancestor lands). Used for per-tile partial re-rendering. Default =
+    // volume-global gen (any change dirties every tile -- always safe).
+    virtual std::uint64_t dataGenerationForBox(int /*level*/, int /*rz0*/, int /*rz1*/,
+                                               int /*ry0*/, int /*ry1*/,
+                                               int /*rx0*/, int /*rx1*/) const
+    {
+        return dataGeneration();
+    }
+
+    // The LOD the renderer will pick for `voxPerPixel` (region-box gens are keyed
+    // by level). Default 0.
+    virtual int pickLevel(float /*voxPerPixel*/) const { return 0; }
+
     // Background prefetch (never the interactive path). shardBatch reports the
     // source shard enclosing a 16^3-block key (geometry only); prefetchShardBlocking
     // pulls + transcodes the whole enclosing shard. Default no-ops for backends
