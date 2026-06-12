@@ -77,6 +77,7 @@ public:
 
     Stats stats() const override;
     std::uint64_t dataGeneration() const override;
+    std::uint64_t dataGenerationFor(const std::vector<ChunkKey>& keys) const override;
     void prefetchShardBlocking(int level, int iz, int iy, int ix) override;
     void setDecodedByteCapacity(std::size_t bytes) override;
     void freeze() override;   // mc_volume_freeze: immutable, lock-free reads

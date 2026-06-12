@@ -97,6 +97,15 @@ public:
     // Same nonzero gen + unchanged camera across ticks => provably identical frame.
     virtual std::uint64_t dataGeneration() const { return 0; }
 
+    // Viewport-local variant: the max data generation over the given working set
+    // (16^3-block keys, e.g. from the predictive prefetch). Lets a viewer skip a
+    // streaming re-render when data landed only OUTSIDE its viewport. Default
+    // falls back to the volume-global generation.
+    virtual std::uint64_t dataGenerationFor(const std::vector<ChunkKey>& /*keys*/) const
+    {
+        return dataGeneration();
+    }
+
     // Background prefetch (never the interactive path). shardBatch reports the
     // source shard enclosing a 16^3-block key (geometry only); prefetchShardBlocking
     // pulls + transcodes the whole enclosing shard. Default no-ops for backends

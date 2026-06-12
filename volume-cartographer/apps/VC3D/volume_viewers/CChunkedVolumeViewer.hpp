@@ -101,7 +101,7 @@ public:
     // grid window) at the current render level. Appends to `out` (the tick dedups
     // across viewers and submits the downloads up front, before freeze). Cheap:
     // thousands of points, never a full-res pixel walk. No-op if no surface/array.
-    void predictWorkingSet(std::vector<vc::render::ChunkKey>& out) const;
+    void predictWorkingSet(std::vector<vc::render::ChunkKey>& out);
 
     void invalidateVis() override;
     void invalidateVisRegion(const std::string& name, const cv::Rect& changedCells) override;
@@ -225,6 +225,7 @@ public:
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
+    void showEvent(QShowEvent* event) override;
 
 public slots:
     void OnVolumeChanged(std::shared_ptr<Volume> vol);
@@ -335,6 +336,10 @@ private:
     bool _closing = false;
     bool _renderPending = false;
     std::uint64_t _lastRenderDataGen = 0;   // data gen of the last submitted frame
+    // This viewer's predicted region working set from the current tick (corner-
+    // block ChunkKeys) -- the viewport-local set the data-gen skip checks against.
+    std::vector<vc::render::ChunkKey> _predictedRegions;
+    void predictWorkingSetInto(std::vector<vc::render::ChunkKey>& out) const;
     bool _segmentationEditActive = false;
     bool _deferSegmentationIntersections = false;
     bool _deferredSegmentationIntersectionsDirty = false;

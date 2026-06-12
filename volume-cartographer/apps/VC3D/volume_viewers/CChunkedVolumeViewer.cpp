@@ -1253,12 +1253,16 @@ void CChunkedVolumeViewer::tickRender(bool force)
         _renderPending = true;
         return;
     }
+    // Hidden/minimized: keep the dirty flag; showEvent re-schedules on reveal.
+    if (!isVisible())
+        return;
     // Streaming-forced tick with an unchanged camera: skip when the data
-    // generation hasn't moved since the frame we last submitted -- no cache fill
-    // and no chunk/air publish means the frame is provably identical. Most ticks
-    // of a streaming settle change nothing (batches land every ~0.5-1s); this
-    // turns ~10 full re-renders/s into one per landed batch.
-    const std::uint64_t dataGen = _chunkArray ? _chunkArray->dataGeneration() : 0;
+    // generation OVER THIS VIEWER'S predicted working set hasn't moved since the
+    // frame we last submitted -- nothing this viewport samples changed, so the
+    // frame is provably identical. (The volume-global gen re-rendered every
+    // viewer whenever a batch landed anywhere in the volume.)
+    const std::uint64_t dataGen =
+        _chunkArray ? _chunkArray->dataGenerationFor(_predictedRegions) : 0;
     if (!_renderPending && force && dataGen != 0 && dataGen == _lastRenderDataGen)
         return;
     _renderPending = false;
@@ -1293,6 +1297,13 @@ void CChunkedVolumeViewer::tickIdle()
         renderIntersections("intersection deadline");
         emit overlaysUpdated();
     }
+}
+
+void CChunkedVolumeViewer::showEvent(QShowEvent* event)
+{
+    QWidget::showEvent(event);
+    // tickRender skips hidden viewers; render whatever went stale while hidden.
+    scheduleRender("shown");
 }
 
 void CChunkedVolumeViewer::requestRender(const char* reason, std::source_location caller)
@@ -1625,7 +1636,16 @@ CChunkedVolumeViewer::RenderResult CChunkedVolumeViewer::renderFrame(RenderConte
 static constexpr int kPredictDownsample = 8;   // gen at 1/8 res for prediction
 static constexpr std::size_t kMaxPredictedRegions = 4096;   // sanity cap
 
-void CChunkedVolumeViewer::predictWorkingSet(std::vector<vc::render::ChunkKey>& out) const
+void CChunkedVolumeViewer::predictWorkingSet(std::vector<vc::render::ChunkKey>& out)
+{
+    // Stash THIS viewer's contribution: tickRender's viewport-local data-gen
+    // skip checks against exactly the regions this viewer will sample.
+    _predictedRegions.clear();
+    predictWorkingSetInto(_predictedRegions);
+    out.insert(out.end(), _predictedRegions.begin(), _predictedRegions.end());
+}
+
+void CChunkedVolumeViewer::predictWorkingSetInto(std::vector<vc::render::ChunkKey>& out) const
 {
     if (_closing || !_chunkArray)
         return;

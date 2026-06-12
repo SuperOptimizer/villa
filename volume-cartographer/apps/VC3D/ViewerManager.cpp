@@ -181,6 +181,8 @@ void ViewerManager::onGlobalTick()
     if (predict) {
         std::unordered_map<vc::render::IChunkedArray*, std::vector<vc::render::ChunkKey>> wanted;
         for (auto* v : chunked) {
+            if (!v->isVisible())
+                continue;   // hidden viewer: don't predict/download for it
             if (auto* ca = v->chunkArrayPtr())
                 v->predictWorkingSet(wanted[ca]);
         }

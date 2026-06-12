@@ -182,6 +182,22 @@ std::uint64_t McVolumeArray::dataGeneration() const
     return mc_volume_render_gen(vol_);
 }
 
+std::uint64_t McVolumeArray::dataGenerationFor(const std::vector<ChunkKey>& keys) const
+{
+    if (keys.empty())
+        return mc_volume_render_gen(vol_);   // no prediction -> volume-global
+    // Max change gen over the predicted 256^3 regions (keys carry 16^3-block
+    // coords; region = block/16). One hash + atomic load per region.
+    std::uint64_t g = 0;
+    for (const auto& k : keys) {
+        const std::uint64_t rg = mc_volume_region_gen(
+            vol_, k.level, k.iz / kBlk, k.iy / kBlk, k.ix / kBlk);
+        if (rg > g)
+            g = rg;
+    }
+    return g;
+}
+
 IChunkedArray::Stats McVolumeArray::stats() const
 {
     mc_volume_stats s{};
