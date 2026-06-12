@@ -2125,6 +2125,22 @@ uint64_t mc_archive_data_len(mc_archive *a){
     return a ? atomic_load_explicit(&a->cursor, memory_order_relaxed) : 0;
 }
 
+int mc_archive_set_metadata(mc_archive *a, const void *data, size_t len){
+    if(!a || (len && !data)) return -1;
+    if(len > MC_META_CAP) return -1;
+    if(len) memcpy(a->base + MC_HDR, data, len);
+    // publish the length AFTER the bytes so a concurrent flat read never sees
+    // a length covering unwritten content (same commit-word discipline as blobs).
+    atomic_thread_fence(memory_order_release);
+    uint64_t l = len; memcpy(a->base + MCH_METALEN, &l, 8);
+    return 0;
+}
+
+const char *mc_archive_metadata(mc_archive *a, size_t *out_len){
+    if(!a){ if(out_len) *out_len = 0; return NULL; }
+    return mc_metadata(a->base, out_len);
+}
+
 mc_cover mc_archive_chunk_coverage(mc_archive *a, int lod, int cz,int cy,int cx){
     if(!a||lod<0||lod>7) return MC_ABSENT;
     // Fast path: the coverage memo. A hit is O(1) and never touches the node tree
@@ -2671,12 +2687,12 @@ static const u8 *sfetch_node(mc_reader *r, uint64_t off){
     r->ntab_off[slot]=off;
     return r->ntab[slot];
 }
-static uint64_t sresolve_chunk(mc_reader *r,int lod,int cz,int cy,int cx){
+static uint64_t sresolve_chunk(mc_reader *r,int lod,int cz,int cy,int cx,int *err){
     uint64_t node = r->roots[lod];
     for(int nib=MC_TREE_LEVELS-1; nib>=0; --nib){
-        if(!node) return 0;
+        if(!node) return 0;                       // genuinely absent (air)
         const u8 *tbl=sfetch_node(r,node);
-        if(!tbl) return 0;
+        if(!tbl){ if(err)*err=1; return 0; }      // FETCH FAILED -- not absent!
         int idx=(mc_nib(cz,nib)*16+mc_nib(cy,nib))*16+mc_nib(cx,nib);
         uint64_t child; memcpy(&child,tbl+(size_t)idx*8,8);
         node=child;
@@ -2684,10 +2700,21 @@ static uint64_t sresolve_chunk(mc_reader *r,int lod,int cz,int cy,int cx){
     return node;
 }
 
+// As mc_chunk_offset, but distinguishes "resolved to absent" (ret 0, *err 0)
+// from "node-table read FAILED" (ret 0, *err 1). A streaming caller that maps
+// offset 0 to permanent air MUST use this: a transient network error (expired
+// creds, timeout) otherwise poisons the region as ZERO forever.
+uint64_t mc_chunk_offset_chk(mc_reader *r,int lod,int cz,int cy,int cx,int *err){
+    if(err)*err=0;
+    if(!r||lod<0||lod>7) return 0;
+    if(r->arc) return mc_resolve_chunk(r->arc,r->roots[lod],cz,cy,cx);  // flat: no I/O
+    return sresolve_chunk(r,lod,cz,cy,cx,err);
+}
+
 uint64_t mc_chunk_offset(mc_reader *r,int lod,int cz,int cy,int cx){
     if(lod<0||lod>7) return 0;
     if(r->arc) return mc_resolve_chunk(r->arc,r->roots[lod],cz,cy,cx);
-    return sresolve_chunk(r,lod,cz,cy,cx);
+    return sresolve_chunk(r,lod,cz,cy,cx,NULL);
 }
 
 // streaming: ensure the whole chunk blob at chunk_off is cached in r->cbuf, return ptr.
@@ -6541,14 +6568,16 @@ static void req_push(mc_volume *v, int lod, int cz, int cy, int cx) {
     pthread_mutex_unlock(&v->mu);
 }
 
-enum { DL_BATCH = 32 };
+enum { DL_BATCH = 64 };   // per-batch regions; streaming GETs run this deep
 
 // Streaming fetch of ONE 256^3 region via the reader (serial; the local-file
 // source path and the fallback for a header window too small to parse).
 static void mc_stream_fetch_region(mc_volume *v, int lod, int rz, int ry, int rx) {
     if (mc_archive_chunk_coverage(v->arc, lod, rz, ry, rx) != MC_ABSENT) return;  // already have it
-    uint64_t off = mc_chunk_offset(v->rd, lod, rz, ry, rx);
-    if (off == 0) {                                    // remote air -> local ZERO region
+    int rerr = 0;
+    uint64_t off = mc_chunk_offset_chk(v->rd, lod, rz, ry, rx, &rerr);
+    if (rerr) return;                                  // transient: leave ABSENT, retry
+    if (off == 0) {                                    // CONFIRMED air -> local ZERO region
         mc_archive_append_chunk_raw(v->arc, lod, rz, ry, rx, zero256());
         return;
     }
@@ -6599,8 +6628,10 @@ static void mc_stream_fetch_batch(mc_volume *v, int m, const int *lods,
     for (int i = 0; i < m; ++i) {
         if (mc_archive_chunk_coverage(v->arc, lods[i], rz[i], ry[i], rx[i]) != MC_ABSENT)
             continue;                                          // already resident
-        uint64_t o = mc_chunk_offset(v->rd, lods[i], rz[i], ry[i], rx[i]);
-        if (o == 0) {                                          // air -> ZERO region
+        int rerr = 0;
+        uint64_t o = mc_chunk_offset_chk(v->rd, lods[i], rz[i], ry[i], rx[i], &rerr);
+        if (rerr) continue;                                    // transient: leave ABSENT, retry
+        if (o == 0) {                                          // CONFIRMED air -> ZERO region
             mc_archive_append_chunk_raw(v->arc, lods[i], rz[i], ry[i], rx[i], zero256());
             continue;
         }
@@ -6614,63 +6645,88 @@ static void mc_stream_fetch_batch(mc_volume *v, int m, const int *lods,
         return;
     }
 
-    // round A: each blob's leading bytes, concurrently. ~2x the EMA blob size:
-    // big enough that most blobs land whole, small enough not to over-read.
+    // Chunks are appended contiguously in the source archive, and the requested
+    // regions are spatially coherent (a viewport) -- so their blobs cluster.
+    // Sort by offset and COALESCE into a few LARGE sequential ranges (read through
+    // small gaps), then carve each blob out of the run buffer. A handful of
+    // multi-MB GETs reaches S3 large-object throughput where per-chunk ~200KB
+    // GETs stall in TCP slow-start. Interior blob lengths are exact (next_off -
+    // off bounds it; the parse is authoritative); each run's last blob gets an
+    // EMA-sized margin, with a (rare) follow-up GET if the parse says longer.
     if (!v->s_blob_ema) v->s_blob_ema = 256u << 10;          // first batch: 256KB guess
-    uint64_t hdr_want = v->s_blob_ema * 2;
-    if (hdr_want < MC_STREAM_HDR_MIN) hdr_want = MC_STREAM_HDR_MIN;
-    if (hdr_want > MC_STREAM_HDR_MAX) hdr_want = MC_STREAM_HDR_MAX;
-    s3_range_req reqA[DL_BATCH]; s3_response respA[DL_BATCH];
-    for (int k = 0; k < na; ++k)
-        reqA[k] = (s3_range_req){v->s3mca->url, off[act[k]], hdr_want};
-    memset(respA, 0, sizeof(s3_response) * (size_t)na);
-    s3_get_batch(v->s3mca->cl, reqA, (size_t)na, 32, respA);
+    uint64_t margin = v->s_blob_ema * 2;
+    if (margin < MC_STREAM_HDR_MIN) margin = MC_STREAM_HDR_MIN;
+    if (margin > MC_STREAM_HDR_MAX) margin = MC_STREAM_HDR_MAX;
 
-    // parse lengths; append blobs that fit in the window; queue tails for round B.
-    uint64_t blen[DL_BATCH] = {0};
-    s3_range_req reqB[DL_BATCH]; s3_response respB[DL_BATCH];
-    int bk[DL_BATCH], nb = 0;                  // bk[j] -> round-A index
-    for (int k = 0; k < na; ++k) {
-        int i = act[k];
-        if (!s3_response_ok(&respA[k]) || !respA[k].body_len) continue;   // transient: retry later
-        atomic_fetch_add_explicit(&v->net_bytes, respA[k].body_len, memory_order_relaxed);
-        blen[k] = mc_blob_len_parse(respA[k].body, respA[k].body_len);
-        if (!blen[k]) {                        // header bigger than the window (rare)
-            mc_stream_fetch_region(v, lods[i], rz[i], ry[i], rx[i]);
+    // sort act[] by offset (insertion sort; na <= DL_BATCH).
+    for (int a = 1; a < na; ++a) {
+        int t = act[a]; int b = a - 1;
+        while (b >= 0 && off[act[b]] > off[t]) { act[b + 1] = act[b]; --b; }
+        act[b + 1] = t;
+    }
+
+    enum { RUN_GAP = 512 << 10, RUN_MAX = 64 << 20 };  // read-through gap / run size cap:
+    // merge only near-adjacent blobs (raster archives put y/z neighbors MBs apart;
+    // reading through those gaps wasted ~3x the useful bytes)
+    s3_range_req runq[DL_BATCH]; s3_response runr[DL_BATCH];
+    int rs[DL_BATCH], re[DL_BATCH], nrun = 0;          // act[] index span of each run
+    for (int k = 0; k < na;) {
+        int s = k, e = k;
+        uint64_t end = off[act[k]] + margin;
+        while (e + 1 < na &&
+               off[act[e + 1]] <= end + RUN_GAP &&
+               off[act[e + 1]] + margin - off[act[s]] <= RUN_MAX) {
+            ++e;
+            end = off[act[e]] + margin;
+        }
+        runq[nrun] = (s3_range_req){v->s3mca->url, off[act[s]], end - off[act[s]]};
+        rs[nrun] = s; re[nrun] = e; ++nrun;
+        k = e + 1;
+    }
+
+    memset(runr, 0, sizeof(s3_response) * (size_t)nrun);
+    s3_get_batch(v->s3mca->cl, runq, (size_t)nrun, 16, runr);
+
+    for (int r = 0; r < nrun; ++r) {
+        if (!s3_response_ok(&runr[r]) || !runr[r].body_len) {  // transient: retry later
+            s3_response_free(&runr[r]);
             continue;
         }
-        v->s_blob_ema = (v->s_blob_ema * 7 + (size_t)blen[k]) / 8;   // dl thread only
-        if (blen[k] <= respA[k].body_len) {    // whole blob already in hand
-            mc_archive_append_chunk_compressed(v->arc, lods[i], rz[i], ry[i], rx[i],
-                                               respA[k].body, (size_t)blen[k]);
-        } else {                               // need the tail
-            reqB[nb] = (s3_range_req){v->s3mca->url, off[i] + respA[k].body_len,
-                                      blen[k] - respA[k].body_len};
-            bk[nb++] = k;
-        }
-    }
-
-    // round B: all tails, concurrently; stitch head+tail and append.
-    if (nb) {
-        memset(respB, 0, sizeof(s3_response) * (size_t)nb);
-        s3_get_batch(v->s3mca->cl, reqB, (size_t)nb, 32, respB);
-        for (int j = 0; j < nb; ++j) {
-            int k = bk[j], i = act[k];
-            if (s3_response_ok(&respB[j]) && respB[j].body_len >= reqB[j].length) {
-                atomic_fetch_add_explicit(&v->net_bytes, respB[j].body_len, memory_order_relaxed);
-                uint8_t *blob = malloc((size_t)blen[k]);
-                if (blob) {
-                    memcpy(blob, respA[k].body, respA[k].body_len);
-                    memcpy(blob + respA[k].body_len, respB[j].body, (size_t)reqB[j].length);
-                    mc_archive_append_chunk_compressed(v->arc, lods[i], rz[i], ry[i], rx[i],
-                                                       blob, (size_t)blen[k]);
-                    free(blob);
-                }
+        atomic_fetch_add_explicit(&v->net_bytes, runr[r].body_len, memory_order_relaxed);
+        for (int k = rs[r]; k <= re[r]; ++k) {
+            int i = act[k];
+            uint64_t rel = off[i] - runq[r].offset;
+            if (rel >= runr[r].body_len) continue;             // run came back short
+            size_t avail = runr[r].body_len - (size_t)rel;
+            uint64_t bl = mc_blob_len_parse(runr[r].body + rel, avail);
+            if (!bl) {                                         // window short of the header
+                mc_stream_fetch_region(v, lods[i], rz[i], ry[i], rx[i]);
+                continue;
             }
-            s3_response_free(&respB[j]);
+            v->s_blob_ema = (v->s_blob_ema * 7 + (size_t)bl) / 8;   // dl thread only
+            if (bl <= avail) {                                 // whole blob in the run
+                mc_archive_append_chunk_compressed(v->arc, lods[i], rz[i], ry[i], rx[i],
+                                                   runr[r].body + rel, (size_t)bl);
+            } else {                                           // run-edge tail: one follow-up GET
+                s3_response tail = {0};
+                if (s3_get_range(v->s3mca->cl, v->s3mca->url, off[i] + avail, bl - avail,
+                                 &tail) == S3_OK &&
+                    s3_response_ok(&tail) && tail.body_len >= bl - avail) {
+                    atomic_fetch_add_explicit(&v->net_bytes, tail.body_len, memory_order_relaxed);
+                    uint8_t *blob = malloc((size_t)bl);
+                    if (blob) {
+                        memcpy(blob, runr[r].body + rel, avail);
+                        memcpy(blob + avail, tail.body, (size_t)(bl - avail));
+                        mc_archive_append_chunk_compressed(v->arc, lods[i], rz[i], ry[i], rx[i],
+                                                           blob, (size_t)bl);
+                        free(blob);
+                    }
+                }
+                s3_response_free(&tail);
+            }
         }
+        s3_response_free(&runr[r]);
     }
-    for (int k = 0; k < na; ++k) s3_response_free(&respA[k]);
 }
 
 // Download thread: pop the newest request, download its shard (-> decode queue).

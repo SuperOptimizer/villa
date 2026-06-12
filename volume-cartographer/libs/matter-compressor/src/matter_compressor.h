@@ -227,6 +227,14 @@ mc_cover mc_archive_chunk_coverage(mc_archive *a, int lod, int cz,int cy,int cx)
 // archive is being filled.
 uint64_t mc_archive_data_len(mc_archive *a);
 
+// User metadata: every archive reserves a region between the 256B header and the
+// 128KB data start. Set overwrites the whole region's contents (call any time on a
+// live handle; the write is crash-safe like any append — length published last).
+// Returns -1 if `len` exceeds the region capacity (nothing written). Read back via
+// mc_archive_metadata() on a handle, or mc_metadata() on flat archive bytes.
+int mc_archive_set_metadata(mc_archive *a, const void *data, size_t len);
+const char *mc_archive_metadata(mc_archive *a, size_t *out_len);
+
 // Resolve a chunk to its blob offset (0 = absent). Pass to mc_archive_decode_block to
 // decode its 16^3 blocks (resolve once per chunk, decode 4096 blocks).
 uint64_t mc_archive_chunk_offset(mc_archive *a, int lod, int cz,int cy,int cx);
@@ -294,6 +302,10 @@ mc_reader *mc_open(const uint8_t *arc, size_t len);       // in-memory / mmap'd 
 void       mc_close(mc_reader *r);
 void       mc_reader_set_quality(mc_reader *r, float q);  // must match the build quality to decode
 uint64_t   mc_chunk_offset(mc_reader *r, int lod, int cz,int cy,int cx);  // 0 = empty
+// As mc_chunk_offset but sets *err=1 when a streaming node-table read FAILED
+// (network) -- ret 0 + *err 0 means confirmed-absent. Callers that map 0 to
+// permanent air MUST use this or transient errors poison regions as ZERO.
+uint64_t   mc_chunk_offset_chk(mc_reader *r, int lod, int cz,int cy,int cx, int *err);
 void       mc_decode_block(mc_reader *r, uint64_t chunk_off, int bz,int by,int bx, mc_u8 *dst);
 
 // ---- streaming read side: open an archive WITHOUT holding it whole in memory ----
