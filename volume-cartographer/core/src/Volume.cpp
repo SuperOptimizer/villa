@@ -8,8 +8,10 @@
 #include <fstream>
 #include <iomanip>
 #include <limits>
+#include <chrono>
 #include <mutex>
 #include <optional>
+#include <thread>
 #include <span>
 #include <sstream>
 #include <stdexcept>
@@ -1242,7 +1244,15 @@ std::shared_ptr<Volume> Volume::NewFromUrl(
         // pyramid meta: each LOD halves (n >> l), same as mc_volume_shape.
         std::array<int, 3> s0{};
         int nl = 0;
-        if (!vc::render::McVolumeArray::probeStreaming(remoteUrl, s0, nl))
+        // One transient HEAD/read failure must not kill the volume for the whole
+        // session -- retry the (cheap, header-only) probe with a short backoff.
+        bool probed = false;
+        for (int attempt = 0; attempt < 3 && !probed; ++attempt) {
+            if (attempt)
+                std::this_thread::sleep_for(std::chrono::milliseconds(500 * attempt));
+            probed = vc::render::McVolumeArray::probeStreaming(remoteUrl, s0, nl);
+        }
+        if (!probed)
             throw std::runtime_error("failed to open remote .mca archive: " + remoteUrl);
         for (int l = 0; l < nl; ++l) {
             std::array<int, 3> s{};
