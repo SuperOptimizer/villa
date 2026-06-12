@@ -3889,52 +3889,57 @@ void CChunkedVolumeViewer::updateStatusLabel()
     if (!_statsBar)
         return;
 
-    QStringList items;
-    items << QString("L%1").arg(_dsScaleIdx);
-    items << QString("scale %1").arg(_scale, 0, 'f', 2);
-    items << QString("%1x%2").arg(_framebuffer.width()).arg(_framebuffer.height());
+    // Row 1: view state. Row 2: the data pipeline (cache + per-stage queues).
+    QStringList view;
+    view << QString("L%1").arg(_dsScaleIdx);
+    view << QString("scale %1").arg(_scale, 0, 'f', 2);
+    view << QString("%1x%2").arg(_framebuffer.width()).arg(_framebuffer.height());
 
     if (_compositeSettings.enabled || _compositeSettings.planeEnabled) {
-        items << QString("composite %1").arg(QString::fromStdString(_compositeSettings.params.method));
-    }
-
-    if (_chunkArray) {
-        const auto stats = _chunkArray->stats();
-        items << QString("RAM %1/%2 GB")
-            .arg(formatGigabytes(stats.decodedBytes))
-            .arg(formatGigabytes(stats.decodedByteCapacity));
-        items << QString("disk %1").arg(formatByteSize(stats.persistentCacheBytes));
-        // Gate on the rate (a held sliding-window average, steady through the
-        // bursty batch arrivals) rather than the in-flight count, which flickers
-        // to 0 between request bursts even while data is still streaming. Append
-        // the per-stage depths only while they're >0.
-        if (stats.remoteDownloadBytesPerSecond > 0.0) {
-            const QString rate = formatMegabytesPerSecond(stats.remoteDownloadBytesPerSecond);
-            items << (stats.fetchDownloading > 0
-                ? QString("downloading %1 @ %2").arg(stats.fetchDownloading).arg(rate)
-                : QString("downloading @ %1").arg(rate));
-        }
-        if (stats.fetchQueued > 0)
-            items << QString("queued %1").arg(stats.fetchQueued);
-        if (stats.encodeQueued > 0)
-            items << QString("encode %1 (%2)")
-                .arg(stats.encodeQueued)
-                .arg(formatByteSize(stats.encodeStagingBytes));
+        view << QString("composite %1").arg(QString::fromStdString(_compositeSettings.params.method));
     }
 
     auto surf = _surfWeak.lock();
     if (_lastCursorVolumePos)
-        items << formatWholeVolumePosition(*_lastCursorVolumePos);
+        view << formatWholeVolumePosition(*_lastCursorVolumePos);
     if (dynamic_cast<QuadSurface*>(surf.get())) {
-        items << QString("normal offset %1").arg(_zOff, 0, 'f', 1);
+        view << QString("normal offset %1").arg(_zOff, 0, 'f', 1);
         if (_state) {
             if (auto* poi = _state->poi("focus"))
-                items << QString("POI %1").arg(formatVec3(poi->p));
+                view << QString("POI %1").arg(formatVec3(poi->p));
         }
     } else if (property("vc_show_custom_normal_offset").toBool()) {
-        items << QString("normal offset %1")
+        view << QString("normal offset %1")
                      .arg(property("vc_custom_normal_offset_vx").toDouble(), 0, 'f', 1);
     }
 
-    _statsBar->setItems(items);
+    QStringList pipeline;
+    if (_chunkArray) {
+        const auto stats = _chunkArray->stats();
+        pipeline << QString("RAM %1/%2 GB")
+            .arg(formatGigabytes(stats.decodedBytes))
+            .arg(formatGigabytes(stats.decodedByteCapacity));
+        pipeline << QString("disk %1").arg(formatByteSize(stats.persistentCacheBytes));
+        // Gate on the rate (a held sliding-window average, steady through the
+        // bursty batch arrivals) rather than the in-flight count, which flickers
+        // to 0 between request bursts even while data is still streaming. Show
+        // each pipeline stage only while it's >0. (Archive append is synchronous
+        // -- there is no archive queue to report.)
+        if (stats.remoteDownloadBytesPerSecond > 0.0) {
+            const QString rate = formatMegabytesPerSecond(stats.remoteDownloadBytesPerSecond);
+            pipeline << (stats.downloading > 0
+                ? QString("downloading %1 @ %2").arg(stats.downloading).arg(rate)
+                : QString("downloading @ %1").arg(rate));
+        }
+        if (stats.downloadQueued > 0)
+            pipeline << QString("download queued %1").arg(stats.downloadQueued);
+        if (stats.decodeQueued > 0)
+            pipeline << QString("decode queued %1 (%2)")
+                .arg(stats.decodeQueued)
+                .arg(formatByteSize(stats.decodeStagingBytes));
+        if (stats.encoding > 0)
+            pipeline << QString("encoding %1").arg(stats.encoding);
+    }
+
+    _statsBar->setItems(view, pipeline);
 }

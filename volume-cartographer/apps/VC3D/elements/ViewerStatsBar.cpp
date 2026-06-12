@@ -7,14 +7,28 @@ ViewerStatsBar::ViewerStatsBar(QWidget* parent)
     setMinimumWidth(520);
 }
 
-void ViewerStatsBar::setItems(const QStringList& items)
+namespace {
+QString joinVisible(const QStringList& items)
 {
-    QStringList visibleItems;
+    QStringList visible;
     for (const auto& item : items) {
         if (!item.isEmpty())
-            visibleItems.push_back(item);
+            visible.push_back(item);
     }
+    return visible.join("  ");
+}
+}
 
-    setText(visibleItems.join("  "));
+void ViewerStatsBar::setItems(const QStringList& items)
+{
+    setText(joinVisible(items));
+    adjustSize();
+}
+
+void ViewerStatsBar::setItems(const QStringList& row1, const QStringList& row2)
+{
+    const QString top = joinVisible(row1);
+    const QString bottom = joinVisible(row2);
+    setText(bottom.isEmpty() ? top : top + "\n" + bottom);
     adjustSize();
 }

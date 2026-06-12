@@ -180,10 +180,11 @@ IChunkedArray::Stats McVolumeArray::stats() const
     out.persistentCacheBytes = static_cast<std::size_t>(s.disk_bytes);
     out.remoteFetchesInFlight = static_cast<std::size_t>(s.regions_inflight);
     out.workPending = static_cast<std::size_t>(s.work_pending);
-    out.fetchQueued = static_cast<std::size_t>(s.regions_queued);
-    out.fetchDownloading = static_cast<std::size_t>(s.regions_downloading);
-    out.encodeQueued = static_cast<std::size_t>(s.regions_encoding);
-    out.encodeStagingBytes = static_cast<std::size_t>(s.staging_bytes);
+    out.downloadQueued = static_cast<std::size_t>(s.regions_queued);
+    out.downloading = static_cast<std::size_t>(s.regions_downloading);
+    out.decodeQueued = static_cast<std::size_t>(s.regions_decode_queued);
+    out.encoding = static_cast<std::size_t>(s.regions_encoding);
+    out.decodeStagingBytes = static_cast<std::size_t>(s.staging_bytes);
 
     // download rate: bytes over a sliding ~2s window (smooths the bursty
     // s3_get_batch arrivals), held through short idle gaps so the readout stays
