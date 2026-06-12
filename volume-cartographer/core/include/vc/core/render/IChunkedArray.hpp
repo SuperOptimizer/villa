@@ -80,6 +80,13 @@ public:
         std::size_t remoteFetchesInFlight = 0;   // real pipeline depth (status bar)
         std::size_t workPending = 0;             // + undrained fill misses (render gate)
         double remoteDownloadBytesPerSecond = 0.0;
+        // Per-stage pipeline depths (256^3 regions; sum == remoteFetchesInFlight):
+        // waiting in the download queue / on the wire / decode->re-encode->append
+        // backlog, plus the compressed bytes that backlog holds in RAM.
+        std::size_t fetchQueued = 0;
+        std::size_t fetchDownloading = 0;
+        std::size_t encodeQueued = 0;
+        std::size_t encodeStagingBytes = 0;
     };
     virtual Stats stats() const = 0;
 

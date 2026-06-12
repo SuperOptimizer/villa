@@ -3907,13 +3907,19 @@ void CChunkedVolumeViewer::updateStatusLabel()
         // Gate on the rate (a held sliding-window average, steady through the
         // bursty batch arrivals) rather than the in-flight count, which flickers
         // to 0 between request bursts even while data is still streaming. Append
-        // the in-flight depth only when it's currently >0.
+        // the per-stage depths only while they're >0.
         if (stats.remoteDownloadBytesPerSecond > 0.0) {
             const QString rate = formatMegabytesPerSecond(stats.remoteDownloadBytesPerSecond);
-            items << (stats.remoteFetchesInFlight > 0
-                ? QString("downloading %1 @ %2").arg(stats.remoteFetchesInFlight).arg(rate)
+            items << (stats.fetchDownloading > 0
+                ? QString("downloading %1 @ %2").arg(stats.fetchDownloading).arg(rate)
                 : QString("downloading @ %1").arg(rate));
         }
+        if (stats.fetchQueued > 0)
+            items << QString("queued %1").arg(stats.fetchQueued);
+        if (stats.encodeQueued > 0)
+            items << QString("encode %1 (%2)")
+                .arg(stats.encodeQueued)
+                .arg(formatByteSize(stats.encodeStagingBytes));
     }
 
     auto surf = _surfWeak.lock();
