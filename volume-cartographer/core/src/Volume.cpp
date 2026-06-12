@@ -1237,21 +1237,25 @@ std::shared_ptr<Volume> Volume::NewFromUrl(
 
     vc::render::ZarrPyramidMeta opened;
     if (isRemoteMcaUrl(remoteUrl)) {
-        // Remote .mca: an already-built archive. Probe its per-LOD shape by opening
-        // the streaming reader once (HEAD + header read), then derive the same
-        // pyramid-meta fields the zarr path produces. The reader is closed when the
-        // probe handle is dropped; createChunkCache reopens it for the live stream.
-        auto probe = vc::render::McVolumeArray::openStreaming(remoteUrl, std::size_t{1} << 20);
-        if (!probe)
+        // Remote .mca: an already-built archive. Probe its header (one HEAD + a few
+        // ranged reads -- no volume, no threads, no local archive) and derive the
+        // pyramid meta: each LOD halves (n >> l), same as mc_volume_shape.
+        std::array<int, 3> s0{};
+        int nl = 0;
+        if (!vc::render::McVolumeArray::probeStreaming(remoteUrl, s0, nl))
             throw std::runtime_error("failed to open remote .mca archive: " + remoteUrl);
-        const int nl = probe->numLevels();
         for (int l = 0; l < nl; ++l) {
-            const std::array<int, 3> s = probe->shape(l);   // (z,y,x)
+            std::array<int, 3> s{};
+            vc::render::IChunkedArray::LevelTransform t;
+            for (int d = 0; d < 3; ++d) {
+                s[d] = std::max(1, s0[d] >> l);
+                t.scaleFromLevel0[d] = static_cast<double>(s0[d]) / s[d];
+            }
             opened.shapes.push_back(s);
             opened.chunkShapes.push_back({16, 16, 16});
             opened.storageChunkShapes.push_back({256, 256, 256});
             opened.levelNumbers.push_back(l);
-            opened.transforms.push_back(probe->levelTransform(l));
+            opened.transforms.push_back(t);
         }
         opened.dtype = vc::render::ChunkDtype::UInt8;
         opened.fillValue = 0.0;
@@ -1530,12 +1534,12 @@ std::shared_ptr<vc::render::IChunkedArray> Volume::createChunkCache(
         return q ? std::strtof(q, nullptr) : 8.0f;
     }();
 
-    // Remote .mca: an already-built archive -- stream blocks directly (no zarr
-    // transcode, no on-disk cache). Everything else (remote zarr / local zarr dir)
-    // takes the transcode-into-local-.mca path.
+    // Remote .mca: an already-built archive -- fetched 256^3 chunks are copied
+    // VERBATIM into the local .mca in cacheDir (no decode/re-encode). Everything
+    // else (remote zarr / local zarr dir) takes the transcode path.
     if (isRemote_ && isRemoteMcaUrl(source)) {
         if (auto mv = vc::render::McVolumeArray::openStreaming(
-                source, options.decodedByteCapacity)) {
+                source, cacheDir.string(), options.decodedByteCapacity)) {
             Logger()->info("createChunkCache: mc_volume STREAMING source='{}' levels={}",
                            source, mv->numLevels());
             return mv;

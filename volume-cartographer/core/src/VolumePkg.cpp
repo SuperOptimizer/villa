@@ -100,9 +100,13 @@ bool isDirectRemoteZarrLocation(std::string location)
     const auto query = location.find('?');
     if (query != std::string::npos) location.erase(query);
     while (!location.empty() && location.back() == '/') location.pop_back();
-    constexpr std::string_view suffix = ".zarr";
-    return location.size() >= suffix.size()
-        && location.compare(location.size() - suffix.size(), suffix.size(), suffix) == 0;
+    // A direct remote dataset is either an NGFF ".zarr" group OR a pre-built ".mca"
+    // archive (streamed in place, no listing). Either opens via Volume::NewFromUrl.
+    auto ends = [&](std::string_view s) {
+        return location.size() >= s.size()
+            && location.compare(location.size() - s.size(), s.size(), s) == 0;
+    };
+    return ends(".zarr") || ends(".mca");
 }
 
 std::vector<fs::path> immediateSubdirs(const fs::path& dir)

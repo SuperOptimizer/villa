@@ -44,12 +44,18 @@ public:
                                                float quality);
 
     // Open an ALREADY-BUILT .mca at `url` (remote s3://.../https://... or a local
-    // file path) and stream blocks on demand -- no zarr discovery, no transcode,
-    // no download/decode threads (the archive already holds every LOD). `cacheBytes`
-    // is the resident mc_cache budget. Returns nullptr on failure. Use this when the
-    // URL is a built .mca; use open() for an NGFF zarr root.
+    // file path) and stream it into a local .mca in `cacheDir` on demand: each
+    // fetched 256^3 chunk's compressed blob is appended VERBATIM (no decode, no
+    // re-encode). Same render/cache machinery as open(); only the chunks the view
+    // touches are pulled. Returns nullptr on failure.
     static std::shared_ptr<McVolumeArray> openStreaming(const std::string& url,
+                                                        const std::string& cacheDir,
                                                         std::size_t cacheBytes);
+
+    // Probe a built .mca's header only (no volume, no threads, no local archive):
+    // LOD0 shape (z,y,x) + lod count. Returns false on failure.
+    static bool probeStreaming(const std::string& url,
+                               std::array<int, 3>& shapeZYX, int& numLevels);
     ~McVolumeArray() override;
 
     McVolumeArray(const McVolumeArray&) = delete;

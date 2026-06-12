@@ -46,10 +46,22 @@ std::shared_ptr<McVolumeArray> McVolumeArray::open(const std::string& url,
     return std::shared_ptr<McVolumeArray>(new McVolumeArray(v, n, {nz, ny, nx}));
 }
 
+bool McVolumeArray::probeStreaming(const std::string& url,
+                                   std::array<int, 3>& shapeZYX, int& numLevels)
+{
+    int nx = 0, ny = 0, nz = 0, nl = 0;
+    if (mc_mca_probe(url.c_str(), &nx, &ny, &nz, &nl, nullptr) != 0)
+        return false;
+    shapeZYX = {nz, ny, nx};
+    numLevels = nl;
+    return true;
+}
+
 std::shared_ptr<McVolumeArray> McVolumeArray::openStreaming(const std::string& url,
+                                                            const std::string& cacheDir,
                                                             std::size_t cacheBytes)
 {
-    mc_volume* v = mc_volume_open_streaming(url.c_str(), cacheBytes);
+    mc_volume* v = mc_volume_open_streaming(url.c_str(), cacheDir.c_str(), cacheBytes);
     if (!v)
         return nullptr;
     const int n = mc_volume_nlods(v);
