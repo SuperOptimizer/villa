@@ -241,4 +241,23 @@ private:
     std::vector<std::shared_ptr<QuadSurface>> _pinnedHighlightSurfaces;
 
     void rebuildSurfacePatchIndexIfNeeded();
+
+public:
+    // Async-intersection mutual exclusion. A viewer's plane-intersection query reads
+    // _surfacePatchIndex on a worker thread; while any such read is in flight the
+    // index must not be mutated (rebuild swap / updateSurface / clear) or the worker
+    // tears. Mutation sites call indexMutationGuarded(): if a read is in flight it
+    // marks the index dirty and returns true (caller defers); the deferred work
+    // re-runs once reads drain. Begin/end bracket each worker read (main thread).
+    void beginIndexRead() { ++_indexReadsInFlight; }
+    void endIndexRead();
+    bool indexReadInFlight() const { return _indexReadsInFlight > 0; }
+private:
+    int _indexReadsInFlight{0};
+    // A rebuilt index that finished while a read was in flight: held here and
+    // swapped in by endIndexRead() once reads drain (the swap would tear an
+    // in-flight worker read otherwise).
+    std::shared_ptr<SurfacePatchIndex> _deferredIndexSwap;
+    std::vector<std::string> _deferredIndexSwapIds;
+
 };
