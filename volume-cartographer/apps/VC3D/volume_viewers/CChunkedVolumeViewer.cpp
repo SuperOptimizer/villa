@@ -1232,7 +1232,7 @@ void CChunkedVolumeViewer::resizeFramebuffer()
     const int h = std::max(1, vpSize.height());
     if (_framebuffer.isNull() || _framebuffer.width() != w || _framebuffer.height() != h) {
         _framebuffer = QImage(w, h, QImage::Format_RGB32);
-        _framebuffer.fill(QColor(64, 64, 64));
+        _framebuffer.fill(Qt::black);
     }
     _scene->setSceneRect(0, 0, w, h);
 }
@@ -1478,7 +1478,7 @@ CChunkedVolumeViewer::RenderResult CChunkedVolumeViewer::renderFrame(RenderConte
     result.surfacePtrY = ctx.surfacePtrY;
     result.scale = ctx.scale;
     result.framebuffer = QImage(std::max(1, ctx.fbW), std::max(1, ctx.fbH), QImage::Format_RGB32);
-    result.framebuffer.fill(QColor(64, 64, 64));
+    result.framebuffer.fill(Qt::black);
 
     auto finishRenderFrameProfile = [&]() {
         result.renderFrameElapsedMs = renderTimer.elapsed();
@@ -1955,14 +1955,15 @@ CChunkedVolumeViewer::RenderResult CChunkedVolumeViewer::renderFrame(RenderConte
     }
     auto* fbBits = reinterpret_cast<uint32_t*>(result.framebuffer.bits());
     const int fbStride = result.framebuffer.bytesPerLine() / 4;
-    // mc_render emits 0 for invalid/no-data points; treat that as background.
-    const uint32_t uncoveredPixel = planeView ? 0xFF404040u : 0xFF000000u;
+    // mc_render emits 0 for any no-material point: real air, confirmed-zero, or
+    // not-yet-resident data. All of it is black -- lut[0] is forced black, so the
+    // LUT maps 0 -> black directly (no gray "uncovered" placeholder).
     for (int y = 0; y < ctx.fbH; ++y) {
         auto* row = fbBits + size_t(y) * size_t(fbStride);
         const auto* src = values.ptr<uint8_t>(y);
         const auto* overlaySrc = hasOverlay ? overlayValues.ptr<uint8_t>(y) : nullptr;
         for (int x = 0; x < ctx.fbW; ++x) {
-            uint32_t pixel = src[x] ? lut[src[x]] : uncoveredPixel;
+            uint32_t pixel = lut[src[x]];
             if (hasOverlay && overlaySrc[x] &&
                 overlaySrc[x] >= ctx.overlayWindowLow && overlaySrc[x] <= ctx.overlayWindowHigh) {
                 pixel = alphaBlendArgb(pixel, overlayLut[overlaySrc[x]], ctx.overlayOpacity);
