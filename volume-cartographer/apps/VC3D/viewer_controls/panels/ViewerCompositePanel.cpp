@@ -10,11 +10,15 @@
 #include <QScrollArea>
 #include <QSignalBlocker>
 #include <QSlider>
+#include <QFormLayout>
 #include <QSpinBox>
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
+#include <functional>
+#include <numbers>
 #include <string>
 
 namespace
@@ -32,6 +36,7 @@ std::string compositeMethodForModeIndex(int index)
         case 5: return "shaded";
         case 6: return "percentile";
         case 7: return "depth";
+        case 8: return "ink";
         default: return "mean";
     }
 }
@@ -46,6 +51,7 @@ int compositeModeIndexForMethod(const std::string& method)
     if (method == "shaded") return 5;
     if (method == "percentile") return 6;
     if (method == "depth") return 7;
+    if (method == "ink") return 8;
     return 1;
 }
 
@@ -118,10 +124,13 @@ ViewerCompositePanel::ViewerCompositePanel(const UiRefs& uiRefs,
 
     if (_uiRefs.compositeMode) {
         QSignalBlocker blocker(_uiRefs.compositeMode);
+        if (_uiRefs.compositeMode->count() <= 8)
+            _uiRefs.compositeMode->addItem("ink");
         _uiRefs.compositeMode->setCurrentIndex(compositeModeIndexForMethod("max"));
     }
 
     setupControls();
+    setupShadingControls();
     initializeExistingViewers();
 
     if (_viewerManager) {
@@ -169,6 +178,15 @@ void ViewerCompositePanel::setupControls()
                 s.params.method = method;
                 viewer->setCompositeRenderSettings(s);
             });
+            if (method == "ink") {
+                // ink lives in the top tens of microns: a 32-voxel slab (~77um
+                // at 2.4um) beats a deep one that averages in sheet interior /
+                // the neighboring wrap. Set via the spinboxes so it's visible.
+                if (_uiRefs.layersInFront)
+                    _uiRefs.layersInFront->setValue(8);
+                if (_uiRefs.layersBehind)
+                    _uiRefs.layersBehind->setValue(24);
+            }
             updateCompositeParamsVisibility();
         });
     }
@@ -312,6 +330,145 @@ void ViewerCompositePanel::applyInitialSettingsToViewer(VolumeViewerBase* viewer
     }
 }
 
+void ViewerCompositePanel::setupShadingControls()
+{
+    auto* vlayout = qobject_cast<QVBoxLayout*>(layout());
+    if (!vlayout)
+        return;
+
+    // generic "mutate CompositeParams on every viewer" hook
+    auto setParam = [this](std::function<void(CompositeParams&)> fn) {
+        applyToAllViewers([&fn](VolumeViewerBase* viewer) {
+            auto s = viewer->compositeRenderSettings();
+            fn(s.params);
+            viewer->setCompositeRenderSettings(s);
+        });
+    };
+
+    // lighting quartet from the .ui (hidden until shaded/ink is selected):
+    // azimuth/elevation define the light direction in volume coords; the
+    // "enable" checkbox toggles explicit (raking) light vs headlight.
+    if (_uiRefs.lightAzimuth) {
+        _uiRefs.lightAzimuth->setRange(-180, 180);
+        connect(_uiRefs.lightAzimuth, QOverload<int>::of(&QSpinBox::valueChanged),
+                this, [this](int) { applyLightDirection(); });
+    }
+    if (_uiRefs.lightElevation) {
+        _uiRefs.lightElevation->setRange(0, 90);
+        _uiRefs.lightElevation->setValue(30);
+        connect(_uiRefs.lightElevation, QOverload<int>::of(&QSpinBox::valueChanged),
+                this, [this](int) { applyLightDirection(); });
+    }
+    if (_uiRefs.lightingEnabled) {
+        _uiRefs.lightingEnabled->setText(tr("Raking light (off = headlight)"));
+        connect(_uiRefs.lightingEnabled, &QCheckBox::toggled,
+                this, [this](bool) { applyLightDirection(); });
+    }
+    if (_uiRefs.lightDiffuse) {
+        _uiRefs.lightDiffuse->setRange(0.0, 2.0);
+        _uiRefs.lightDiffuse->setSingleStep(0.05);
+        _uiRefs.lightDiffuse->setValue(0.75);
+        connect(_uiRefs.lightDiffuse, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+                this, [setParam](double v) {
+                    setParam([v](CompositeParams& p) { p.diffuse = float(v); });
+                });
+    }
+    if (_uiRefs.lightAmbient) {
+        _uiRefs.lightAmbient->setRange(0.0, 1.0);
+        _uiRefs.lightAmbient->setSingleStep(0.05);
+        _uiRefs.lightAmbient->setValue(0.25);
+        connect(_uiRefs.lightAmbient, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+                this, [setParam](double v) {
+                    setParam([v](CompositeParams& p) { p.ambient = float(v); });
+                });
+    }
+
+    // the remaining mc shading params, built programmatically
+    _shadeForm = new QFormLayout();
+    vlayout->addLayout(_shadeForm);
+    auto dspin = [this](double lo, double hi, double step, double val) {
+        auto* sp = new QDoubleSpinBox(this);
+        sp->setRange(lo, hi);
+        sp->setSingleStep(step);
+        sp->setValue(val);
+        return sp;
+    };
+
+    _specular = dspin(0.0, 1.0, 0.05, 0.20);
+    _shadeForm->addRow(tr("Specular"), _specular);
+    connect(_specular, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+            this, [setParam](double v) { setParam([v](CompositeParams& p) { p.specular = float(v); }); });
+
+    _shadow = dspin(0.0, 1.0, 0.1, 0.0);
+    _shadeForm->addRow(tr("Shadow"), _shadow);
+    connect(_shadow, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+            this, [setParam](double v) { setParam([v](CompositeParams& p) { p.shadow = float(v); }); });
+
+    _sss = dspin(0.0, 2.0, 0.1, 0.5);
+    _shadeForm->addRow(tr("Subsurface"), _sss);
+    connect(_sss, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+            this, [setParam](double v) { setParam([v](CompositeParams& p) { p.sss = float(v); }); });
+
+    _curvature = dspin(-2.0, 2.0, 0.1, 0.0);
+    _shadeForm->addRow(tr("Curvature"), _curvature);
+    connect(_curvature, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+            this, [setParam](double v) { setParam([v](CompositeParams& p) { p.curvature = float(v); }); });
+
+    _shadeRowCount = _shadeForm->rowCount();   // rows beyond here are ink-only
+
+    _transmission = dspin(0.0, 1.0, 0.05, 0.35);
+    _shadeForm->addRow(tr("Transmission"), _transmission);
+    connect(_transmission, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+            this, [setParam](double v) { setParam([v](CompositeParams& p) { p.transmission = float(v); }); });
+
+    auto* inkLock = new QSpinBox(this);
+    inkLock->setRange(0, 64);
+    inkLock->setValue(14);
+    inkLock->setToolTip(tr("Sheet lock: composite only this many voxels from the "
+                           "found sheet surface (slab = search range; 0 = off)"));
+    _shadeForm->addRow(tr("Lock depth (vox)"), inkLock);
+    connect(inkLock, QOverload<int>::of(&QSpinBox::valueChanged),
+            this, [setParam](int v) { setParam([v](CompositeParams& p) { p.inkLockVox = float(v); }); });
+
+    _inkGain = dspin(0.0, 3.0, 0.1, 1.0);
+    _shadeForm->addRow(tr("Ink contrast"), _inkGain);
+    connect(_inkGain, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+            this, [setParam](double v) { setParam([v](CompositeParams& p) { p.inkGain = float(v); }); });
+
+    _inkScaleVox = new QSpinBox(this);
+    _inkScaleVox->setRange(8, 512);
+    _inkScaleVox->setSingleStep(8);
+    _inkScaleVox->setValue(56);
+    _inkScaleVox->setToolTip(tr("Stroke scale in LOD-0 voxels (56 = ~0.13mm at 2.4um)"));
+    _shadeForm->addRow(tr("Ink scale (vox)"), _inkScaleVox);
+    connect(_inkScaleVox, QOverload<int>::of(&QSpinBox::valueChanged),
+            this, [setParam](int v) { setParam([v](CompositeParams& p) { p.inkScaleVox = float(v); }); });
+
+    updateCompositeParamsVisibility();   // hide the new rows until shaded/ink
+}
+
+void ViewerCompositePanel::applyLightDirection()
+{
+    const bool raking = _uiRefs.lightingEnabled && _uiRefs.lightingEnabled->isChecked();
+    float lz = 0.f, ly = 0.f, lx = 0.f;            // (0,0,0) = mc headlight
+    if (raking) {
+        const float az = float(_uiRefs.lightAzimuth ? _uiRefs.lightAzimuth->value() : 0) *
+                         std::numbers::pi_v<float> / 180.0f;
+        const float el = float(_uiRefs.lightElevation ? _uiRefs.lightElevation->value() : 30) *
+                         std::numbers::pi_v<float> / 180.0f;
+        lz = std::sin(el);
+        ly = std::cos(el) * std::sin(az);
+        lx = std::cos(el) * std::cos(az);
+    }
+    applyToAllViewers([lz, ly, lx](VolumeViewerBase* viewer) {
+        auto s = viewer->compositeRenderSettings();
+        s.params.lightZ = lz;
+        s.params.lightY = ly;
+        s.params.lightX = lx;
+        viewer->setCompositeRenderSettings(s);
+    });
+}
+
 void ViewerCompositePanel::updateCompositeParamsVisibility()
 {
     // mc reduction modes: max/mean/min/alpha/stddev/shaded/percentile/depth.
@@ -345,27 +502,24 @@ void ViewerCompositePanel::updateCompositeParamsVisibility()
     setWidgetVisible(_uiRefs.pbrMetallicLabel, false);
     setWidgetVisible(_uiRefs.pbrMetallic, false);
 
-    setWidgetVisible(_uiRefs.lightingEnabled, false);
-    setWidgetVisible(_uiRefs.lightAzimuthLabel, false);
-    setWidgetVisible(_uiRefs.lightAzimuth, false);
-    setWidgetVisible(_uiRefs.lightElevationLabel, false);
-    setWidgetVisible(_uiRefs.lightElevation, false);
-    setWidgetVisible(_uiRefs.lightDiffuseLabel, false);
-    setWidgetVisible(_uiRefs.lightDiffuse, false);
-    setWidgetVisible(_uiRefs.lightAmbientLabel, false);
-    setWidgetVisible(_uiRefs.lightAmbient, false);
+    // shaded(5) / ink(8): mc's gradient-lit composite family
+    const bool isShadedFamily = methodIndex == 5 || methodIndex == 8;
+    const bool isInk = methodIndex == 8;
+    setWidgetVisible(_uiRefs.lightingEnabled, isShadedFamily);
+    setWidgetVisible(_uiRefs.lightAzimuthLabel, isShadedFamily);
+    setWidgetVisible(_uiRefs.lightAzimuth, isShadedFamily);
+    setWidgetVisible(_uiRefs.lightElevationLabel, isShadedFamily);
+    setWidgetVisible(_uiRefs.lightElevation, isShadedFamily);
+    setWidgetVisible(_uiRefs.lightDiffuseLabel, isShadedFamily);
+    setWidgetVisible(_uiRefs.lightDiffuse, isShadedFamily);
+    setWidgetVisible(_uiRefs.lightAmbientLabel, isShadedFamily);
+    setWidgetVisible(_uiRefs.lightAmbient, isShadedFamily);
     setWidgetVisible(_uiRefs.useVolumeGradients, false);
+    if (_shadeForm) {
+        for (int r = 0; r < _shadeForm->rowCount(); ++r)
+            _shadeForm->setRowVisible(r, isShadedFamily && (r < _shadeRowCount || isInk));
+    }
 
-    setWidgetVisible(_uiRefs.preTfX1, false);
-    setWidgetVisible(_uiRefs.preTfY1, false);
-    setWidgetVisible(_uiRefs.preTfX2, false);
-    setWidgetVisible(_uiRefs.preTfY2, false);
-    setWidgetVisible(_uiRefs.preTfKnot2Label, false);
-    setWidgetVisible(_uiRefs.postTfX1, false);
-    setWidgetVisible(_uiRefs.postTfY1, false);
-    setWidgetVisible(_uiRefs.postTfX2, false);
-    setWidgetVisible(_uiRefs.postTfY2, false);
-    setWidgetVisible(_uiRefs.postTfKnot2Label, false);
 
     setWidgetVisible(_uiRefs.methodScaleLabel, false);
     setWidgetVisible(_uiRefs.methodScale, false);

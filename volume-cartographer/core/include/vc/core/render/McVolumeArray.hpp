@@ -28,6 +28,7 @@ struct mc_volume;
 extern "C" {
 int  mc_colormap_id(const char* name);
 void mc_colormap_lut(uint32_t lut[256], float win_low, float win_high, int cmap_id);
+void mc_image_dog(uint8_t* img, int w, int h, float sigma_px, float gain);
 }
 
 namespace vc::render {
@@ -94,6 +95,8 @@ public:
         float ambient = 0.f, diffuse = 0.f, specular = 0.f, shininess = 0.f;
         float absorption = 0.f, shadow = 0.f, sss = 0.f, curvature = 0.f;
         float percentile = 0.f;   // MC_COMP_PERCENTILE rank in (0,1] (0 -> 0.9)
+        float transmission = 0.f; // MC_COMP_INK backlight weight (0 -> 0.35)
+        float inkLock = 0.f;      // MC_COMP_INK sheet-lock depth, voxels (0 = off)
     };
 
     // Render a W*H image directly via matter-compressor's mc_render, bypassing

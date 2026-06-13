@@ -361,6 +361,9 @@ void McVolumeArray::render(const float* ptsXYZ, const float* normalsXYZ,
             p.absorption = shade->absorption; p.shadow = shade->shadow;
             p.sss = shade->sss; p.curvature = shade->curvature;
             p.percentile = shade->percentile;
+            p.transmission = shade->transmission;
+            p.ink_lock = shade->inkLock;
+            p.light_surface_rel = 1;   // raking = degrees above the LOCAL sheet
         }
         mc_render_points_par(&lods.lods[L], pts.data(), nrm.data(), w, h, &p, out, 0);
     }

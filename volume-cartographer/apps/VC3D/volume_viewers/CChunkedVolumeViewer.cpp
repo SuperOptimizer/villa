@@ -1517,6 +1517,7 @@ CChunkedVolumeViewer::RenderResult CChunkedVolumeViewer::renderFrame(RenderConte
         else if (m == "shaded")    comp = 6;
         else if (m == "percentile")comp = 7;
         else if (m == "depth")     comp = 8;
+        else if (m == "ink")       comp = 9;
     }
     const int front  = planeView ? ctx.compositeSettings.planeLayersFront
                                  : ctx.compositeSettings.layersFront;
@@ -1600,14 +1601,14 @@ CChunkedVolumeViewer::RenderResult CChunkedVolumeViewer::renderFrame(RenderConte
         cp.lightZ, cp.lightY, cp.lightX,
         cp.ambient, cp.diffuse, cp.specular, cp.shininess,
         cp.absorption, cp.shadow, cp.sss, cp.curvature,
-        cp.percentile};
+        cp.percentile, cp.transmission, cp.inkLockVox};
 
     auto renderArray = [&](vc::render::IChunkedArray& array,
                            cv::Mat_<uint8_t>& dst, int rcomp) {
         auto* mc = dynamic_cast<vc::render::McVolumeArray*>(&array);
         if (!mc || coords.empty())
             return;
-        const bool wantShade = (rcomp == 6 || rcomp == 7);
+        const bool wantShade = (rcomp == 6 || rcomp == 7 || rcomp == 9);
         mc->render(reinterpret_cast<const float*>(coords.ptr<cv::Vec3f>(0)),
                    (rcomp != 0 && !normals.empty())
                        ? reinterpret_cast<const float*>(normals.ptr<cv::Vec3f>(0))
@@ -1650,6 +1651,7 @@ CChunkedVolumeViewer::RenderResult CChunkedVolumeViewer::renderFrame(RenderConte
     fpAdd(shade.ambient); fpAdd(shade.diffuse); fpAdd(shade.specular);
     fpAdd(shade.shininess); fpAdd(shade.absorption); fpAdd(shade.shadow);
     fpAdd(shade.sss); fpAdd(shade.curvature); fpAdd(shade.percentile);
+    fpAdd(shade.transmission); fpAdd(shade.inkLock);
 
     if (!partialOk) {
         renderArray(*ctx.chunkArray, values, comp);
@@ -1880,7 +1882,7 @@ CChunkedVolumeViewer::RenderResult CChunkedVolumeViewer::renderFrame(RenderConte
                 cv::Mat_<uint8_t> tout(K * TS, TS, uint8_t(0));
                 QElapsedTimer batchTimer;
                 batchTimer.start();
-                const bool wantShade = (comp == 6 || comp == 7);
+                const bool wantShade = (comp == 6 || comp == 7 || comp == 9);
                 mcArr->render(reinterpret_cast<const float*>(tp.ptr<cv::Vec3f>(0)),
                               wantN ? reinterpret_cast<const float*>(tn.ptr<cv::Vec3f>(0))
                                     : nullptr,
@@ -1927,6 +1929,18 @@ CChunkedVolumeViewer::RenderResult CChunkedVolumeViewer::renderFrame(RenderConte
         overlayValues.create(ctx.fbH, ctx.fbW);
         overlayValues.setTo(0);
         renderArray(*ctx.overlayChunkArray, overlayValues, 0);
+    }
+
+    // INK: stroke-scale local-contrast band-pass at blit time, over the FULL
+    // frame (partial tile updates land in `values`; running the band-pass here
+    // keeps it seamless across tile boundaries). Applied to a copy -- the
+    // persistent sample buffer must stay raw.
+    if (comp == 9 && ctx.compositeSettings.params.inkGain > 0.0f &&
+        !values.empty() && values.isContinuous()) {
+        values = values.clone();
+        mc_image_dog(values.ptr<uint8_t>(0), ctx.fbW, ctx.fbH,
+                     ctx.compositeSettings.params.inkScaleVox * ctx.scale,
+                     ctx.compositeSettings.params.inkGain);
     }
 
     if (profilePhases) phaseTimer.restart();

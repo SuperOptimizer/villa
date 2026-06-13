@@ -7,6 +7,7 @@
 class QCheckBox;
 class QComboBox;
 class QDoubleSpinBox;
+class QFormLayout;
 class QLabel;
 class QScrollArea;
 class QSlider;
@@ -65,30 +66,7 @@ public:
         QLabel* shadowStepsLabel{nullptr};
         QSpinBox* shadowSteps{nullptr};
 
-        QCheckBox* rakingEnabled{nullptr};
-        QLabel* rakingAzimuthLabel{nullptr};
-        QDoubleSpinBox* rakingAzimuth{nullptr};
-        QLabel* rakingElevationLabel{nullptr};
-        QDoubleSpinBox* rakingElevation{nullptr};
-        QLabel* rakingStrengthLabel{nullptr};
-        QDoubleSpinBox* rakingStrength{nullptr};
-        QLabel* rakingDepthLabel{nullptr};
-        QDoubleSpinBox* rakingDepthScale{nullptr};
 
-        QCheckBox* preNormalizeLayers{nullptr};
-        QCheckBox* preHistEqLayers{nullptr};
-        QCheckBox* preTfEnabled{nullptr};
-        QSpinBox* preTfX1{nullptr};
-        QSpinBox* preTfY1{nullptr};
-        QLabel* preTfKnot2Label{nullptr};
-        QSpinBox* preTfX2{nullptr};
-        QSpinBox* preTfY2{nullptr};
-        QCheckBox* postTfEnabled{nullptr};
-        QSpinBox* postTfX1{nullptr};
-        QSpinBox* postTfY1{nullptr};
-        QLabel* postTfKnot2Label{nullptr};
-        QSpinBox* postTfX2{nullptr};
-        QSpinBox* postTfY2{nullptr};
         QLabel* dvrAmbientLabel{nullptr};
         QDoubleSpinBox* dvrAmbient{nullptr};
         QLabel* pbrRoughnessLabel{nullptr};
@@ -119,6 +97,20 @@ private:
     void applyToAllViewers(const std::function<void(VolumeViewerBase*)>& apply);
     void applyToPlaneViewers(const std::function<void(VolumeViewerBase*)>& apply);
 
+    void setupShadingControls();
+    void applyLightDirection();
+
     UiRefs _uiRefs;
+    // programmatic shaded/ink knobs (the lighting az/el/diffuse/ambient widgets
+    // come from the .ui; these rows cover the rest of mc's shading params)
+    QFormLayout* _shadeForm{nullptr};
+    QDoubleSpinBox* _specular{nullptr};
+    QDoubleSpinBox* _shadow{nullptr};
+    QDoubleSpinBox* _sss{nullptr};
+    QDoubleSpinBox* _curvature{nullptr};
+    QDoubleSpinBox* _transmission{nullptr};
+    QDoubleSpinBox* _inkGain{nullptr};
+    QSpinBox* _inkScaleVox{nullptr};
+    int _shadeRowCount{0};   // rows below this index are ink-only
     ViewerManager* _viewerManager{nullptr};
 };

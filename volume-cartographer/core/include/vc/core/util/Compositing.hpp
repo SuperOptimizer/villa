@@ -36,6 +36,14 @@ struct CompositeParams {
     float sss = 0.0f;
     float curvature = 0.0f;
 
+    // "ink" mode (MC_COMP_INK): backlit transmission weight, plus the blit-time
+    // stroke-scale local-contrast band-pass (gain 0 = off; scale in LOD-0 voxels,
+    // mapped to screen px through the render scale).
+    float transmission = 0.35f;
+    float inkGain = 1.0f;
+    float inkScaleVox = 56.0f;   // ~0.13mm at 2.4um: stroke scale, not letter scale
+    float inkLockVox = 14.0f;    // sheet-lock crust depth in voxels (0 = whole slab)
+
     bool operator==(const CompositeParams&) const = default;
 };
 
