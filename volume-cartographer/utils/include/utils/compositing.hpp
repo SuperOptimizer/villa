@@ -18,6 +18,9 @@ enum class CompositingMethod : std::uint8_t {
     max,
     min,
     alpha,
+    alpha_overlay,
+    alpha_overlay_start,
+    alpha_overlay_combined,
     beer_lambert,
     dvr,
     first_hit_iso,
@@ -67,6 +70,9 @@ struct CompositeParams {
     if (name == "max")          return CompositingMethod::max;
     if (name == "min")          return CompositingMethod::min;
     if (name == "alpha")        return CompositingMethod::alpha;
+    if (name == "alphaOverlay")          return CompositingMethod::alpha_overlay;
+    if (name == "alphaOverlayStart")     return CompositingMethod::alpha_overlay_start;
+    if (name == "alphaOverlayCombined")  return CompositingMethod::alpha_overlay_combined;
     if (name == "beerLambert")  return CompositingMethod::beer_lambert;
     if (name == "dvr")          return CompositingMethod::dvr;
     if (name == "firstHitIso")  return CompositingMethod::first_hit_iso;
@@ -194,6 +200,102 @@ inline void value_stretch(std::span<float> data) noexcept {
     }
 
     return value_acc;
+}
+
+// ---------------------------------------------------------------------------
+// Overlay-aware alpha compositing (ported from jrudolph/vesuvius-gui
+// vesuvius-rs/src/volume/overlay.rs). Opacity comes from a separate `overlay`
+// channel (e.g. ink prediction); the displayed value comes from `base`. When
+// no overlay volume is loaded the caller passes base as overlay too, which
+// degrades Opacity/Start to the plain alpha walk. Thresholds are pre-scaled to
+// the [0,255] sample domain (alpha_cutoff stays in [0,1]); result is [0,1].
+// ---------------------------------------------------------------------------
+
+/// Opacity walk: opacity from the overlay (normalized by alpha_min/max),
+/// displayed value from the base sample.
+[[nodiscard]] constexpr float composite_alpha_overlay(
+    std::span<const float> base, std::span<const float> overlay,
+    float alpha_min, float alpha_max,
+    float alpha_opacity = 1.0f,
+    float alpha_cutoff = 1.0f) noexcept
+{
+    const std::size_t n = std::min(base.size(), overlay.size());
+    if (n == 0) return 0.0f;
+    const float range = alpha_max - alpha_min;
+    if (range == 0.0f) return 0.0f;
+    const float inv_range = 1.0f / range;
+
+    float acc_v = 0.0f;
+    float acc_a = 0.0f;
+    for (std::size_t k = 0; k < n; ++k) {
+        float a = (overlay[k] - alpha_min) * inv_range;
+        if (a <= 0.0f) continue;
+        if (a > 1.0f) a = 1.0f;
+        float opacity = a * alpha_opacity;
+        if (opacity > 1.0f) opacity = 1.0f;
+        const float weight = (1.0f - acc_a) * opacity;
+        acc_v += weight * (base[k] * (1.0f / 255.0f));
+        acc_a += weight;
+        if (acc_a >= alpha_cutoff) break;
+    }
+    return acc_v;
+}
+
+/// Start walk: index of the first front-to-back overlay sample whose
+/// normalized alpha exceeds alpha_min (raw overlay > alpha_min). The caller
+/// runs the regular base walk from this onset. Returns 0 when the overlay
+/// never fires (matching overlay.rs `unwrap_or(0)`).
+[[nodiscard]] constexpr std::size_t alpha_overlay_onset(
+    std::span<const float> overlay, float alpha_min) noexcept
+{
+    for (std::size_t k = 0; k < overlay.size(); ++k) {
+        if (overlay[k] > alpha_min) return k;
+    }
+    return 0;
+}
+
+/// Combined walk: two simultaneous accumulations over the same samples — an
+/// overlay-masked alpha walk (base alpha scaled by overlay confidence) and a
+/// plain base alpha walk — crossfaded at the end by `background`. The masked
+/// value is un-derated by coverage^value_norm.
+[[nodiscard]] inline float composite_alpha_overlay_combined(
+    std::span<const float> base, std::span<const float> overlay,
+    float alpha_min, float alpha_max,
+    float alpha_opacity, float alpha_cutoff,
+    float background, float value_norm) noexcept
+{
+    const std::size_t n = std::min(base.size(), overlay.size());
+    if (n == 0) return 0.0f;
+    const float range = alpha_max - alpha_min;
+    if (range == 0.0f) return 0.0f;
+    const float inv_range = 1.0f / range;
+
+    float m_v = 0.0f, m_a = 0.0f;  // overlay-masked walk
+    float r_v = 0.0f, r_a = 0.0f;  // plain base walk
+    for (std::size_t k = 0; k < n; ++k) {
+        float a_b = (base[k] - alpha_min) * inv_range;
+        if (a_b <= 0.0f) continue;
+        if (a_b > 1.0f) a_b = 1.0f;
+        if (m_a < alpha_cutoff) {
+            const float a = a_b * (overlay[k] * (1.0f / 255.0f));
+            if (a > 0.0f) {
+                const float weight = (1.0f - m_a) * std::min(a * alpha_opacity, 1.0f);
+                m_v += weight * a_b;
+                m_a += weight;
+            }
+        }
+        if (r_a < alpha_cutoff) {
+            const float weight = (1.0f - r_a) * std::min(a_b * alpha_opacity, 1.0f);
+            r_v += weight * a_b;
+            r_a += weight;
+        }
+        if (m_a >= alpha_cutoff && r_a >= alpha_cutoff) break;
+    }
+    float masked;
+    if (value_norm >= 1.0f)      masked = m_v;
+    else if (m_a > 0.0f)         masked = (m_v / m_a) * std::pow(m_a, value_norm);
+    else                         masked = 0.0f;
+    return (1.0f - background) * masked + background * r_v;
 }
 
 /// Beer-Lambert volume rendering (front-to-back).

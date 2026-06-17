@@ -654,6 +654,21 @@
            <string>Shaded DVR</string>
           </property>
          </item>
+         <item>
+          <property name="text">
+           <string>Alpha Overlay</string>
+          </property>
+         </item>
+         <item>
+          <property name="text">
+           <string>Alpha Overlay (Start)</string>
+          </property>
+         </item>
+         <item>
+          <property name="text">
+           <string>Alpha Overlay (Combined)</string>
+          </property>
+         </item>
         </widget>
        </item>
       </layout>

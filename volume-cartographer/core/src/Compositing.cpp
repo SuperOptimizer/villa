@@ -94,6 +94,36 @@ float compositeLayerStack(
             return CompositeMethod::min(stack);
         case utils::CompositingMethod::alpha:
             return CompositeMethod::alpha(stack, params);
+        case utils::CompositingMethod::alpha_overlay:
+        case utils::CompositingMethod::alpha_overlay_start:
+        case utils::CompositingMethod::alpha_overlay_combined: {
+            // Overlay supplies per-layer opacity; falls back to the base values
+            // when no overlay volume is loaded (single-volume degradation).
+            const std::span<const float> base(stack.values.data(), stack.validCount);
+            const float* overlayPtr = stack.overlayValues.size() >= size_t(stack.validCount)
+                                          ? stack.overlayValues.data()
+                                          : stack.values.data();
+            const std::span<const float> overlay(overlayPtr, stack.validCount);
+            const float aMin = params.alphaMin * 255.0f;
+            const float aMax = params.alphaMax * 255.0f;
+            if (method == utils::CompositingMethod::alpha_overlay) {
+                return utils::composite_alpha_overlay(
+                    base, overlay, aMin, aMax,
+                    params.alphaOpacity, params.alphaCutoff) * 255.0f;
+            }
+            if (method == utils::CompositingMethod::alpha_overlay_combined) {
+                return utils::composite_alpha_overlay_combined(
+                    base, overlay, aMin, aMax,
+                    params.alphaOpacity, params.alphaCutoff,
+                    params.overlayBackground, params.overlayValueNorm) * 255.0f;
+            }
+            // Start: plain base alpha walk from the first significant overlay
+            // sample (overlay > alpha_min).
+            const std::size_t onset = utils::alpha_overlay_onset(overlay, aMin);
+            return utils::composite_alpha(
+                base.subspan(onset),
+                aMin, aMax, params.alphaOpacity, params.alphaCutoff) * 255.0f;
+        }
         case utils::CompositingMethod::beer_lambert:
             return CompositeMethod::beerLambert(stack, params);
         case utils::CompositingMethod::dvr:

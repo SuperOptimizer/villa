@@ -111,7 +111,15 @@ struct IntersectionStyleHash {
 
 bool isSupportedStreamingCompositeMethod(const std::string& method)
 {
-    return method == "mean" || method == "max" || method == "min" || method == "alpha";
+    return method == "mean" || method == "max" || method == "min" || method == "alpha" ||
+           method == "alphaOverlay" || method == "alphaOverlayStart" ||
+           method == "alphaOverlayCombined";
+}
+
+bool isOverlayCompositeMethod(const std::string& method)
+{
+    return method == "alphaOverlay" || method == "alphaOverlayStart" ||
+           method == "alphaOverlayCombined";
 }
 
 int dominantAxis(const cv::Vec3f& v, float axisEps = 1e-4f)
@@ -2411,11 +2419,22 @@ CChunkedVolumeViewer::RenderResult CChunkedVolumeViewer::renderFrame(RenderConte
         const int zStart = -behind;
         const float zStep = ctx.compositeSettings.reverseDirection ? -1.0f : 1.0f;
         const auto compositeOptions = vc::render::ChunkedPlaneSampler::Options(vc::Sampling::Nearest, options.tileSize);
+        // Overlay-aware methods gather a parallel per-layer stack from the
+        // overlay volume (opacity source). Falls back to single-volume when no
+        // overlay is loaded — the composite math then uses base as overlay.
+        const bool wantOverlay =
+            isOverlayCompositeMethod(ctx.compositeSettings.params.method) &&
+            ctx.overlayChunkArray && ctx.overlayVolume;
+        const int overlayLevel = wantOverlay
+            ? std::clamp(ctx.startLevel, 0, ctx.overlayChunkArray->numLevels() - 1)
+            : 0;
         std::vector<cv::Mat_<uint8_t>> layerValues;
         std::vector<cv::Mat_<uint8_t>> layerCoverage;
+        std::vector<cv::Mat_<uint8_t>> overlayLayerValues;
         cv::Mat_<cv::Vec3f> layerCoords(coords.rows, coords.cols);
         layerValues.reserve(numLayers);
         layerCoverage.reserve(numLayers);
+        if (wantOverlay) overlayLayerValues.reserve(numLayers);
         for (int i = 0; i < numLayers; ++i) {
             const float offset = float(zStart + i) * zStep;
             for (int y = 0; y < coords.rows; ++y) {
@@ -2440,9 +2459,23 @@ CChunkedVolumeViewer::RenderResult CChunkedVolumeViewer::renderFrame(RenderConte
                     array, ctx.startLevel, layerCoords,
                     layerValues.back(), layerCoverage.back(), compositeOptions);
             }
+            if (wantOverlay) {
+                cv::Mat_<uint8_t> overlayCov(dst.rows, dst.cols, uint8_t(0));
+                overlayLayerValues.emplace_back(dst.rows, dst.cols, uint8_t(0));
+                if (ctx.interactivePreview) {
+                    vc::render::ChunkedPlaneSampler::sampleCoordsCoarseToFine(
+                        *ctx.overlayChunkArray, overlayLevel, layerCoords,
+                        overlayLayerValues.back(), overlayCov, compositeOptions);
+                } else {
+                    vc::render::ChunkedPlaneSampler::sampleCoordsFineToCoarse(
+                        *ctx.overlayChunkArray, overlayLevel, layerCoords,
+                        overlayLayerValues.back(), overlayCov, compositeOptions);
+                }
+            }
         }
         LayerStack stack;
         stack.values.resize(numLayers);
+        if (wantOverlay) stack.overlayValues.resize(numLayers);
         for (int y = 0; y < dst.rows; ++y) {
             auto* dstRow = dst.ptr<uint8_t>(y);
             auto* covRow = cov.ptr<uint8_t>(y);
@@ -2454,6 +2487,9 @@ CChunkedVolumeViewer::RenderResult CChunkedVolumeViewer::renderFrame(RenderConte
                     const float value = static_cast<float>(layerValues[i](y, x));
                     if (value < static_cast<float>(ctx.compositeSettings.params.isoCutoff))
                         continue;
+                    if (wantOverlay)
+                        stack.overlayValues[stack.validCount] =
+                            static_cast<float>(overlayLayerValues[i](y, x));
                     stack.values[stack.validCount++] = value;
                 }
                 if (stack.validCount > 0) {

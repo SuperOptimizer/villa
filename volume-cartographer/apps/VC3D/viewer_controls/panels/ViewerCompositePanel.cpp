@@ -38,6 +38,9 @@ std::string compositeMethodForModeIndex(int index)
         case 12: return "gradientMag";
         case 13: return "pbrIso";
         case 14: return "shadedDvr";
+        case 15: return "alphaOverlay";
+        case 16: return "alphaOverlayStart";
+        case 17: return "alphaOverlayCombined";
         default: return "mean";
     }
 }
@@ -59,6 +62,9 @@ int compositeModeIndexForMethod(const std::string& method)
     if (method == "gradientMag") return 12;
     if (method == "pbrIso") return 13;
     if (method == "shadedDvr") return 14;
+    if (method == "alphaOverlay") return 15;
+    if (method == "alphaOverlayStart") return 16;
+    if (method == "alphaOverlayCombined") return 17;
     return 1;
 }
 
@@ -428,15 +434,32 @@ void ViewerCompositePanel::setupControls()
                 [applyParam](double v) { applyParam([v](CompositeParams& p) { p.pbrMetallic = float(v); }); });
     }
 
+    // Generic method sliders, repurposed for the alphaOverlayCombined mode:
+    // methodScale -> overlayBackground, methodParam -> overlayValueNorm.
+    // Both map slider [0,100] -> param [0,1].
     if (_uiRefs.methodScale) {
         connect(_uiRefs.methodScale, &QSlider::valueChanged, this, [this](int value) {
             if (_uiRefs.methodScaleValue) {
-                _uiRefs.methodScaleValue->setText(QString::number(value / 10.0f, 'f', 1));
+                _uiRefs.methodScaleValue->setText(QString::number(value / 100.0f, 'f', 2));
             }
+            applyToSegmentationViewer([value](VolumeViewerBase* viewer) {
+                auto s = viewer->compositeRenderSettings();
+                s.params.overlayBackground = value / 100.0f;
+                viewer->setCompositeRenderSettings(s);
+            });
         });
     }
     if (_uiRefs.methodParam) {
-        connect(_uiRefs.methodParam, &QSlider::valueChanged, this, [](int) {});
+        connect(_uiRefs.methodParam, &QSlider::valueChanged, this, [this](int value) {
+            if (_uiRefs.methodParamValue) {
+                _uiRefs.methodParamValue->setText(QString::number(value / 100.0f, 'f', 2));
+            }
+            applyToSegmentationViewer([value](VolumeViewerBase* viewer) {
+                auto s = viewer->compositeRenderSettings();
+                s.params.overlayValueNorm = value / 100.0f;
+                viewer->setCompositeRenderSettings(s);
+            });
+        });
     }
 
     if (_uiRefs.planeCompositeXY) {
@@ -576,12 +599,16 @@ void ViewerCompositePanel::updateCompositeParamsVisibility()
     const bool preTfOn = _uiRefs.preTfEnabled && _uiRefs.preTfEnabled->isChecked();
     const bool postTfOn = _uiRefs.postTfEnabled && _uiRefs.postTfEnabled->isChecked();
 
-    const bool isAlpha = methodIndex == 3;
     const bool isBL = methodIndex == 4;
     const bool isVolum = methodIndex == 5;
     const bool isDvr = methodIndex == 6;
     const bool isPbr = methodIndex == 13;
     const bool isShadedDvr = methodIndex == 14;
+    // 15=alphaOverlay, 16=alphaOverlayStart, 17=alphaOverlayCombined.
+    const bool isOverlay = methodIndex >= 15 && methodIndex <= 17;
+    const bool isOverlayCombined = methodIndex == 17;
+    // The overlay modes reuse the alpha min/max/cutoff/opacity sliders.
+    const bool isAlpha = methodIndex == 3 || isOverlay;
 
     setWidgetVisible(_uiRefs.alphaMinLabel, isAlpha);
     setWidgetVisible(_uiRefs.alphaMin, isAlpha);
@@ -633,12 +660,18 @@ void ViewerCompositePanel::updateCompositeParamsVisibility()
     setWidgetVisible(_uiRefs.postTfY2, postTfOn);
     setWidgetVisible(_uiRefs.postTfKnot2Label, postTfOn);
 
-    setWidgetVisible(_uiRefs.methodScaleLabel, false);
-    setWidgetVisible(_uiRefs.methodScale, false);
-    setWidgetVisible(_uiRefs.methodScaleValue, false);
-    setWidgetVisible(_uiRefs.methodParamLabel, false);
-    setWidgetVisible(_uiRefs.methodParam, false);
-    setWidgetVisible(_uiRefs.methodParamValue, false);
+    // Combined overlay mode repurposes the two generic sliders for its
+    // background crossfade and value-norm gamma.
+    if (isOverlayCombined) {
+        if (_uiRefs.methodScaleLabel) _uiRefs.methodScaleLabel->setText(tr("Background"));
+        if (_uiRefs.methodParamLabel) _uiRefs.methodParamLabel->setText(tr("Value norm"));
+    }
+    setWidgetVisible(_uiRefs.methodScaleLabel, isOverlayCombined);
+    setWidgetVisible(_uiRefs.methodScale, isOverlayCombined);
+    setWidgetVisible(_uiRefs.methodScaleValue, isOverlayCombined);
+    setWidgetVisible(_uiRefs.methodParamLabel, isOverlayCombined);
+    setWidgetVisible(_uiRefs.methodParam, isOverlayCombined);
+    setWidgetVisible(_uiRefs.methodParamValue, isOverlayCombined);
 }
 
 void ViewerCompositePanel::updateRakingControlsEnabled(bool enabled)

@@ -18,6 +18,13 @@ struct CompositeParams {
     float alphaOpacity = 1.0f;
     float alphaCutoff = 1.0f;
 
+    // Overlay-aware alpha methods ("alphaOverlay", "alphaOverlayStart",
+    // "alphaOverlayCombined"): opacity is driven by a separate overlay volume.
+    // overlayBackground crossfades the masked vs plain walk (Combined only);
+    // overlayValueNorm is the coverage gamma that recovers mid-confidence ink.
+    float overlayBackground = 0.0f;
+    float overlayValueNorm = 1.0f;
+
     // Beer-Lambert parameters (volume rendering with emission + absorption)
     float blExtinction = 1.5f;        // Absorption coefficient (higher = more opaque)
     float blEmission = 1.5f;          // Emission scale (higher = brighter)
@@ -151,6 +158,10 @@ struct CompositeRenderSettings {
 // Used by compositing methods to process per-pixel data
 struct LayerStack {
     std::vector<float> values;  // Values at each layer (after cutoff/equalization)
+    // Parallel per-layer opacity source for the overlay-aware alpha methods.
+    // Same ordering/validCount as `values`; left empty for non-overlay methods,
+    // in which case the overlay walks fall back to using `values` as opacity.
+    std::vector<float> overlayValues;
     int validCount = 0;         // Number of valid (sampled) layers
 };
 

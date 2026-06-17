@@ -141,6 +141,67 @@ TEST_CASE("compositeLayerStack: extended methods do not crash and return finite"
     }
 }
 
+TEST_CASE("alphaOverlay: overlay==base degrades to plain alpha")
+{
+    // With the overlay equal to the base, the Opacity walk drives opacity from
+    // the same samples it displays — i.e. the existing alpha walk.
+    LayerStack s = stack({50.f, 120.f, 200.f});
+    s.overlayValues = s.values;
+    CompositeParams p;
+    p.alphaMin = 0.0f; p.alphaMax = 1.0f; p.alphaOpacity = 1.0f; p.alphaCutoff = 1.0f;
+    p.method = "alpha";
+    const float plain = compositeLayerStack(s, p);
+    p.method = "alphaOverlay";
+    CHECK(compositeLayerStack(s, p) == doctest::Approx(plain));
+}
+
+TEST_CASE("alphaOverlayStart: onset skips leading sub-threshold overlay")
+{
+    // Base is uniformly bright; overlay only fires at the 3rd sample. Start
+    // runs the plain base alpha walk from that onset, so the result equals the
+    // plain alpha of the tail {200,200}.
+    LayerStack s = stack({200.f, 200.f, 200.f, 200.f});
+    s.overlayValues = {0.f, 0.f, 200.f, 200.f};
+    CompositeParams p;
+    p.alphaMin = 100.f / 255.f; p.alphaMax = 1.0f;
+    p.alphaOpacity = 1.0f; p.alphaCutoff = 1.0f;
+    p.method = "alphaOverlayStart";
+    const float started = compositeLayerStack(s, p);
+
+    LayerStack tail = stack({200.f, 200.f});
+    p.method = "alpha";
+    CHECK(started == doctest::Approx(compositeLayerStack(tail, p)));
+}
+
+TEST_CASE("alphaOverlayCombined: background=1 matches the plain alpha walk")
+{
+    // Per overlay.rs, background=1 lifts the crossfade entirely to the plain
+    // (unmasked) walk, regardless of the overlay channel.
+    LayerStack s = stack({60.f, 130.f, 210.f});
+    s.overlayValues = {255.f, 10.f, 200.f};  // arbitrary overlay
+    CompositeParams p;
+    p.alphaMin = 0.0f; p.alphaMax = 1.0f; p.alphaOpacity = 1.0f; p.alphaCutoff = 1.0f;
+    p.overlayValueNorm = 1.0f;
+    p.overlayBackground = 1.0f;
+    p.method = "alphaOverlayCombined";
+    const float combined = compositeLayerStack(s, p);
+    p.method = "alpha";
+    CHECK(combined == doctest::Approx(compositeLayerStack(s, p)));
+}
+
+TEST_CASE("overlay methods: single-volume fallback (no overlay buffer) is finite")
+{
+    LayerStack s = stack({10.f, 90.f, 180.f});  // overlayValues left empty
+    CompositeParams p;
+    for (const auto& m : {"alphaOverlay", "alphaOverlayStart", "alphaOverlayCombined"}) {
+        p.method = m;
+        const float v = compositeLayerStack(s, p);
+        CHECK(std::isfinite(v));
+        CHECK(v >= 0.0f);
+        CHECK(v <= 255.0f);
+    }
+}
+
 TEST_CASE("compositeLayerStack empty stack always returns 0")
 {
     CompositeParams p;
