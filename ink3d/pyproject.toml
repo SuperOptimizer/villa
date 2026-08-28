@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ink3d"
+version = "0.1.0"
+description = "Minimal 3D U-Net ink detection and surface prediction"
+requires-python = ">=3.11"
+dependencies = [
+    "torch>=2.4",
+    "numpy>=2.0",
+    "zarr>=3.0",
+    "einops>=0.8",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[tool.setuptools.packages.find]
+include = ["ink3d*"]
