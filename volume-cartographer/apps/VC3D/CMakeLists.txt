@@ -27,12 +27,18 @@ set(srcs
     AxisAlignedSliceController.cpp
     AxisAlignedSliceController.hpp
     LineAnnotationFiberClassification.hpp
+    LineAnnotationFiberDeletion.hpp
     LineAnnotationFiberSaveJob.cpp
     LineAnnotationFiberSaveJob.hpp
     FiberNameDisplay.cpp
     FiberNameDisplay.hpp
     FiberMapWorkspace.cpp
     FiberMapWorkspace.hpp
+    FiberMapRuler.cpp
+    FiberMapRuler.hpp
+    FiberMapRulerMath.hpp
+    FiberMapGapField.cpp
+    FiberMapGapField.hpp
     FiberNetworkLayout.cpp
     FiberNetworkLayout.hpp
     FiberWindingSolver.cpp
@@ -59,6 +65,8 @@ set(srcs
     OpenDataSampleProject.hpp
     OpenDataVolumePrefill.cpp
     OpenDataVolumePrefill.hpp
+    OpenDataVolumeOrientation.cpp
+    OpenDataVolumeOrientation.hpp
     OpenDataNormalGrids.cpp
     OpenDataNormalGrids.hpp
     OpenDataSegmentCache.cpp
@@ -107,7 +115,6 @@ set(srcs
     elements/DownloadQueueDebugOverlay.hpp
     elements/ViewerSplitGrid.cpp
     elements/ViewerSplitGrid.hpp
-    RemoteVolumeCachePaths.cpp
     SettingsDialog.cpp
     SurfaceTreeWidget.hpp
     SurfaceTreeWidget.cpp
@@ -177,6 +184,7 @@ set(srcs
     overlays/PlaneSlicingOverlayController.hpp
     overlays/SurfaceRotationOverlayController.cpp
     overlays/SurfaceRotationOverlayController.hpp
+    overlays/SurfaceRotationTransform.hpp
     overlays/AtlasOverlayController.cpp
     overlays/AtlasOverlayController.hpp
     overlays/AtlasControlPointsOverlayController.cpp
@@ -185,6 +193,9 @@ set(srcs
     overlays/FiberSliceOverlayController.hpp
     overlays/FiberOverlayController.cpp
     overlays/FiberOverlayController.hpp
+    overlays/OverlayBatchItem.cpp
+    overlays/OverlayBatchItem.hpp
+    overlays/ScreenSpacePointIndex.hpp
     overlays/InkDetectionOverlayController.cpp
     overlays/InkDetectionOverlayController.hpp
     overlays/VolumeOverlayController.cpp
@@ -212,11 +223,18 @@ set(srcs
     LasagnaServiceManager.hpp
     SpiralArtifactCache.cpp
     SpiralArtifactCache.hpp
+    SpiralBrushCursorWidget.cpp
+    SpiralBrushCursorWidget.hpp
     SpiralBrushController.cpp
     SpiralBrushController.hpp
+    SpiralPclRole.hpp
+    SpiralPointPlacementMode.hpp
+    SpiralPointCollectionEdit.cpp
+    SpiralPointCollectionEdit.hpp
     SpiralPointChain.cpp
     SpiralPointChain.hpp
     SpiralServiceManager.cpp
+    SpiralServiceManagerInputs.cpp
     SpiralServiceManager.hpp
     SpiralServiceProfile.hpp
     SpiralSessionSync.hpp
@@ -267,6 +285,8 @@ set(srcs
     elements/COutlinedTextItem.cpp
     volume_viewers/CChunkedVolumeViewer.cpp
     volume_viewers/CChunkedVolumeViewer.hpp
+    volume_viewers/IntersectionLayerItem.cpp
+    volume_viewers/IntersectionLayerItem.hpp
     volume_viewers/CameraGizmoWidget.cpp
     volume_viewers/CameraGizmoWidget.hpp
     volume_viewers/VolumetricCompositor.cpp

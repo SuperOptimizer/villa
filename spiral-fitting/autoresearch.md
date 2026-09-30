@@ -21,13 +21,13 @@ Once you get confirmation, kick off the experimentation.
 
 ## The goal
 
-**Maximise the area of ink recovered.** After each fit, the fitted meshes are rendered against an ink-prediction volume (`render_ink.py`) and a 2D nnU-Net scores how much ink-like surface was recovered (`get_ink_coverage.py`). The single number we optimise is:
+**Maximise the area of ink recovered.** After each fit, the fitted meshes are rendered against an ink-prediction volume (`render_ink.py`) and a 2D nnU-Net scores how much ink-like surface was recovered (`get_ink_metrics.py`). The single number we optimise is:
 
 > **`total_fg_pixels`** — the total count of ink-foreground pixels across all rendered winding strips. Higher = more ink recovered. This is the metric.
 
 A better fit — one that produces a more coherent, correctly-flattened surface that lands on the inked papyrus — recovers more ink. That is the whole game: change the *fitting* so the resulting surface exposes more ink.
 
-We also track **`overall_fg_fraction`** (foreground pixels ÷ total strip pixels) as a **secondary / sanity metric**. It guards against gaming: if a change balloons `total_fg_pixels` only by inflating the surface with garbage geometry, the fraction will collapse. Treat a big `total_fg_pixels` gain that comes with a large fraction *drop* with suspicion — that is probably noise, not ink. A change that lifts both, or lifts total while holding fraction roughly steady, is a real win.
+We also track **`overall_fg_fraction`** (foreground pixels ÷ total strip pixels) as a **secondary / sanity metric**. It guards against gaming: if a change balloons `total_fg_pixels` only by inflating the surface with garbage geometry, the fraction will collapse. Note that *duplicated* coverage is not caught this way: a repeated winding scales foreground and total pixels together, so the fraction holds steady while `total_fg_pixels` rises. Treat a big `total_fg_pixels` gain that comes with a large fraction *drop* with suspicion — that is probably noise, not ink. A change that lifts both, or lifts total while holding fraction roughly steady, is a real win.
 
 **Also keep an eye on the satisfaction metrics.** `fit_spiral.py` prints some geometry-fit metrics — `satisfied_patches`, `satisfied_area`, `satisfied_unattached_pcls`, `satisfied_unattached_pcl_points` — near the end of its log (`<out_dir>/logs/<tag>.fit.log`). These are **not the objective** (ink coverage is), but they are a useful *diagnostic* for what a change did to the underlying fit. Track how they move alongside ink coverage: if ink coverage climbs while the satisfaction metrics hold up (or improve), you have a genuinely better fit; if ink coverage climbs while the satisfaction metrics fall off a cliff, be suspicious that you are contorting the surface to catch stray ink rather than fitting the scroll better. They are a cross-check, not a target — do not optimise them directly, and never let them override the ink-coverage decision.
 
@@ -38,7 +38,7 @@ We also track **`overall_fg_fraction`** (foreground pixels ÷ total strip pixels
 - Create/modify your own helper *shell/python scripts* for driving the loop (batch launchers, summarizers, etc.).
 
 **What you CANNOT do:**
-- Touch the **metric / render pipeline**. `render_ink.py`, `get_ink_coverage.py`, the nnU-Net ink model / checkpoint, the ink volume, and the render/score parameters (scale, num-slices, fg-threshold, flatten settings) are all **frozen**. Modifying any of them — or otherwise engineering the score rather than the fit — is cheating.
+- Touch the **metric / render pipeline**. `render_ink.py`, `get_ink_metrics.py`, the nnU-Net ink model / checkpoint, the ink volume, and the render/score parameters (scale, num-slices, fg-threshold, flatten settings) are all **frozen**. Modifying any of them — or otherwise engineering the score rather than the fit — is cheating.
 - Edit **`tifxyz.py`**. It is shared: `render_ink.py` imports it to load the meshes it renders, so any change to it changes the metric. It is frozen even though `fit_spiral.py` also uses it. (`satisfaction_metrics.py` is likewise best left alone — editing it cannot affect the ink score.)
 - Change the number of fit iterations (`num_training_steps` in the config, currently `30000`) **above** its current value. It must stay fixed (it *can* be reduced if that genuinely gives equal-or-better ink coverage).
 - Install new packages or add dependencies. Use only what is already in this conda env.
@@ -49,7 +49,7 @@ We also track **`overall_fg_fraction`** (foreground pixels ÷ total strip pixels
 
 **The first run**: Your very first run should always establish the baseline — run the pipeline as-is, unmodified. After that, prefer simple hyperparameter changes before anything drastic.
 
-**Stochasticity**: The code is sensitive to the random seed and CUDA non-determinism. Prefer changes that are robust across seeds/runs, not ones that only help for one specific seed. Since you run two at a time, a cheap robustness check is to run the same change under two seeds concurrently and see if the ink gain survives. Seemingly-beneficial changes should be verified across seeds/runs before you commit to them.
+**Stochasticity**: The code is sensitive to the random seed and CUDA non-determinism. Prefer changes that are robust across seeds/runs, not ones that only help for one specific seed. Since you run two at a time, a cheap robustness check is to run the same change under two seeds concurrently and see if the ink gain survives. Be aware of what that buys: if the rule is "both change runs beat both baseline runs", a change with no real effect passes it with probability exactly 1/C(2k, k) — **1 in 6** for two seeds, **1 in 20** for three. That is a rank statistic, so it does not depend on the noise level, the metric, or the code version; it cannot be reduced by fitting better, only by using more seeds. Seemingly-beneficial changes should be verified across seeds/runs before you commit to them.
 
 ## The pipeline and how to run it
 
@@ -57,7 +57,7 @@ Each experiment is one full pipeline run, driven by `run_single.py`, which chain
 
 1. `torchrun --nproc_per_node=<n> fit_spiral.py` — fits the meshes.
 2. `render_ink.py <meshes_dir>` — renders ink strips into `<meshes_dir>/ink`.
-3. `get_ink_coverage.py <meshes_dir>/ink` — scores ink coverage into `<meshes_dir>/ink_metric`.
+3. `get_ink_metrics.py <meshes_dir>/ink` — scores ink coverage into `<meshes_dir>/ink_metric`.
 
 `run_single.py` reads three things from the environment, which the caller sets:
 
@@ -71,7 +71,7 @@ Per-step logs go to `<out_dir>/logs/<tag>.{fit,ink,coverage}.log`, and the ink m
 
 ## Output format — reading the metric
 
-`get_ink_coverage.py` prints a summary near the end of its log (`<out_dir>/logs/<tag>.coverage.log`):
+`get_ink_metrics.py` prints a summary near the end of its log (`<out_dir>/logs/<tag>.coverage.log`):
 
 ```
 ================================================================
@@ -91,13 +91,15 @@ and writes the same numbers as JSON to `.../ink_metric/metrics.json`:
     "num_strips": 42,
     "total_fg_pixels": 1234567,
     "total_pixels": 9876543,
-    "overall_fg_fraction": 0.125
+    "overall_fg_fraction": 0.125,
+    "overall_line_score": 0.403,
+    "overall_column_score": 0.191
   },
   "strips": [ ... ]
 }
 ```
 
-**Read the metric from `metrics.json`** (robust to log formatting) — the primary field is `summary.total_fg_pixels`, the guard is `summary.overall_fg_fraction`. If `metrics.json` is missing, the run did not finish cleanly; check the three per-step logs (`.fit.log`, `.ink.log`, `.coverage.log`) for the failure. (Absolute numbers depend on the machine; only relative comparisons against the baseline on the same machine matter.)
+**Read the metric from `metrics.json`** (robust to log formatting) — the primary field is `summary.total_fg_pixels`, the guard is `summary.overall_fg_fraction`. The scorer also computes and persists `summary.overall_line_score` and `summary.overall_column_score`, text-layout scores over the ensemble ink probabilities; they are recorded here for completeness and are neither the objective nor a prescribed guard. If `metrics.json` is missing, the run did not finish cleanly; check the three per-step logs (`.fit.log`, `.ink.log`, `.coverage.log`) for the failure. (Absolute numbers depend on the machine; only relative comparisons against the baseline on the same machine matter.)
 
 ## Logging results
 
