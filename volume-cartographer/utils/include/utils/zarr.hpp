@@ -360,6 +360,24 @@ public:
         (void)key;
         return std::nullopt;
     }
+
+    /// Bytes counted back from the end of an object, together with the
+    /// object size they were located against.
+    struct TrailingRange {
+        std::size_t object_size = 0;
+        std::vector<std::byte> bytes;
+    };
+
+    /// Bytes [size - from_end, size - from_end + length) of the object at key
+    /// (a trailing shard index, say). The size and the bytes must come from
+    /// one view of the object, so a concurrent rewrite cannot pair a new size
+    /// with old bytes: FileSystemStore reads both through one descriptor. The
+    /// default pairs size_of() with get_partial(), which is only consistent
+    /// for objects that are replaced whole (HTTP/S3). nullopt when the object
+    /// is absent, shorter than from_end, or its size is unknown; readers then
+    /// fall back to a whole-object read.
+    [[nodiscard]] virtual std::optional<TrailingRange>
+    get_trailing_range(const std::string& key, std::size_t from_end, std::size_t length) const;
 };
 
 // ---------------------------------------------------------------------------
@@ -379,6 +397,8 @@ public:
     [[nodiscard]] std::optional<std::vector<std::byte>>
     get_partial(const std::string& key, std::size_t offset, std::size_t length) const override;
     [[nodiscard]] std::optional<std::size_t> size_of(const std::string& key) const override;
+    [[nodiscard]] std::optional<TrailingRange>
+    get_trailing_range(const std::string& key, std::size_t from_end, std::size_t length) const override;
     void set(const std::string& key, std::span<const std::byte> value) override;
     void erase(const std::string& key) override;
 
@@ -829,6 +849,9 @@ private:
     void set_shard_entry_locked(const std::filesystem::path& p, std::size_t linear,
                                 const std::span<const std::byte>* payload,
                                 detail::ShardIndexEntry entry);
+    // Read index entry `linear` of the local shard at p. Takes
+    // shard_mutex_for(p) itself: a trailing index moves on every update, so
+    // its position is located under the same lock as the entry read.
     [[nodiscard]] std::optional<detail::ShardIndexEntry>
     read_shard_entry(const std::filesystem::path& p, std::size_t linear) const;
 

@@ -395,6 +395,22 @@ public:
         return bytes->size();
     }
 
+    std::optional<TrailingRange> get_trailing_range(
+        const std::string& key, std::size_t from_end, std::size_t length) const override
+    {
+        // Size and bytes from one read of the cached object, not a size_of()
+        // and a get_partial() that could each see a different publish.
+        auto bytes = get_if_exists(key);
+        if (!bytes || bytes->size() < from_end)
+            return std::nullopt;
+        const auto at = bytes->size() - from_end;
+        const auto count = std::min(length, from_end);
+        return TrailingRange{
+            bytes->size(),
+            std::vector<std::byte>(bytes->begin() + static_cast<std::ptrdiff_t>(at),
+                                   bytes->begin() + static_cast<std::ptrdiff_t>(at + count))};
+    }
+
     void set(const std::string&, std::span<const std::byte>) override
     {
         throw std::runtime_error("Remote Lasagna cache store is read-only");

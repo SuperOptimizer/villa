@@ -8,9 +8,82 @@
 #  include <sys/mman.h>
 #  include <sys/stat.h>
 #  include <unistd.h>
+#  include <cerrno>
 #endif
 
 namespace utils {
+
+namespace {
+
+// One open descriptor on a file, with the size taken from that descriptor
+// (fstat), not from a separate stat by path. Opened under a shard lock, the
+// size and every read_at() see the same file: a trailing index cannot move
+// between locating it and reading it.
+class OpenFile {
+public:
+    explicit OpenFile(const std::filesystem::path& p) {
+#if !defined(_WIN32)
+        fd_ = ::open(p.c_str(), O_RDONLY | O_CLOEXEC);
+        if (fd_ < 0) return;
+        struct stat st;
+        if (::fstat(fd_, &st) < 0 || st.st_size < 0) return;
+        size_ = static_cast<std::uint64_t>(st.st_size);
+#else
+        f_.open(p, std::ios::binary | std::ios::ate);
+        if (!f_) return;
+        const auto end = f_.tellg();
+        if (end < 0) return;
+        size_ = static_cast<std::uint64_t>(end);
+#endif
+        ok_ = true;
+    }
+    ~OpenFile() {
+#if !defined(_WIN32)
+        if (fd_ >= 0) ::close(fd_);
+#endif
+    }
+    OpenFile(const OpenFile&) = delete;
+    OpenFile& operator=(const OpenFile&) = delete;
+
+    [[nodiscard]] bool ok() const noexcept { return ok_; }
+    [[nodiscard]] std::uint64_t size() const noexcept { return size_; }
+#if !defined(_WIN32)
+    [[nodiscard]] int fd() const noexcept { return fd_; }
+#endif
+
+    // Exactly n bytes at off, or false (short file, I/O error).
+    [[nodiscard]] bool read_at(std::uint64_t off, void* buf, std::size_t n) {
+        if (off > size_ || n > size_ - off) return false;
+#if !defined(_WIN32)
+        auto* out = static_cast<char*>(buf);
+        while (n > 0) {
+            const auto got = ::pread(fd_, out, n, static_cast<off_t>(off));
+            if (got < 0 && errno == EINTR) continue;
+            if (got <= 0) return false;
+            out += got;
+            off += static_cast<std::uint64_t>(got);
+            n -= static_cast<std::size_t>(got);
+        }
+        return true;
+#else
+        f_.clear();
+        f_.seekg(static_cast<std::streamoff>(off));
+        f_.read(static_cast<char*>(buf), static_cast<std::streamsize>(n));
+        return static_cast<bool>(f_);
+#endif
+    }
+
+private:
+    bool ok_ = false;
+    std::uint64_t size_ = 0;
+#if !defined(_WIN32)
+    int fd_ = -1;
+#else
+    std::ifstream f_;
+#endif
+};
+
+} // namespace
 
 // ---------------------------------------------------------------------------
 // JSON wrapper functions
@@ -1084,6 +1157,15 @@ Store::get_partial(const std::string& key, std::size_t offset, std::size_t lengt
                                    data->begin() + static_cast<std::ptrdiff_t>(end));
 }
 
+std::optional<Store::TrailingRange>
+Store::get_trailing_range(const std::string& key, std::size_t from_end, std::size_t length) const {
+    auto size = size_of(key);
+    if (!size || *size < from_end) return std::nullopt;
+    auto bytes = get_partial(key, *size - from_end, length);
+    if (!bytes) return std::nullopt;
+    return TrailingRange{*size, std::move(*bytes)};
+}
+
 // ---------------------------------------------------------------------------
 // FileSystemStore
 // ---------------------------------------------------------------------------
@@ -1135,6 +1217,18 @@ std::optional<std::size_t> FileSystemStore::size_of(const std::string& key) cons
     auto sz = std::filesystem::file_size(safe_path(key), ec);
     if (ec) return std::nullopt;
     return static_cast<std::size_t>(sz);
+}
+
+std::optional<Store::TrailingRange>
+FileSystemStore::get_trailing_range(const std::string& key, std::size_t from_end,
+                                    std::size_t length) const {
+    OpenFile f(safe_path(key));   // size and bytes through one descriptor
+    if (!f.ok() || f.size() < from_end) return std::nullopt;
+    const std::uint64_t at = f.size() - from_end;
+    const auto n = static_cast<std::size_t>(std::min<std::uint64_t>(length, f.size() - at));
+    std::vector<std::byte> buf(n);
+    if (n && !f.read_at(at, buf.data(), n)) return std::nullopt;
+    return TrailingRange{static_cast<std::size_t>(f.size()), std::move(buf)};
 }
 
 void FileSystemStore::set(const std::string& key, std::span<const std::byte> value) {
@@ -2156,21 +2250,21 @@ void ZarrArray::set_shard_entry_locked(const std::filesystem::path& p, std::size
 
 std::optional<detail::ShardIndexEntry>
 ZarrArray::read_shard_entry(const std::filesystem::path& p, std::size_t linear) const {
-    std::ifstream f(p, std::ios::binary);
-    if (!f) return std::nullopt;
+    // The trailing index moves on every update, so its position (the file
+    // size) is taken under the lock that guards the entry read, from the
+    // same descriptor.
+    std::lock_guard lock(shard_mutex_for(p));
+    OpenFile f(p);
+    if (!f.ok()) return std::nullopt;
     std::uint64_t pos = static_cast<std::uint64_t>(linear) * 16;
     const auto& sc = *meta_.shard_config;
     if (sc.index_at_end()) {
-        f.seekg(0, std::ios::end);
-        const auto size = static_cast<std::uint64_t>(f.tellg());
         const std::size_t index_total = sc.index_bytes(meta_.total_sub_chunks_per_shard());
-        if (size < index_total) return std::nullopt;
-        pos += size - index_total;
+        if (f.size() < index_total) return std::nullopt;
+        pos += f.size() - index_total;
     }
     std::byte e[16];
-    f.seekg(static_cast<std::streamoff>(pos));
-    f.read(reinterpret_cast<char*>(e), 16);
-    if (!f) return std::nullopt;
+    if (!f.read_at(pos, e, 16)) return std::nullopt;
     return detail::ShardIndexEntry{detail::read_le64(e), detail::read_le64(e + 8)};
 }
 
@@ -2240,11 +2334,11 @@ void ZarrArray::write_empty_shard(std::span<const std::size_t> shard_indices) {
     index.entries.assign(n_inner, detail::ShardIndexEntry{~std::uint64_t(0) - 1, 0});
     auto bytes = encode_shard_index(index);
 
+    // Replaced through a rename rather than truncated in place: a reader
+    // may still hold a mapping of the old file (read_whole_shard), and
+    // truncating that inode would leave its pages past the new EOF.
     std::lock_guard lock(shard_mutex_for(p));
-    std::ofstream f(p, std::ios::binary | std::ios::trunc);
-    if (!f) return;
-    f.write(reinterpret_cast<const char*>(bytes.data()),
-            static_cast<std::streamsize>(bytes.size()));
+    detail::write_file_bytes(p, bytes);
 }
 
 // ---------------------------------------------------------------------------
@@ -2334,31 +2428,10 @@ ZarrArray::read_inner_chunk_from_shard(std::span<const std::size_t> chunk_indice
     }
     if (linear > std::numeric_limits<std::size_t>::max() / 16)
         return std::nullopt;
-    std::size_t index_offset = linear * 16;
+    const std::size_t entry_offset = linear * 16;
     const auto& sc = *meta_.shard_config;
-    if (sc.index_at_end()) {
-        // Need the shard size to locate the trailing index. Stores that
-        // cannot stat cheaply fall back to a whole-shard read.
-        std::optional<std::size_t> shard_size;
-        auto key0 = chunk_key(shard_idx);
-        if (store_) {
-            auto full_key = array_key_.empty() ? key0 : array_key_ + "/" + key0;
-            shard_size = store_->size_of(full_key);
-            if (!shard_size) {
-                auto whole = store_->get_if_exists(full_key);
-                if (!whole) return std::nullopt;
-                return extract_inner_chunk_raw(*whole, inner_idx);
-            }
-        } else {
-            std::error_code ec;
-            auto sz = std::filesystem::file_size(root_ / key0, ec);
-            if (ec) return std::nullopt;
-            shard_size = static_cast<std::size_t>(sz);
-        }
-        const std::size_t index_total = sc.index_bytes(meta_.total_sub_chunks_per_shard());
-        if (*shard_size < index_total) return std::nullopt;
-        index_offset += *shard_size - index_total;
-    }
+    const bool at_end = sc.index_at_end();
+    const std::size_t index_total = sc.index_bytes(meta_.total_sub_chunks_per_shard());
     auto is_missing_or_empty = [](std::uint64_t offset, std::uint64_t nbytes) {
         return (offset == ~std::uint64_t(0) && nbytes == ~std::uint64_t(0)) ||
                (offset == ~std::uint64_t(0) - 1 && nbytes == 0) ||
@@ -2368,12 +2441,26 @@ ZarrArray::read_inner_chunk_from_shard(std::span<const std::size_t> chunk_indice
     auto key = chunk_key(shard_idx);
     if (store_) {
         auto full_key = array_key_.empty() ? key : array_key_ + "/" + key;
-        auto entry = store_->get_partial(full_key, index_offset, 16);
+        std::optional<std::vector<std::byte>> entry;
+        if (at_end) {
+            // Locate and read the trailing entry in one store call, so the
+            // size it is found from and the bytes come from the same object.
+            // Stores that cannot size an object fall back to a whole read.
+            if (index_total < entry_offset + 16) return std::nullopt;
+            auto tail = store_->get_trailing_range(full_key, index_total - entry_offset, 16);
+            if (!tail) {
+                auto whole = store_->get_if_exists(full_key);
+                if (!whole) return std::nullopt;
+                return extract_inner_chunk_raw(*whole, inner_idx);
+            }
+            entry = std::move(tail->bytes);
+        } else {
+            entry = store_->get_partial(full_key, entry_offset, 16);
+        }
         if (!entry || entry->size() < 16) return std::nullopt;
 
-        std::uint64_t offset = 0, nbytes = 0;
-        std::memcpy(&offset, entry->data(), 8);
-        std::memcpy(&nbytes, entry->data() + 8, 8);
+        const std::uint64_t offset = detail::read_le64(entry->data());
+        const std::uint64_t nbytes = detail::read_le64(entry->data() + 8);
         if (is_missing_or_empty(offset, nbytes)) return std::nullopt;
         if (offset > std::numeric_limits<std::size_t>::max() ||
             nbytes > std::numeric_limits<std::size_t>::max())
@@ -2390,28 +2477,29 @@ ZarrArray::read_inner_chunk_from_shard(std::span<const std::size_t> chunk_indice
     auto p = root_ / key;
     // Lock to prevent reading while another thread is writing the
     // same shard (striped — reads against other shards don't block).
+    // The trailing index position is derived from the size of the
+    // descriptor opened under this lock: a writer moves the trailing index
+    // on every update, so a size taken before the lock could point the
+    // read at old index storage that is now payload or padding.
     std::lock_guard lock(shard_mutex_for(p));
-    std::ifstream f(p, std::ios::binary);
-    if (!f) return std::nullopt;
+    OpenFile f(p);
+    if (!f.ok()) return std::nullopt;
+    std::uint64_t index_offset = entry_offset;
+    if (at_end) {
+        if (f.size() < index_total) return std::nullopt;
+        index_offset += f.size() - index_total;
+    }
 
-    // Read 16-byte index entry at position linear*16
-    if (index_offset > static_cast<std::size_t>(std::numeric_limits<std::streamoff>::max()))
-        return std::nullopt;
-    f.seekg(static_cast<std::streamoff>(index_offset));
-    std::uint64_t offset = 0, nbytes = 0;
-    f.read(reinterpret_cast<char*>(&offset), 8);
-    f.read(reinterpret_cast<char*>(&nbytes), 8);
-    if (!f) return std::nullopt;
+    std::byte e[16];
+    if (!f.read_at(index_offset, e, 16)) return std::nullopt;
+    const std::uint64_t offset = detail::read_le64(e);
+    const std::uint64_t nbytes = detail::read_le64(e + 8);
     if (is_missing_or_empty(offset, nbytes)) return std::nullopt;
-    if (offset > static_cast<std::uint64_t>(std::numeric_limits<std::streamoff>::max()) ||
-        nbytes > static_cast<std::uint64_t>(std::numeric_limits<std::streamsize>::max()))
+    if (nbytes > std::numeric_limits<std::size_t>::max() || nbytes > f.size())
         return std::nullopt;
 
-    // Read chunk data
-    f.seekg(static_cast<std::streamoff>(offset));
-    std::vector<std::byte> data(nbytes);
-    f.read(reinterpret_cast<char*>(data.data()), static_cast<std::streamsize>(nbytes));
-    if (!f) return std::nullopt;
+    std::vector<std::byte> data(static_cast<std::size_t>(nbytes));
+    if (!f.read_at(offset, data.data(), data.size())) return std::nullopt;
     return data;
 }
 
@@ -2428,19 +2516,37 @@ ZarrArray::read_whole_shard(std::span<const std::size_t> chunk_indices) const {
     auto p = root_ / key;
     std::lock_guard lock(shard_mutex_for(p));
 #if !defined(_WIN32)
-    int fd = ::open(p.c_str(), O_RDONLY | O_CLOEXEC);
-    if (fd < 0) return std::nullopt;
-    struct stat st;
-    if (::fstat(fd, &st) < 0 || st.st_size <= 0) {
-        ::close(fd);
-        return std::nullopt;
-    }
-    const std::size_t sz = static_cast<std::size_t>(st.st_size);
-    void* ptr = ::mmap(nullptr, sz, PROT_READ, MAP_PRIVATE, fd, 0);
+    OpenFile f(p);   // size via fstat on this descriptor, under the lock
+    if (!f.ok() || f.size() == 0) return std::nullopt;
+    const std::size_t sz = static_cast<std::size_t>(f.size());
+    const auto& sc = *meta_.shard_config;
+    const std::size_t index_total = sc.index_bytes(meta_.total_sub_chunks_per_shard());
+    const bool snapshot = sz >= index_total;
+    // A MAP_PRIVATE mapping is not a snapshot: pages not yet faulted in (or
+    // not yet copied) show later writes to the file. Writers only append
+    // payload and rewrite the index in place (a trailing index over its old
+    // region, a start index at offset 0); whole-shard rewrites go through a
+    // rename to a new inode. So the payload bytes an index points at never
+    // change, but the index itself would. Its pages are copied privately
+    // (write-faulted) here while the lock is still held, then the mapping
+    // goes read-only.
+    void* ptr = ::mmap(nullptr, sz, snapshot ? (PROT_READ | PROT_WRITE) : PROT_READ,
+                       MAP_PRIVATE, f.fd(), 0);
     // The mapping survives the fd close — no fd leak from a long-lived
     // shard-cache entry.
-    ::close(fd);
     if (ptr == MAP_FAILED) return std::nullopt;
+    if (snapshot) {
+        const auto page = static_cast<std::size_t>(::sysconf(_SC_PAGESIZE));
+        const std::size_t from = sc.index_at_end() ? sz - index_total : 0;
+        const std::size_t to = from + index_total;
+        auto* base = static_cast<volatile unsigned char*>(ptr);
+        for (std::size_t at = from / page * page; at < to; at += page)
+            base[at] = base[at];   // write fault: private copy of this page now
+        if (::mprotect(ptr, sz, PROT_READ) < 0) {
+            ::munmap(ptr, sz);
+            return std::nullopt;
+        }
+    }
     // MADV_RANDOM: we parse the trailing index then hop to a specific
     // inner-chunk offset. Sequential readahead would prefetch pages we
     // never touch.

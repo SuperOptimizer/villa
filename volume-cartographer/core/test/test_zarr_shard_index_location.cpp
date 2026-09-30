@@ -12,6 +12,7 @@
 #include "utils/zarr.hpp"
 
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
@@ -20,6 +21,7 @@
 #include <optional>
 #include <random>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace fs = std::filesystem;
@@ -214,6 +216,113 @@ void roundTrip(const std::string& location, bool crc)
     fs::remove_all(d);
 }
 
+// A self-describing inner chunk: [crc32c of the rest][linear][version][body
+// derived from both]. Any read that returns index storage, padding or another
+// chunk's bytes fails verify().
+std::vector<std::byte> tagged(std::uint32_t linear, std::uint32_t version)
+{
+    std::vector<std::byte> v(kInnerBytes);
+    auto put32 = [&](std::size_t at, std::uint32_t x) {
+        for (int i = 0; i < 4; ++i) v[at + i] = std::byte(static_cast<std::uint8_t>(x >> (8 * i)));
+    };
+    put32(4, linear);
+    put32(8, version);
+    std::uint64_t st = (std::uint64_t(linear) << 32 | version) * 0x9E3779B97F4A7C15ull + 1;
+    for (std::size_t i = 12; i < v.size(); ++i) {
+        st ^= st << 13; st ^= st >> 7; st ^= st << 17;
+        v[i] = std::byte(static_cast<std::uint8_t>(st));
+    }
+    put32(0, utils::detail::crc32c(std::span<const std::byte>(v.data() + 4, v.size() - 4)));
+    return v;
+}
+
+bool verifyTagged(std::span<const std::byte> v, std::uint32_t linear)
+{
+    if (v.size() != kInnerBytes) return false;
+    auto get32 = [&](std::size_t at) {
+        std::uint32_t x = 0;
+        for (int i = 0; i < 4; ++i) x |= std::uint32_t(std::to_integer<std::uint8_t>(v[at + i])) << (8 * i);
+        return x;
+    };
+    if (get32(0) != utils::detail::crc32c(v.subspan(4))) return false;
+    if (get32(4) != linear) return false;
+    return std::equal(v.begin(), v.end(), tagged(linear, get32(8)).begin());
+}
+
+// One writer keeps updating inner chunks 0..3 of shard 0 (each update moves a
+// trailing index) while a reader reads every chunk of that shard through the
+// partial path, the index-entry probes and the whole-shard path. Chunks 4..7
+// are written once up front and must read back intact on every iteration;
+// chunks 0..3 may hold any version but must always be a valid one. A reader
+// that locates the trailing index before taking the shard lock reads old index
+// storage (now payload or padding) as entries and fails here.
+void concurrentUpdates(const std::string& location, bool crc)
+{
+    CAPTURE(location); CAPTURE(crc);
+    auto d = tmpDir("concurrent_" + location + (crc ? "_crc" : ""));
+    auto arr = utils::ZarrArray::create(d / "arr", makeMeta(location, crc));
+
+    std::vector<std::optional<std::vector<std::byte>>> inner(kPerShard);
+    for (std::uint32_t i = 0; i < kPerShard; ++i) inner[i] = tagged(i, 0);
+    arr.write_shard(std::array<std::size_t, 3>{0, 0, 0}, inner);
+
+    constexpr int kUpdates = 3000;
+    std::atomic<bool> done{false};
+    std::atomic<std::uint64_t> reads{0}, badPartial{0}, badProbe{0}, badWhole{0};
+
+    // A garbage index entry can also surface as a throw; count those too.
+    std::thread reader([&] {
+        std::uint32_t i = 0;
+        while (!done.load(std::memory_order_acquire) || reads.load() < 2000) {
+            const std::uint32_t lin = i++ % kPerShard;
+            const auto c = innerCoord(0, lin);
+            try {
+                auto got = arr.read_chunk(c);
+                if (!got || !verifyTagged(*got, lin)) ++badPartial;
+            } catch (const std::exception&) { ++badPartial; }
+            try {
+                if (!arr.inner_chunk_exists(c)) ++badProbe;
+            } catch (const std::exception&) { ++badProbe; }
+            if (lin == 0) {
+                try {
+                    auto whole = arr.read_whole_shard(c);
+                    if (!whole) {
+                        ++badWhole;
+                    } else {
+                        for (std::uint32_t k = 0; k < kPerShard; ++k) {
+                            const auto ck = innerCoord(0, k);
+                            std::array<std::size_t, 3> in{ck[0] % 2, ck[1] % 2, ck[2] % 2};
+                            auto ex = arr.extract_inner_chunk(whole->span(), in);
+                            if (!ex || !verifyTagged(*ex, k)) ++badWhole;
+                        }
+                    }
+                } catch (const std::exception&) { ++badWhole; }
+            }
+            ++reads;
+        }
+    });
+
+    for (int u = 1; u <= kUpdates; ++u) {
+        const std::uint32_t lin = static_cast<std::uint32_t>(u % 4);
+        arr.write_inner_chunk_to_shard(innerCoord(0, lin), tagged(lin, static_cast<std::uint32_t>(u)));
+    }
+    done.store(true, std::memory_order_release);
+    reader.join();
+
+    INFO("reads: " << reads.load());
+    CHECK(badPartial.load() == 0);
+    CHECK(badProbe.load() == 0);
+    CHECK(badWhole.load() == 0);
+    CHECK(reads.load() >= 2000);
+    checkLayout(d / "arr" / "c" / "0" / "0" / "0", location == "end", crc);
+    for (std::uint32_t i = 0; i < kPerShard; ++i) {
+        auto got = arr.read_chunk(innerCoord(0, i));
+        REQUIRE(got.has_value());
+        CHECK(verifyTagged(*got, i));
+    }
+    fs::remove_all(d);
+}
+
 } // namespace
 
 TEST_CASE("crc32c matches the Castagnoli check value")
@@ -277,4 +386,16 @@ TEST_CASE("sharded writes: unwritable index codecs are refused before any file c
         CHECK_FALSE(fs::exists(d / "arr" / "c"));
         fs::remove_all(d);
     }
+}
+
+TEST_CASE("sharded reads: index_location=end stays consistent under concurrent updates")
+{
+    concurrentUpdates("end", false);
+    concurrentUpdates("end", true);
+}
+
+TEST_CASE("sharded reads: index_location=start stays consistent under concurrent updates")
+{
+    concurrentUpdates("start", false);
+    concurrentUpdates("start", true);
 }
