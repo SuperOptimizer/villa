@@ -23,7 +23,8 @@ inline constexpr std::size_t kVolcompChunkBytes =
     static_cast<std::size_t>(kVolcompChunkSide) * kVolcompChunkSide * kVolcompChunkSide;
 
 struct VolcompCodecParams {
-    // Quantiser step in voxel units, 1..255.  Error percentiles scale with q
+    // Quantiser step in voxel units: 0 is the lossless mode, 1..255 the lossy
+    // DCT codec.  Error percentiles scale with q
     // (P99 ≈ 2.5q on scroll CT); 8 is the archive default (≈ 40 dB PSNR,
     // ~40x), 4 is near-transparent, 16-32 suit coarse pyramid levels.
     float q = 8.0f;

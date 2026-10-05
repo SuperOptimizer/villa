@@ -111,6 +111,50 @@ TEST_CASE("volcomp: v2 dataset round trip at q, q recorded in .zarray")
     fs::remove_all(d);
 }
 
+// Regression: a v2 array whose .zarray records q=0 (volcomp's lossless mode)
+// must be rewritten losslessly, not at the lossy default q=8.
+TEST_CASE("volcomp: v2 array with q=0 is rewritten losslessly")
+{
+    REQUIRE(utils::volcomp_available());
+    auto d = tmpDir("v2_lossless");
+    fs::create_directories(d / "arr");
+    {
+        std::ofstream z(d / "arr" / ".zarray");
+        z << R"({"zarr_format": 2, "shape": [256, 128, 128], "chunks": [128, 128, 128],)"
+          << R"( "dtype": "|u1", "compressor": {"id": "volcomp", "q": 0},)"
+          << R"( "fill_value": 0, "order": "C", "filters": null, "dimension_separator": "/"})"
+          << '\n';
+    }
+    // The parser must keep an explicit 0 distinct from "no q in the metadata".
+    {
+        std::ifstream f(d / "arr" / ".zarray");
+        std::string json((std::istreambuf_iterator<char>(f)), {});
+        auto meta = utils::detail::parse_zarray(json);
+        REQUIRE(meta.codec_q.has_value());
+        CHECK(*meta.codec_q == 0.0f);
+    }
+
+    vc::VcDataset ds(d / "arr");
+    auto src = synth(11);
+    CHECK(ds.writeChunk(1, 0, 0, src.data(), src.size()));
+
+    // The chunk on disk is a lossless volcomp stream (header q == 0) ...
+    {
+        std::ifstream c(d / "arr" / "1" / "0" / "0", std::ios::binary);
+        std::vector<char> raw((std::istreambuf_iterator<char>(c)), {});
+        REQUIRE(raw.size() > 8);
+        auto sp = std::span<const std::byte>(reinterpret_cast<const std::byte*>(raw.data()), raw.size());
+        CHECK(utils::is_volcomp_compressed(sp));
+        CHECK(utils::volcomp_chunk_q(sp) == 0.0f);
+    }
+    // ... and reads back exactly.
+    vc::VcDataset re(d / "arr");
+    std::vector<uint8_t> out(N, 0);
+    CHECK(re.readChunk(1, 0, 0, out.data()));
+    CHECK(out == src);
+    fs::remove_all(d);
+}
+
 TEST_CASE("volcomp: createZarrDataset rejects non-128^3 chunks")
 {
     if (!utils::volcomp_available()) return;
@@ -350,7 +394,9 @@ TEST_CASE("volcomp: shim guards")
     utils::VolcompCodecParams p;
     CHECK_THROWS(utils::volcomp_encode(small, p));
     std::vector<std::byte> raw(N, std::byte(0));
-    p.q = 0.0f;
+    p.q = -1.0f;
+    CHECK_THROWS(utils::volcomp_encode(raw, p));
+    p.q = 256.0f;
     CHECK_THROWS(utils::volcomp_encode(raw, p));
     CHECK_THROWS(utils::volcomp_decode(small, N));
     CHECK_FALSE(utils::is_volcomp_compressed(small));

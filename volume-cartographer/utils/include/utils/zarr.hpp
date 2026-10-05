@@ -257,10 +257,11 @@ struct ZarrMetadata {
     char byte_order = '<';
     std::string compressor_id;           // "blosc", "zlib", "zstd", or "" for raw
     int compression_level = 5;
-    // Quantiser step for lossy codecs configured by a float ("volcomp": q).
+    // Quantiser step for codecs configured by a float ("volcomp": q).
     // v2: compressor {"id":"volcomp","q":Q}; v3 carries it in the codec
-    // configuration instead. 0 = unset.
-    float codec_q = 0.0f;
+    // configuration instead. Unset when the metadata has no q; an explicit
+    // 0 is volcomp's lossless mode and must not be confused with "unset".
+    std::optional<float> codec_q;
     std::string dimension_separator = ".";
     std::vector<ZarrFilter> filters;     // v2 filters applied before compression
 

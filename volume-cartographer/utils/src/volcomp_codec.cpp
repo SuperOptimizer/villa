@@ -36,8 +36,9 @@ std::vector<std::byte> volcomp_encode(std::span<const std::byte> raw,
             "volcomp_encode: input must be exactly 128^3 bytes, got " +
             std::to_string(raw.size()));
     }
-    if (!(params.q >= VOLCOMP_LIB_Q_MIN && params.q <= VOLCOMP_LIB_Q_MAX)) {
-        throw std::runtime_error("volcomp_encode: q must be in [1, 255]");
+    if (!(params.q == VOLCOMP_LIB_Q_LOSSLESS ||
+          (params.q >= VOLCOMP_LIB_Q_MIN && params.q <= VOLCOMP_LIB_Q_MAX))) {
+        throw std::runtime_error("volcomp_encode: q must be 0 (lossless) or in [1, 255]");
     }
     if (!volcomp_available()) fail("volcomp_encode", VOLCOMP_LIB_UNSUPPORTED);
 

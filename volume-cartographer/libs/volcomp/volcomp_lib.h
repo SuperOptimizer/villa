@@ -23,6 +23,8 @@ extern "C" {
 #define VOLCOMP_LIB_CHUNK_BYTES 2097152u
 #define VOLCOMP_LIB_Q_MIN 1.0f
 #define VOLCOMP_LIB_Q_MAX 255.0f
+/* q == 0 selects the lossless mode (exact reconstruction). */
+#define VOLCOMP_LIB_Q_LOSSLESS 0.0f
 
 /* Status codes: 0..5 mirror volcomp_status in volcomp.h. */
 enum {
@@ -43,7 +45,8 @@ const char *volcomp_lib_kernels(void);
 const char *volcomp_lib_status_string(int status);
 /* Capacity that always suffices for volcomp_lib_encode. */
 size_t volcomp_lib_encode_bound(void);
-/* Encode one 128^3 u8 z-major chunk at quantiser step q (1..255). */
+/* Encode one 128^3 u8 z-major chunk at quantiser step q (VOLCOMP_LIB_Q_LOSSLESS
+ * or 1..255). */
 int volcomp_lib_encode(const uint8_t *src_zyx, float q, void *dst, size_t dst_cap, size_t *out_n);
 /* Decode a chunk into dst (dst_cap >= VOLCOMP_LIB_CHUNK_BYTES). */
 int volcomp_lib_decode(const void *enc, size_t enc_n, uint8_t *dst_zyx, size_t dst_cap);

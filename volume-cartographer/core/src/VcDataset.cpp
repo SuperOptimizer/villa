@@ -53,7 +53,8 @@ struct CompressorConfig {
     int level = 3;
     // c3d target compression ratio (> 1.0). Default 50 ≈ 40 dB on scroll CT.
     float c3d_target_ratio = 50.0f;
-    // volcomp quantiser step (1..255). Default 8 ≈ 40 dB / ~40x on scroll CT.
+    // volcomp quantiser step: 0 = lossless, 1..255 = lossy DCT.
+    // Default 8 ≈ 40 dB / ~40x on scroll CT.
     float volcomp_q = 8.0f;
 };
 
@@ -432,7 +433,9 @@ static CompressorConfig compressorFromMeta(const utils::ZarrMetadata& meta, int 
             cfg.id = CompressorId::C3d;
         } else if (meta.compressor_id == "volcomp") {
             cfg.id = CompressorId::Volcomp;
-            if (meta.codec_q > 0.0f) cfg.volcomp_q = meta.codec_q;
+            // q=0 is volcomp's lossless mode: honour it rather than falling
+            // back to the lossy default when rewriting such an array.
+            if (meta.codec_q) cfg.volcomp_q = *meta.codec_q;
         } else if (vc::isDelta3dCodecName(meta.compressor_id)) {
             cfg.id = CompressorId::Delta3d;
         } else {
