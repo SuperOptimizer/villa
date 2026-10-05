@@ -299,6 +299,8 @@ struct GeneratedViews {
     int seedLineIndex = -1;
     int initialCenterIndex = 0;
     std::optional<std::pair<double, double>> initialStripLinePositionRange;
+    // Fit the complete line in both strips once instead of restoring saved zooms.
+    bool initialFitWholeLine = false;
     bool initialCurrentCutFollowsStripMouse = true;
     std::vector<GeneratedOverlay::ControlPointMarker> controlPoints;
     std::vector<GeneratedOverlay::PredSnapMarker> predSnapPoints;
@@ -1821,23 +1823,122 @@ inline bool generatedLineOrderNeighbourIsKollesisTermination(
     return false;
 }
 
-// Strip span selection depends only on longitudinal position, never click height.
-// At a CP use its outgoing span; the final CP uses its incoming span.
-inline std::optional<size_t> generatedControlSpanOwnerRank(
-    const std::vector<const GeneratedOverlay::ControlPointMarker*>& sortedControls,
-    double linePosition)
+// What a strip click (or hover) addresses, decided by its scene x alone so
+// the height of the mouse over the strip never matters. `rank` indexes the
+// line-ordered control points; a span runs from `rank` to `rank + 1`.
+struct GeneratedStripContextTarget {
+    enum class Kind { ControlPoint, Span };
+    Kind kind = Kind::ControlPoint;
+    size_t rank = 0;
+
+    bool operator==(const GeneratedStripContextTarget& other) const
+    {
+        return kind == other.kind && rank == other.rank;
+    }
+};
+
+// Each span is divided along its drawn length: the quarter next to either
+// control point belongs to that point, the middle half is the span.
+constexpr double kGeneratedStripContextControlFraction = 0.25;
+
+// The strip's controls in line order with the strip grid column of each
+// control's line position on the centre line: the space the click zones are
+// measured in. Grid columns are nondecreasing in line order by construction
+// (the position map maps arc length monotonically; without a map the column
+// is the line position itself) and scene x is affine in the grid column
+// under the strip camera, so the quarter rule holds in either. The index
+// needs no camera and no projection: it is rebuilt only when the controls or
+// the map change, never per hover or pan tick.
+struct GeneratedStripContextIndex {
+    // Into the control vector the index was built from, line order.
+    std::vector<size_t> controlIndices;
+    // Nondecreasing, parallel to controlIndices.
+    std::vector<double> gridColumns;
+
+    bool empty() const { return gridColumns.empty(); }
+};
+
+inline GeneratedStripContextIndex buildGeneratedStripContextIndex(
+    const std::vector<GeneratedOverlay::ControlPointMarker>& controlPoints,
+    size_t linePointCount,
+    const vc::lasagna::LineStripPositionMap& positionMap)
 {
-    if (sortedControls.size() < 2 || !std::isfinite(linePosition) ||
-        linePosition < sortedControls.front()->linePosition ||
-        linePosition > sortedControls.back()->linePosition) {
+    std::vector<std::pair<double, size_t>> ordered;
+    for (size_t i = 0; i < controlPoints.size(); ++i) {
+        const auto& control = controlPoints[i];
+        if (control.controlIndex == std::numeric_limits<size_t>::max() ||
+            !validGeneratedLinePosition(control.linePosition, linePointCount)) {
+            continue;
+        }
+        const double column = positionMap.valid()
+            ? positionMap.originalPositionToStripGridColumn(control.linePosition)
+            : control.linePosition;
+        if (!std::isfinite(column)) {
+            continue;
+        }
+        ordered.push_back({control.linePosition, i});
+    }
+    std::stable_sort(ordered.begin(), ordered.end(),
+                     [](const auto& a, const auto& b) { return a.first < b.first; });
+    GeneratedStripContextIndex index;
+    index.controlIndices.reserve(ordered.size());
+    index.gridColumns.reserve(ordered.size());
+    for (const auto& [linePosition, i] : ordered) {
+        double column = positionMap.valid()
+            ? positionMap.originalPositionToStripGridColumn(linePosition)
+            : linePosition;
+        // Monotonic by construction; this only absorbs rounding in the map.
+        if (!index.gridColumns.empty()) {
+            column = std::max(column, index.gridColumns.back());
+        }
+        index.controlIndices.push_back(i);
+        index.gridColumns.push_back(column);
+    }
+    return index;
+}
+
+// `columns` is a GeneratedStripContextIndex's nondecreasing grid columns,
+// `column` the pointer's. The span containing the column (found by binary
+// search) decides: within a quarter of its length of either end it is that
+// control, the middle half is the span. Equal columns (two controls on one
+// strip column) make a zero-length span that claims nothing; on their shared
+// column, and within the quarter zone next to it, the first of them wins.
+// Beyond the ends the end control. Empty input or a non-finite column yields
+// no target.
+inline std::optional<GeneratedStripContextTarget> generatedStripContextTarget(
+    const std::vector<double>& columns,
+    double column)
+{
+    if (columns.empty() || !std::isfinite(column)) {
         return std::nullopt;
     }
-    for (size_t rank = 1; rank < sortedControls.size(); ++rank) {
-        if (linePosition < sortedControls[rank]->linePosition) {
-            return rank - 1;
-        }
+    using Kind = GeneratedStripContextTarget::Kind;
+    // The first rank sharing the column of `rank`.
+    const auto firstOf = [&](size_t rank) {
+        return static_cast<size_t>(
+            std::lower_bound(columns.begin(), columns.end(), columns[rank]) - columns.begin());
+    };
+    const size_t last = columns.size() - 1;
+    if (column <= columns.front()) {
+        return GeneratedStripContextTarget{Kind::ControlPoint, 0};
     }
-    return sortedControls.size() - 2;
+    if (column >= columns.back()) {
+        return GeneratedStripContextTarget{Kind::ControlPoint, firstOf(last)};
+    }
+    // First column strictly greater than the pointer's: the span from the
+    // previous rank to this one contains it, with positive length.
+    const size_t rank = static_cast<size_t>(
+        std::upper_bound(columns.begin(), columns.end(), column) - columns.begin());
+    const double a = columns[rank - 1];
+    const double b = columns[rank];
+    const double t = (column - a) / (b - a);
+    if (t < kGeneratedStripContextControlFraction) {
+        return GeneratedStripContextTarget{Kind::ControlPoint, firstOf(rank - 1)};
+    }
+    if (t > 1.0 - kGeneratedStripContextControlFraction) {
+        return GeneratedStripContextTarget{Kind::ControlPoint, rank};
+    }
+    return GeneratedStripContextTarget{Kind::Span, rank - 1};
 }
 
 struct GeneratedControlPointContextMenuOptions {
@@ -1851,6 +1952,11 @@ struct GeneratedControlPointContextMenuOptions {
     size_t linePointCount = 0;
     double linePosition = std::numeric_limits<double>::quiet_NaN();
     bool stripViewer = false;
+    // Set when the request names a control point explicitly (the overview
+    // bar's dot, forwarded as a synthetic strip click): on a strip the target
+    // is the control nearest this line position, never a span, whatever the
+    // click's scene x resolves to against the markers on screen.
+    std::optional<double> pinnedControlLinePosition;
     vc::lasagna::LineStripPositionMap stripPositionMap;
     bool linkWithCandidateEnabled = false;
     QString linkWithCandidateLabel;
@@ -1942,6 +2048,27 @@ std::string applyGeneratedOverlay(CChunkedVolumeViewer* viewer,
                                   const GeneratedOverlay& overlay);
 void clearGeneratedControlPointContextPreview(CChunkedVolumeViewer* viewer,
                                               const std::string& surfaceName);
+// The strip grid column under a scene point (clamped to the strip), the
+// space the click zones are measured in. O(1): an affine camera transform.
+double generatedStripGridColumnFromScene(CChunkedVolumeViewer* viewer, const QPointF& scenePoint);
+// The target a Ctrl+right-click at `scenePoint` would open the menu for: a
+// column lookup and a binary search, no projection of any control.
+std::optional<GeneratedStripContextTarget> resolveGeneratedStripContextTarget(
+    CChunkedVolumeViewer* viewer,
+    const GeneratedStripContextIndex& index,
+    const QPointF& scenePoint);
+// The hover glow on a strip for `target` (none clears it), drawn under its
+// own overlay key so the menu preview and the generated overlays are left
+// alone. Projects only the one or two controls the target consists of.
+std::string generatedStripContextHoverKey(const std::string& surfaceName);
+void drawGeneratedStripContextHover(CChunkedVolumeViewer* viewer,
+                                    const std::string& surfaceName,
+                                    const std::vector<GeneratedOverlay::ControlPointMarker>& controlPoints,
+                                    const GeneratedStripContextIndex& index,
+                                    const vc::lasagna::LineStripPositionMap& positionMap,
+                                    const std::optional<GeneratedStripContextTarget>& target);
+void clearGeneratedStripContextHover(CChunkedVolumeViewer* viewer,
+                                     const std::string& surfaceName);
 GeneratedControlPointContextResult showGeneratedControlPointContextMenu(
     const GeneratedControlPointContextMenuOptions& options);
 

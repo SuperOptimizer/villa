@@ -28,26 +28,78 @@
 #include <string>
 #include <vector>
 
-TEST_CASE("Strip context spans include CP boundaries independently of click height")
+TEST_CASE("Strip context target: outer quarters of a span are its control points, the middle half the span")
 {
     using namespace vc3d::line_annotation;
-    std::vector<GeneratedOverlay::ControlPointMarker> controls(3);
-    controls[0].linePosition = 2;
-    controls[1].linePosition = 10;
-    controls[2].linePosition = 18;
-    std::vector<const GeneratedOverlay::ControlPointMarker*> sorted{
-        &controls[0], &controls[1], &controls[2]};
-    CHECK(generatedControlSpanOwnerRank(sorted, 2) == 0);
-    CHECK(generatedControlSpanOwnerRank(sorted, 6) == 0);
-    CHECK(generatedControlSpanOwnerRank(sorted, 9.99) == 0);
-    CHECK(generatedControlSpanOwnerRank(sorted, 10) == 1);
-    CHECK(generatedControlSpanOwnerRank(sorted, 14) == 1);
-    CHECK(generatedControlSpanOwnerRank(sorted, 18) == 1);
-    CHECK_FALSE(generatedControlSpanOwnerRank(sorted, 1));
-    CHECK_FALSE(generatedControlSpanOwnerRank(sorted, 19));
-    CHECK_FALSE(generatedControlSpanOwnerRank(sorted, NAN));
-    CHECK_FALSE(generatedControlSpanOwnerRank({}, 6));
-    CHECK_FALSE(generatedControlSpanOwnerRank({&controls[0]}, 2));
+    using Kind = GeneratedStripContextTarget::Kind;
+    const auto cp = [](size_t rank) { return GeneratedStripContextTarget{Kind::ControlPoint, rank}; };
+    const auto span = [](size_t rank) { return GeneratedStripContextTarget{Kind::Span, rank}; };
+
+    // Three controls at strip grid columns 100, 200, 400: spans of length 100 and 200.
+    const std::vector<double> xs{100.0, 200.0, 400.0};
+    CHECK(generatedStripContextTarget(xs, 100.0) == cp(0));
+    CHECK(generatedStripContextTarget(xs, 124.0) == cp(0));
+    CHECK(generatedStripContextTarget(xs, 126.0) == span(0));
+    CHECK(generatedStripContextTarget(xs, 150.0) == span(0));
+    CHECK(generatedStripContextTarget(xs, 174.0) == span(0));
+    CHECK(generatedStripContextTarget(xs, 176.0) == cp(1));
+    CHECK(generatedStripContextTarget(xs, 200.0) == cp(1));
+    // The longer span: its quarters are 50 wide.
+    CHECK(generatedStripContextTarget(xs, 249.0) == cp(1));
+    CHECK(generatedStripContextTarget(xs, 251.0) == span(1));
+    CHECK(generatedStripContextTarget(xs, 349.0) == span(1));
+    CHECK(generatedStripContextTarget(xs, 351.0) == cp(2));
+    CHECK(generatedStripContextTarget(xs, 400.0) == cp(2));
+    // Exactly on the quarter line the span wins.
+    CHECK(generatedStripContextTarget(xs, 125.0) == span(0));
+    CHECK(generatedStripContextTarget(xs, 175.0) == span(0));
+
+    // Beyond the ends: the end control, however far.
+    CHECK(generatedStripContextTarget(xs, 0.0) == cp(0));
+    CHECK(generatedStripContextTarget(xs, 99.0) == cp(0));
+    CHECK(generatedStripContextTarget(xs, 401.0) == cp(2));
+    CHECK(generatedStripContextTarget(xs, 5000.0) == cp(2));
+
+    // A single control is always the target; nothing yields nothing.
+    CHECK(generatedStripContextTarget({250.0}, 10.0) == cp(0));
+    CHECK_FALSE(generatedStripContextTarget({}, 150.0));
+    CHECK_FALSE(generatedStripContextTarget(xs, NAN));
+
+    // Two controls on one strip column (duplicate points map to one column):
+    // the zero-length span claims nothing, the span beside them keeps its
+    // middle half, and on the shared column and in the quarter zone next to
+    // it the first of them wins.
+    const std::vector<double> coincident{100.0, 100.0, 300.0};
+    CHECK(generatedStripContextTarget(coincident, 100.0) == cp(0));
+    CHECK(generatedStripContextTarget(coincident, 120.0) == cp(0));
+    CHECK(generatedStripContextTarget(coincident, 150.0) == span(1));
+    CHECK(generatedStripContextTarget(coincident, 200.0) == span(1));
+    CHECK(generatedStripContextTarget(coincident, 290.0) == cp(2));
+    CHECK(generatedStripContextTarget({50.0, 100.0, 100.0, 300.0}, 100.0) == cp(1));
+    CHECK(generatedStripContextTarget({50.0, 100.0, 100.0, 300.0}, 200.0) == span(2));
+    CHECK(generatedStripContextTarget({100.0, 300.0, 300.0}, 300.0) == cp(1));
+    CHECK(generatedStripContextTarget({100.0, 300.0, 300.0}, 900.0) == cp(1));
+    CHECK(generatedStripContextTarget({100.0, 100.0, 100.0}, 100.0) == cp(0));
+    CHECK(generatedStripContextTarget({100.0, 100.0, 100.0}, 7.0) == cp(0));
+}
+
+TEST_CASE("Strip context index: controls in line order with nondecreasing centre-line columns")
+{
+    using namespace vc3d::line_annotation;
+    std::vector<GeneratedOverlay::ControlPointMarker> controls(5);
+    // Out of line order on purpose; one without a control index, one off the line.
+    controls[0].linePosition = 30.0; controls[0].controlIndex = 0;
+    controls[1].linePosition = 10.0; controls[1].controlIndex = 1;
+    controls[2].linePosition = 20.0; controls[2].controlIndex = std::numeric_limits<size_t>::max();
+    controls[3].linePosition = 99.0; controls[3].controlIndex = 3;   // beyond the line
+    controls[4].linePosition = 20.0; controls[4].controlIndex = 4;
+    vc::lasagna::LineStripPositionMap noMap;
+    const auto index = buildGeneratedStripContextIndex(controls, 40, noMap);
+    REQUIRE(index.controlIndices.size() == 3);
+    CHECK(index.controlIndices == std::vector<size_t>{1, 4, 0});
+    CHECK(index.gridColumns == std::vector<double>{10.0, 20.0, 30.0});
+    CHECK_FALSE(index.empty());
+    CHECK(buildGeneratedStripContextIndex({}, 40, noMap).empty());
 }
 
 TEST_CASE("Clearing CP corrections leaves other controls and span metadata intact")
@@ -2940,7 +2992,7 @@ TEST_CASE("line annotation successful multi fiber save deletes recovery backups"
     std::filesystem::remove_all(dir);
 }
 
-TEST_CASE("line annotation failed multi fiber save keeps recovery backups")
+TEST_CASE("line annotation failed multi fiber save restores overwritten targets")
 {
     const auto dir = makeTempSaveDir("multi_failure");
     const auto first = dir / "fiber_a.json";
@@ -2959,12 +3011,130 @@ TEST_CASE("line annotation failed multi fiber save keeps recovery backups")
 
     CHECK_FALSE(result.ok);
     CHECK(result.error.find("Injected failure") != std::string::npos);
-    REQUIRE(result.recoveryFiles.size() == 2);
-    for (const auto& recovery : result.recoveryFiles) {
-        CHECK(std::filesystem::exists(recovery));
-        CHECK(recovery.filename().string().find(".recovery.") != std::string::npos);
+    // The overwritten first target is restored from its recovery copy, the
+    // second was never replaced, and no artifact of the undo survives.
+    CHECK(result.recoveryFiles.empty());
+    CHECK(readText(first) == "{\"old\":\"a\"}\n");
+    CHECK(readText(second) == "{\"old\":\"b\"}\n");
+    CHECK(recoveryFilesIn(dir).empty());
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("line annotation failed save restores an overwritten peer after a later payload fails")
+{
+    const auto dir = makeTempSaveDir("peer_restore");
+    const auto merged = dir / "fiber_merged.json";
+    const auto peerA = dir / "fiber_peer_a.json";
+    const auto peerB = dir / "fiber_peer_b.json";
+    const auto original = dir / "fiber_original.json";
+    writeText(peerA, "{\"peer\":\"a\"}\n");
+    writeText(peerB, "{\"peer\":\"b\"}\n");
+    writeText(original, "{\"original\":true}\n");
+
+    // Payload order: new fiber, peer A (overwritten), peer B; fail right after
+    // peer A landed, with the original already retired.
+    setenv("VC3D_FIBER_SAVE_FAIL_STAGE", "replace:1", 1);
+    const auto result = vc3d::line_annotation::runFiberSaveJob(
+        17,
+        {{1, 1, merged, nlohmann::json{{"merged", true}}},
+         {2, 5, peerA, nlohmann::json{{"peer", "a-redirected"}}},
+         {3, 5, peerB, nlohmann::json{{"peer", "b-redirected"}}}},
+        {original});
+    unsetenv("VC3D_FIBER_SAVE_FAIL_STAGE");
+
+    CHECK_FALSE(result.ok);
+    CHECK(result.recoveryFiles.empty());
+    CHECK_FALSE(std::filesystem::exists(merged));
+    CHECK(readText(peerA) == "{\"peer\":\"a\"}\n");
+    CHECK(readText(peerB) == "{\"peer\":\"b\"}\n");
+    CHECK(readText(original) == "{\"original\":true}\n");
+    CHECK(recoveryFilesIn(dir).empty());
+    for (const auto& entry : std::filesystem::directory_iterator(dir)) {
+        CHECK(entry.path().filename().string().find(".tmp.") == std::string::npos);
     }
-    CHECK(recoveryFilesIn(dir).size() == 2);
+    const auto retiredDir = dir / ".retired";
+    if (std::filesystem::exists(retiredDir)) {
+        CHECK(std::filesystem::is_empty(retiredDir));
+    }
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("line annotation write-stage failure leaves no temp file and no change")
+{
+    const auto dir = makeTempSaveDir("write_failure");
+    const auto first = dir / "fiber_a.json";
+    const auto second = dir / "fiber_b.json";
+    writeText(first, "{\"old\":\"a\"}\n");
+
+    setenv("VC3D_FIBER_SAVE_FAIL_STAGE", "write:1", 1);
+    const auto result = vc3d::line_annotation::runFiberSaveJob(
+        18,
+        {{1, 1, first, nlohmann::json{{"new", "a"}}},
+         {2, 1, second, nlohmann::json{{"new", "b"}}}});
+    unsetenv("VC3D_FIBER_SAVE_FAIL_STAGE");
+
+    CHECK_FALSE(result.ok);
+    CHECK(result.recoveryFiles.empty());
+    CHECK(readText(first) == "{\"old\":\"a\"}\n");
+    CHECK_FALSE(std::filesystem::exists(second));
+    for (const auto& entry : std::filesystem::directory_iterator(dir)) {
+        CHECK(entry.path().filename().string().find(".tmp.") == std::string::npos);
+    }
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("line annotation retire-stage failure restores the earlier retirement")
+{
+    const auto dir = makeTempSaveDir("retire_stage");
+    const auto first = dir / "fiber_a.json";
+    const auto second = dir / "fiber_b.json";
+    const auto target = dir / "fiber_new.json";
+    writeText(first, "{\"a\":true}\n");
+    writeText(second, "{\"b\":true}\n");
+
+    setenv("VC3D_FIBER_SAVE_FAIL_STAGE", "retire:1", 1);
+    const auto result = vc3d::line_annotation::runFiberSaveJob(
+        19, {{1, 1, target, nlohmann::json{{"new", true}}}}, {first, second});
+    unsetenv("VC3D_FIBER_SAVE_FAIL_STAGE");
+
+    CHECK_FALSE(result.ok);
+    CHECK(result.recoveryFiles.empty());
+    CHECK(readText(first) == "{\"a\":true}\n");
+    CHECK(readText(second) == "{\"b\":true}\n");
+    CHECK_FALSE(std::filesystem::exists(target));
+    const auto retiredDir = dir / ".retired";
+    if (std::filesystem::exists(retiredDir)) {
+        CHECK(std::filesystem::is_empty(retiredDir));
+    }
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("line annotation failed restore is reported as recovery required")
+{
+    const auto dir = makeTempSaveDir("restore_failure");
+    const auto first = dir / "fiber_a.json";
+    const auto second = dir / "fiber_b.json";
+    writeText(first, "{\"old\":\"a\"}\n");
+    writeText(second, "{\"old\":\"b\"}\n");
+
+    // Both replaced, then the restore of the first is made to fail.
+    setenv("VC3D_FIBER_SAVE_FAIL_STAGE", "restore:0", 1);
+    const auto result = vc3d::line_annotation::runFiberSaveJob(
+        20,
+        {{1, 1, first, nlohmann::json{{"new", "a"}}},
+         {2, 1, second, nlohmann::json{{"new", "b"}}}});
+    unsetenv("VC3D_FIBER_SAVE_FAIL_STAGE");
+
+    CHECK_FALSE(result.ok);
+    CHECK(result.error.find("could not restore") != std::string::npos);
+    // The second target was restored; the first keeps the new content and
+    // its recovery copy is reported so the caller can ask for recovery.
+    CHECK(readText(second) == "{\"old\":\"b\"}\n");
+    CHECK(readText(first).find("\"new\": \"a\"") != std::string::npos);
+    REQUIRE(result.recoveryFiles.size() == 1);
+    CHECK(std::filesystem::exists(result.recoveryFiles.front()));
+    CHECK(readText(result.recoveryFiles.front()) == "{\"old\":\"a\"}\n");
+    CHECK(recoveryFilesIn(dir).size() == 1);
     std::filesystem::remove_all(dir);
 }
 
@@ -3060,8 +3230,8 @@ TEST_CASE("line annotation failed multi fiber save removes orphan new targets")
     unsetenv("VC3D_FIBER_SAVE_FAIL_AFTER_FIRST_REPLACE");
 
     CHECK_FALSE(result.ok);
-    // Neither brand-new target survives the aborted batch; a pre-existing
-    // target would instead keep the new content plus its recovery copy.
+    // Neither brand-new target survives the aborted batch (a pre-existing
+    // target is restored from its recovery copy instead).
     CHECK_FALSE(std::filesystem::exists(first));
     CHECK_FALSE(std::filesystem::exists(second));
     CHECK(recoveryFilesIn(dir).empty());
