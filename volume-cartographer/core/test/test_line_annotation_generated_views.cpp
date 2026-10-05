@@ -28,26 +28,78 @@
 #include <string>
 #include <vector>
 
-TEST_CASE("Strip context spans include CP boundaries independently of click height")
+TEST_CASE("Strip context target: outer quarters of a span are its control points, the middle half the span")
 {
     using namespace vc3d::line_annotation;
-    std::vector<GeneratedOverlay::ControlPointMarker> controls(3);
-    controls[0].linePosition = 2;
-    controls[1].linePosition = 10;
-    controls[2].linePosition = 18;
-    std::vector<const GeneratedOverlay::ControlPointMarker*> sorted{
-        &controls[0], &controls[1], &controls[2]};
-    CHECK(generatedControlSpanOwnerRank(sorted, 2) == 0);
-    CHECK(generatedControlSpanOwnerRank(sorted, 6) == 0);
-    CHECK(generatedControlSpanOwnerRank(sorted, 9.99) == 0);
-    CHECK(generatedControlSpanOwnerRank(sorted, 10) == 1);
-    CHECK(generatedControlSpanOwnerRank(sorted, 14) == 1);
-    CHECK(generatedControlSpanOwnerRank(sorted, 18) == 1);
-    CHECK_FALSE(generatedControlSpanOwnerRank(sorted, 1));
-    CHECK_FALSE(generatedControlSpanOwnerRank(sorted, 19));
-    CHECK_FALSE(generatedControlSpanOwnerRank(sorted, NAN));
-    CHECK_FALSE(generatedControlSpanOwnerRank({}, 6));
-    CHECK_FALSE(generatedControlSpanOwnerRank({&controls[0]}, 2));
+    using Kind = GeneratedStripContextTarget::Kind;
+    const auto cp = [](size_t rank) { return GeneratedStripContextTarget{Kind::ControlPoint, rank}; };
+    const auto span = [](size_t rank) { return GeneratedStripContextTarget{Kind::Span, rank}; };
+
+    // Three controls at strip grid columns 100, 200, 400: spans of length 100 and 200.
+    const std::vector<double> xs{100.0, 200.0, 400.0};
+    CHECK(generatedStripContextTarget(xs, 100.0) == cp(0));
+    CHECK(generatedStripContextTarget(xs, 124.0) == cp(0));
+    CHECK(generatedStripContextTarget(xs, 126.0) == span(0));
+    CHECK(generatedStripContextTarget(xs, 150.0) == span(0));
+    CHECK(generatedStripContextTarget(xs, 174.0) == span(0));
+    CHECK(generatedStripContextTarget(xs, 176.0) == cp(1));
+    CHECK(generatedStripContextTarget(xs, 200.0) == cp(1));
+    // The longer span: its quarters are 50 wide.
+    CHECK(generatedStripContextTarget(xs, 249.0) == cp(1));
+    CHECK(generatedStripContextTarget(xs, 251.0) == span(1));
+    CHECK(generatedStripContextTarget(xs, 349.0) == span(1));
+    CHECK(generatedStripContextTarget(xs, 351.0) == cp(2));
+    CHECK(generatedStripContextTarget(xs, 400.0) == cp(2));
+    // Exactly on the quarter line the span wins.
+    CHECK(generatedStripContextTarget(xs, 125.0) == span(0));
+    CHECK(generatedStripContextTarget(xs, 175.0) == span(0));
+
+    // Beyond the ends: the end control, however far.
+    CHECK(generatedStripContextTarget(xs, 0.0) == cp(0));
+    CHECK(generatedStripContextTarget(xs, 99.0) == cp(0));
+    CHECK(generatedStripContextTarget(xs, 401.0) == cp(2));
+    CHECK(generatedStripContextTarget(xs, 5000.0) == cp(2));
+
+    // A single control is always the target; nothing yields nothing.
+    CHECK(generatedStripContextTarget({250.0}, 10.0) == cp(0));
+    CHECK_FALSE(generatedStripContextTarget({}, 150.0));
+    CHECK_FALSE(generatedStripContextTarget(xs, NAN));
+
+    // Two controls on one strip column (duplicate points map to one column):
+    // the zero-length span claims nothing, the span beside them keeps its
+    // middle half, and on the shared column and in the quarter zone next to
+    // it the first of them wins.
+    const std::vector<double> coincident{100.0, 100.0, 300.0};
+    CHECK(generatedStripContextTarget(coincident, 100.0) == cp(0));
+    CHECK(generatedStripContextTarget(coincident, 120.0) == cp(0));
+    CHECK(generatedStripContextTarget(coincident, 150.0) == span(1));
+    CHECK(generatedStripContextTarget(coincident, 200.0) == span(1));
+    CHECK(generatedStripContextTarget(coincident, 290.0) == cp(2));
+    CHECK(generatedStripContextTarget({50.0, 100.0, 100.0, 300.0}, 100.0) == cp(1));
+    CHECK(generatedStripContextTarget({50.0, 100.0, 100.0, 300.0}, 200.0) == span(2));
+    CHECK(generatedStripContextTarget({100.0, 300.0, 300.0}, 300.0) == cp(1));
+    CHECK(generatedStripContextTarget({100.0, 300.0, 300.0}, 900.0) == cp(1));
+    CHECK(generatedStripContextTarget({100.0, 100.0, 100.0}, 100.0) == cp(0));
+    CHECK(generatedStripContextTarget({100.0, 100.0, 100.0}, 7.0) == cp(0));
+}
+
+TEST_CASE("Strip context index: controls in line order with nondecreasing centre-line columns")
+{
+    using namespace vc3d::line_annotation;
+    std::vector<GeneratedOverlay::ControlPointMarker> controls(5);
+    // Out of line order on purpose; one without a control index, one off the line.
+    controls[0].linePosition = 30.0; controls[0].controlIndex = 0;
+    controls[1].linePosition = 10.0; controls[1].controlIndex = 1;
+    controls[2].linePosition = 20.0; controls[2].controlIndex = std::numeric_limits<size_t>::max();
+    controls[3].linePosition = 99.0; controls[3].controlIndex = 3;   // beyond the line
+    controls[4].linePosition = 20.0; controls[4].controlIndex = 4;
+    vc::lasagna::LineStripPositionMap noMap;
+    const auto index = buildGeneratedStripContextIndex(controls, 40, noMap);
+    REQUIRE(index.controlIndices.size() == 3);
+    CHECK(index.controlIndices == std::vector<size_t>{1, 4, 0});
+    CHECK(index.gridColumns == std::vector<double>{10.0, 20.0, 30.0});
+    CHECK_FALSE(index.empty());
+    CHECK(buildGeneratedStripContextIndex({}, 40, noMap).empty());
 }
 
 TEST_CASE("Clearing CP corrections leaves other controls and span metadata intact")

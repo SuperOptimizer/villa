@@ -435,6 +435,24 @@ private:
                                const GeneratedOverlay& overlay);
     void clearControlPointContextPreview(const std::string& surfaceName,
                                          CChunkedVolumeViewer* viewer);
+    // Hover highlight of the strip target (control point or span) that a
+    // Ctrl+right-click at the mouse would open the menu for.
+    // `redraw` skips the unchanged-target shortcut: the static markers were
+    // just re-projected (a rebuild, which a normal-offset change can trigger
+    // with the camera unchanged), so the glow must be re-projected too.
+    void updateStripContextHover(size_t stripIndex, const QPointF& scenePoint, bool redraw = false);
+    // Re-resolves the highlight from the pointer's remembered viewport
+    // position (after a pan, zoom or overlay rebuild) or clears it.
+    void refreshStripContextHover(size_t stripIndex, bool redraw = false);
+    // True when the strip's static overlays (the control markers) were placed
+    // or translated for the camera the viewer has now; while false the
+    // markers lag the camera until the coalesced rebuild or the pan tick.
+    bool stripStaticPlacementCurrent(size_t stripIndex) const;
+    void clearStripContextHover(size_t stripIndex);
+    const vc3d::line_annotation::GeneratedStripContextIndex& stripContextIndex();
+    // The generated views' controls or position map changed: the index is
+    // stale and so is any glow drawn from it.
+    void invalidateStripContextIndex();
     GeneratedOverlay staticStripOverlay() const;
     GeneratedOverlay zSliceOverlay(const GeneratedViews& views,
                                    const vc3d::line_annotation::GeneratedControlPointLinePositionIndex& controlIndex,
@@ -626,6 +644,32 @@ private:
     bool _currentCutOverlaySwapPending = false;
     bool _sideCutOverlaySwapPending = false;
     std::vector<bool> _stripOverlaySwapPending;
+    // True while a strip or cut context menu is open: the hover highlight
+    // stays off so the menu preview is the only highlight on screen.
+    bool _stripContextMenuOpen = false;
+    // Per strip, the pointer's last known viewport position, from the strip's
+    // own move events, forgotten on leave. The hover refresh after a pan, zoom
+    // or rebuild re-resolves from here and never asks the platform where the
+    // cursor is (stale or unavailable on Wayland).
+    std::vector<std::optional<QPoint>> _stripHoverLocalPos;
+    // The strips' click-zone index (controls in line order with their centre
+    // line grid columns), built on demand and dropped whenever the generated
+    // views' controls or position map change; both strips share it. Every
+    // write to _generatedViews, its controlPoints or its stripPositionMap
+    // must call invalidateStripContextIndex() (see setGeneratedControlPoints,
+    // setGeneratedBranchOverlayData, setGeneratedLineViews).
+    std::optional<vc3d::line_annotation::GeneratedStripContextIndex> _stripContextIndex;
+    // What the hover glow currently shows per strip and the camera it was
+    // drawn for: an unchanged target under an unchanged camera is not
+    // redrawn, a pure pan translates the glow like the static overlays.
+    struct StripHoverDrawn {
+        std::optional<vc3d::line_annotation::GeneratedStripContextTarget> target;
+        vc3d::line_annotation::GeneratedOverlayCameraBaseline camera;
+    };
+    std::vector<StripHoverDrawn> _stripHoverDrawn;
+    // The control point an overview-bar dot click names, for the duration of
+    // the forwarded (synchronous) menu request; see forwardOverviewControlContextMenu.
+    std::optional<double> _overviewContextControlLinePosition;
     std::vector<QPointer<CChunkedVolumeViewer>> _stripViewers;
     // Schematic fixed-height bar above the cut views: a straight line with the
     // control points (LineAnnotationOverviewBar, file-local in the .cpp).
